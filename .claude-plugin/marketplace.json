@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "rpiv-local",
+  "description": "Local marketplace hosting the RPIV workflow plugin (skills + analysis subagents) adapted from the Pi agent.",
+  "owner": {
+    "name": "pedro"
+  },
+  "plugins": [
+    {
+      "name": "rpiv",
+      "description": "RPIV development workflow: skills (research, design, plan, implement, validate, blueprint, explore, code-review, commit, changelog, handoffs, test-case + guidance tooling) plus the 16 read-only analysis subagents they spawn.",
+      "source": "./rpiv",
+      "category": "workflow"
+    }
+  ]
+}

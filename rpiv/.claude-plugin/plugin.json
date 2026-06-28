@@ -1,0 +1,8 @@
+{
+  "name": "rpiv",
+  "description": "RPIV development workflow ported from the Pi agent: skills (research, design, plan, implement, validate, and more) plus the read-only analysis subagents they spawn.",
+  "version": "1.12.0",
+  "author": {
+    "name": "juicesharp (ported for Claude Code)"
+  }
+}
