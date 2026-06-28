@@ -24,7 +24,7 @@
 //   ---churn-hotspots---    path \t commits            (commits in churn window, desc)
 //   ---export-usage---      path \t exports=N \t inbound=M   (speculative-generality signal)
 //   ---test-density---      path \t cases=N \t asserts=M \t ratio=R   (test-theater signal)
-//   ---dup-candidates---    fileA | fileB \t shared=N \t overlap=R   (content-based parallel-impl pre-signal; shared normalized lines)
+//   ---dup-candidates---    fileA | fileB \t shared=N \t overlap=R \t tokenSim=R \t via=...   (literal line-overlap + structural token-MinHash; either clears threshold)
 //   ---co-change-candidates--- fileA | fileB \t support=N \t conf=R   (hidden/temporal-coupling pre-signal)
 //
 // The co-change block is the temporal-coupling lens' deterministic feed: file PAIRS
@@ -116,7 +116,12 @@ const ENVY_INTERNAL_RE = /^(?:\.|~|@\/|@app\/|@lib\/)/; // what counts as an int
 const DUP_MIN_LINES = 8; // D lens: a pair must share at least this many normalized lines
 const DUP_OVERLAP_MIN = 0.4; // D lens: shared / min(|A|,|B|) must clear this
 const DUP_FILE_MIN_LINES = 8; // D lens: skip files with fewer interesting lines (too small to judge)
-const DUP_LINE_FANOUT_CAP = 6; // D lens: a line shared by > this many files is boilerplate, ignored
+const DUP_LINE_FANOUT_CAP = 6; // D lens: a line/shingle shared by > this many files is boilerplate, ignored
+const DUP_TOKENSIM_MIN = 0.4; // D lens: token-MinHash Jaccard (structural clones) must clear this
+const DUP_KGRAM = 9; // D lens: tokens per shingle for the structural signal
+const DUP_SKETCH_K = 128; // D lens: bottom-k MinHash sketch size per file
+const DUP_MIN_TOKENS = 120; // D lens: skip the structural signal for files with fewer normalized tokens
+const DUP_OUT_PER_SIGNAL = 12; // D lens: keep top-N per signal (line + structural) so neither buries the other
 const CONCERN_RULES = [
 	["persistence", /(?:^|[/@.-])(?:db|database|sql|sqlite|postgres|mysql|mongo|mongoose|redis|ioredis|prisma|supabase|sequelize|knex|typeorm|drizzle|dynamodb|repositor)/i],
 	["network", /(?:^|[/@.-])(?:axios|node-fetch|undici|got|ky|superagent|graphql-request|api-client|http-client|xmlhttp)/i],
@@ -516,11 +521,14 @@ for (const f of testFiles) {
 }
 result.testDensity.sort((a, b) => Number(a.ratio) - Number(b.ratio));
 
-// --- Duplication candidates (parallel-impl / copy-paste pre-signal) ----------
-// Content-based: file PAIRS that share many normalized source lines. An inverted
-// index over interesting-line hashes yields candidate pairs without O(n^2) reads;
-// overlap = shared / min(|A|,|B|) so a small file copied into a larger one still
-// scores high. Name coincidence alone never flags a pair (that was the old slop).
+// --- Duplication candidates (literal copy-paste + structural clones) ---------
+// Two content signals per file PAIR, reported together:
+//   * overlap  — shared normalized LINES / min(|A|,|B|): literal copy-paste.
+//   * tokenSim — Jaccard of token-shingle MinHash sketches: STRUCTURAL (Type-2)
+//                clones (same shape, renamed identifiers/literals) that share
+//                few literal lines. Candidate pairs come from BOTH inverted
+//                indexes; a pair is flagged when EITHER signal clears threshold.
+// Name coincidence alone never flags a pair (that was the old slop).
 const dupHash = (s) => {
 	let h = 2166136261;
 	for (let i = 0; i < s.length; i += 1) {
@@ -533,44 +541,122 @@ const dupInteresting = (l) =>
 	l.length >= 12 &&
 	!/^(?:import\b|export\s+\{|export\s+\*|export\s+type\b|\/\/|\/\*|\*|@)/.test(l) &&
 	!/^[)}\];,{(]+$/.test(l);
+
+// Token normalizer (JS/TS-shaped): identifiers -> I, numbers -> N, strings -> S,
+// JS/TS keywords + operators/punctuation kept verbatim, comments dropped. Renamed
+// clones thus normalize to the SAME token stream, which the shingle sketch catches.
+const DUP_KEYWORDS = new Set(
+	"const let var function return if else for while switch case break continue new class extends super this import export from default async await yield try catch finally throw typeof instanceof in of do delete void null undefined true false interface type enum implements public private protected readonly static as satisfies keyof namespace abstract get set".split(" "),
+);
+const DUP_TOKEN_RE = /\/\/[^\n]*|\/\*[\s\S]*?\*\/|`(?:\\.|[^`\\])*`|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|[A-Za-z_$][\w$]*|\d[\w.]*|=>|===|!==|==|!=|<=|>=|&&|\|\||\?\?|\.\.\.|[{}()[\];,.<>+\-*/%=!&|^~?:]/g;
+const dupNormalize = (text) => {
+	const toks = [];
+	for (const m of text.matchAll(DUP_TOKEN_RE)) {
+		const t = m[0];
+		const c = t[0];
+		if (c === "/" && (t[1] === "/" || t[1] === "*")) continue; // comment
+		if (c === "`" || c === "'" || c === '"') toks.push("S");
+		else if (c >= "0" && c <= "9") toks.push("N");
+		else if (/[A-Za-z_$]/.test(c)) toks.push(DUP_KEYWORDS.has(t) ? t : "I");
+		else toks.push(t);
+	}
+	return toks;
+};
+const dupSketch = (toks) => {
+	if (toks.length < DUP_MIN_TOKENS) return null;
+	const shingles = new Set();
+	for (let i = 0; i + DUP_KGRAM <= toks.length; i += 1) {
+		shingles.add(dupHash(toks.slice(i, i + DUP_KGRAM).join(" ")));
+	}
+	return new Set([...shingles].sort((a, b) => a - b).slice(0, DUP_SKETCH_K)); // bottom-k MinHash
+};
+
 const dupLineSets = new Map(); // f -> Set<lineHash>
+const dupSketches = new Map(); // f -> Set<shingleHash>  (JS/TS only)
 for (const f of sourceFiles) {
 	const text = readText(f);
 	if (text === null) continue;
-	const set = new Set();
+	const lineSet = new Set();
 	for (const raw of text.split(/\r?\n/)) {
 		const l = raw.trim().replace(/\s+/g, " ");
-		if (dupInteresting(l)) set.add(dupHash(l));
+		if (dupInteresting(l)) lineSet.add(dupHash(l));
 	}
-	if (set.size >= DUP_FILE_MIN_LINES) dupLineSets.set(f, set);
-}
-const dupIndex = new Map(); // lineHash -> [files]
-for (const [f, set] of dupLineSets) {
-	for (const h of set) {
-		const arr = dupIndex.get(h);
-		if (arr) arr.push(f);
-		else dupIndex.set(h, [f]);
+	if (lineSet.size >= DUP_FILE_MIN_LINES) dupLineSets.set(f, lineSet);
+	if (isJsTs(f)) {
+		const sk = dupSketch(dupNormalize(text));
+		if (sk) dupSketches.set(f, sk);
 	}
 }
-const dupPairShared = new Map(); // "a|b" -> shared interesting-line count
-for (const fs of dupIndex.values()) {
-	if (fs.length < 2 || fs.length > DUP_LINE_FANOUT_CAP) continue; // boilerplate shared widely
-	for (let i = 0; i < fs.length; i += 1) {
-		for (let j = i + 1; j < fs.length; j += 1) {
-			const key = fs[i] < fs[j] ? `${fs[i]}|${fs[j]}` : `${fs[j]}|${fs[i]}`;
-			dupPairShared.set(key, (dupPairShared.get(key) ?? 0) + 1);
+
+// Candidate pairs from BOTH inverted indexes (line hashes + sketch hashes).
+const dupPairs = new Set();
+const addIndexPairs = (sets) => {
+	const idx = new Map();
+	for (const [f, set] of sets) {
+		for (const h of set) {
+			const arr = idx.get(h);
+			if (arr) arr.push(f);
+			else idx.set(h, [f]);
 		}
 	}
-}
-for (const [key, shared] of dupPairShared) {
-	if (shared < DUP_MIN_LINES) continue;
+	for (const fs of idx.values()) {
+		if (fs.length < 2 || fs.length > DUP_LINE_FANOUT_CAP) continue; // boilerplate shared widely
+		for (let i = 0; i < fs.length; i += 1) {
+			for (let j = i + 1; j < fs.length; j += 1) {
+				dupPairs.add(fs[i] < fs[j] ? `${fs[i]}|${fs[j]}` : `${fs[j]}|${fs[i]}`);
+			}
+		}
+	}
+};
+addIndexPairs(dupLineSets);
+addIndexPairs(dupSketches);
+
+const dupOverlap = (a, b) => {
+	if (!a || !b) return { inter: 0, overlap: 0 };
+	const [small, big] = a.size < b.size ? [a, b] : [b, a];
+	let inter = 0;
+	for (const x of small) if (big.has(x)) inter += 1;
+	return { inter, overlap: inter / Math.min(a.size, b.size) };
+};
+const dupJaccard = (a, b) => {
+	if (!a || !b) return 0;
+	const [small, big] = a.size < b.size ? [a, b] : [b, a];
+	let inter = 0;
+	for (const x of small) if (big.has(x)) inter += 1;
+	return inter / (a.size + b.size - inter);
+};
+
+const dupFlagged = [];
+for (const key of dupPairs) {
 	const [a, b] = key.split("|");
-	const overlap = shared / Math.min(dupLineSets.get(a).size, dupLineSets.get(b).size);
-	if (overlap < DUP_OVERLAP_MIN) continue;
-	result.dupCandidates.push({ a, b, shared, overlap });
+	const { inter: shared, overlap } = dupOverlap(dupLineSets.get(a), dupLineSets.get(b));
+	const tokenSim = dupJaccard(dupSketches.get(a), dupSketches.get(b));
+	const byLines = shared >= DUP_MIN_LINES && overlap >= DUP_OVERLAP_MIN;
+	const byTokens = tokenSim >= DUP_TOKENSIM_MIN;
+	if (!byLines && !byTokens) continue;
+	const via = byLines && byTokens ? "both" : byLines ? "lines" : "structural";
+	dupFlagged.push({ a, b, shared, overlap, tokenSim, via });
 }
-result.dupCandidates.sort((x, y) => y.overlap - x.overlap || y.shared - x.shared);
-result.dupCandidates = result.dupCandidates.slice(0, 15);
+// Keep the top pairs of EACH signal so a high line-overlap idiom (e.g. similar
+// pages) cannot crowd out a genuine structural clone, or vice versa.
+const topLines = dupFlagged
+	.filter((p) => p.via !== "structural")
+	.sort((x, y) => y.overlap - x.overlap || y.shared - x.shared)
+	.slice(0, DUP_OUT_PER_SIGNAL);
+const topStructural = dupFlagged
+	.filter((p) => p.via !== "lines")
+	.sort((x, y) => y.tokenSim - x.tokenSim)
+	.slice(0, DUP_OUT_PER_SIGNAL);
+const dupSeen = new Set();
+for (const p of [...topStructural, ...topLines]) {
+	const key = `${p.a}|${p.b}`;
+	if (dupSeen.has(key)) continue;
+	dupSeen.add(key);
+	result.dupCandidates.push(p);
+}
+result.dupCandidates.sort(
+	(x, y) => Math.max(y.overlap, y.tokenSim) - Math.max(x.overlap, x.tokenSim) || y.shared - x.shared,
+);
 
 // --- Co-change candidates (hidden / temporal-coupling pre-signal) ------------
 // File pairs that change together across history but share no static import edge.
@@ -675,7 +761,7 @@ function emit() {
 	block("churn-hotspots", result.churnHotspots.map((r) => `${r.f}\t${r.c}`));
 	block("export-usage", result.exportUsage.map((r) => `${r.f}\texports=${r.exports}\tinbound=${r.inbound === null ? "?" : r.inbound}`));
 	block("test-density", result.testDensity.map((r) => `${r.f}\tcases=${r.cases}\tasserts=${r.asserts}\tratio=${r.ratio}`));
-	block("dup-candidates", result.dupCandidates.map((r) => `${r.a} | ${r.b}\tshared=${r.shared}\toverlap=${r.overlap.toFixed(2)}`));
+	block("dup-candidates", result.dupCandidates.map((r) => `${r.a} | ${r.b}\tshared=${r.shared}\toverlap=${r.overlap.toFixed(2)}\ttokenSim=${r.tokenSim.toFixed(2)}\tvia=${r.via}`));
 	block("co-change-candidates", result.coChange.map((r) => `${r.a} | ${r.b}\tsupport=${r.support}\tconf=${r.conf.toFixed(2)}`));
 
 	process.stdout.write(body);

@@ -106,9 +106,9 @@ Judgment-level slop the linters cannot see. One table per lens; **omit any lens 
 
 ### D — Semantic duplication / parallel implementations ({count})
 
-| ID | Files | Overlap (shared lines) | Divergence | Canonical | Severity |
+| ID | Files | Overlap / tokenSim (via) | Divergence | Canonical | Severity |
 |---|---|---|---|---|---|
-| {ID} | `a.ts` <-> `b.ts` | {overlap} ({N} lines) | {what drifted} | `{which is canonical}` | {Low/Med/High} |
+| {ID} | `a.ts` <-> `b.ts` | {overlap} / {tokenSim} ({via}; {N} lines) | {what drifted} | `{which is canonical}` | {Low/Med/High} |
 
 ### C — Concept / type fragmentation ({count})
 

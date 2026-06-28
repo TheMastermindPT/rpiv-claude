@@ -146,6 +146,21 @@ const widgetRenderer = [
 	`}`,
 ].join("\n");
 
+// Two STRUCTURALLY identical files (same token shape) with renamed identifiers
+// and different literals -> low line overlap, high tokenSim -> via=structural.
+const structuralClone = (s, base) => {
+	const lines = [`export function compute${s}(input) {`];
+	for (let i = 0; i < 30; i += 1) {
+		lines.push(`\tconst value${s}${i} = input.field${s}[${base + i}] * ${base + i};`);
+		lines.push(`\tif (value${s}${i} > ${base + i}) { collect${s}(value${s}${i}, "label${s}${i}"); }`);
+	}
+	lines.push(`\treturn value${s}0 + value${s}1;`);
+	lines.push(`}`);
+	return lines.join("\n");
+};
+const cloneA = structuralClone("Alpha", 10);
+const cloneB = structuralClone("Beta", 700);
+
 // --- Build repo, run, assert ------------------------------------------------
 
 const repo = mkdtempSync(join(tmpdir(), "argate-"));
@@ -163,6 +178,8 @@ try {
 	write("src/dup-b.ts", dupB);
 	write("src/widget-loader.ts", widgetLoader);
 	write("src/widget-renderer.ts", widgetRenderer);
+	write("src/clone-alpha.ts", cloneA);
+	write("src/clone-beta.ts", cloneB);
 	write("src/models.generated.ts", generatedLarge);
 
 	git(repo, ["init", "-q"]);
@@ -227,7 +244,15 @@ try {
 		"widget-* pair shares only a name token, must NOT be a duplication candidate",
 	);
 
-	console.log(`OK — ${candidates.length} god-file, ${lowCohesion.length} low-cohesion, ${envy.length} feature-envy, ${dup.length} dup-pair; content-dup flagged, name-coincidence ignored.`);
+	// 7. MinHash: a structural (Type-2) clone — same shape, renamed identifiers,
+	//    different literals -> flagged via=structural (high tokenSim, low overlap).
+	const cloneRow = dup.find((r) => r.includes("clone-alpha.ts") && r.includes("clone-beta.ts"));
+	assert.ok(cloneRow, `clone-alpha | clone-beta must be a structural duplication pair\n--- output ---\n${out}`);
+	assert.ok(/via=structural/.test(cloneRow), `clone pair must be via=structural, got: ${cloneRow}`);
+	const ts = Number(cloneRow.match(/tokenSim=([\d.]+)/)?.[1]);
+	assert.ok(ts >= 0.4, `clone pair tokenSim must clear 0.4, got: ${cloneRow}`);
+
+	console.log(`OK — ${candidates.length} god-file, ${lowCohesion.length} low-cohesion, ${envy.length} feature-envy, ${dup.length} dup-pair; literal + structural dup flagged, name-coincidence ignored.`);
 } finally {
 	rmSync(repo, { recursive: true, force: true });
 }
