@@ -1,6 +1,6 @@
 // tool-probe.mjs — read-only capability probe for the architectural-review skill.
 //
-//   node "${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/_helpers/tool-probe.mjs" "<target>"
+//   node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/tool-probe.mjs" "<target>"
 //
 // Detects which external analysis tools are available and which review LENS each one
 // sharpens, classifying each as:
@@ -173,6 +173,41 @@ if (ecosystem === "js-ts") {
 	out.push(`(ecosystem=${ecosystem}: registry rows not yet wired — JS/TS detection only)`);
 	out.push("(what WOULD sharpen each lens here: L=import-linter/staticcheck/clippy, A=vulture/deadcode/cargo-udeps, T=coverage.py/go test -cover/cargo llvm-cov)");
 }
+
+// Language-agnostic structural tools — ecosystem-independent, so they emit regardless of the
+// manifest-keyed registry above. All are self-contained PATH binaries (binAvailable, NOT
+// createRequire). Run read-only via _shared/structural.mjs, which never passes the mutate
+// flags (rewrite / update-all / interactive / autofix).
+
+// ast-grep -> D/M (AST-structural patterns). Prefer `ast-grep` over `sg` (sg collides with
+// setgid on some systems). Config: sgconfig.yml -> configured.
+const astgrepBin = binAvailable(["ast-grep", "sg"]);
+const astgrepCfg = firstFile(["sgconfig.yml", "sgconfig.yaml"]);
+row("ast-grep", "D/M",
+	astgrepBin ? (astgrepCfg ? "configured" : "installed") : "absent",
+	[
+		...(astgrepBin ? [`bin=${astgrepBin}`] : []),
+		...(astgrepCfg ? [`config=${astgrepCfg}`] : []),
+		...(astgrepBin ? [] : ["hint=install ast-grep (sharpens D/M structural patterns)"]),
+	]);
+
+// opengrep -> L/M (Semgrep-fork rules). Config files -> configured; registry configs (auto,
+// p/...) need network (used live by deep-review Security).
+const opengrepBin = binAvailable(["opengrep", "semgrep"]);
+const opengrepCfg = firstFile([".opengrep.yml", ".semgrep.yml", "semgrep.yml", ".semgrep.yaml"]);
+row("opengrep", "L/M",
+	opengrepBin ? (opengrepCfg ? "configured" : "installed") : "absent",
+	[
+		...(opengrepBin ? [`bin=${opengrepBin}`] : []),
+		...(opengrepCfg ? [`config=${opengrepCfg}`] : []),
+		...(opengrepBin ? [] : ["hint=install opengrep (sharpens deep-review Security via stock rules)"]),
+	]);
+
+// rg (ripgrep) -> search. No project config by convention (config is the RIPGREP_CONFIG_PATH
+// env var, not a tracked file) -> installed | absent only. Orchestrator prefers rg over literal grep/find.
+const rgBin = binAvailable(["rg"]);
+row("rg", "search", rgBin ? "installed" : "absent",
+	rgBin ? [`bin=${rgBin}`] : ["hint=install ripgrep (rg)"]);
 
 process.stdout.write(`root:      ${root}\necosystem: ${ecosystem}\n---tool-coverage---\n${out.join("\n")}\n`);
 process.exit(0);

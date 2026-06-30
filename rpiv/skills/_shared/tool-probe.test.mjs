@@ -55,6 +55,15 @@ try {
 	// jscpd maps to D; status is env-dependent (a PATH binary), so just assert a valid value.
 	assert.ok(/lens=D/.test(rowFor("jscpd")), `jscpd must map to lens D, got: ${rowFor("jscpd")}`);
 	assert.ok(/status=(installed|configured|absent)/.test(rowFor("jscpd")), `jscpd must have a valid status, got: ${rowFor("jscpd")}`);
+	// ast-grep -> D/M; PATH binary, status env-dependent (no sgconfig in fixture).
+	assert.ok(/lens=D\/M/.test(rowFor("ast-grep")), `ast-grep must map to lens D/M, got: ${rowFor("ast-grep")}`);
+	assert.ok(/status=(installed|configured|absent)/.test(rowFor("ast-grep")), `ast-grep must have a valid status, got: ${rowFor("ast-grep")}`);
+	// opengrep -> L/M; PATH binary, status env-dependent.
+	assert.ok(/lens=L\/M/.test(rowFor("opengrep")), `opengrep must map to lens L/M, got: ${rowFor("opengrep")}`);
+	assert.ok(/status=(installed|configured|absent)/.test(rowFor("opengrep")), `opengrep must have a valid status, got: ${rowFor("opengrep")}`);
+	// rg -> search; no project config -> only installed|absent (the no-configured collapse).
+	assert.ok(/lens=search/.test(rowFor("rg")), `rg must map to lens search, got: ${rowFor("rg")}`);
+	assert.ok(/status=(installed|absent)/.test(rowFor("rg")), `rg must have a valid status, got: ${rowFor("rg")}`);
 	console.log(`OK (tool-probe) — configured/absent detected without running or installing (ts-morph: ${expectedTsm}).`);
 } finally {
 	rmSync(repo, { recursive: true, force: true });

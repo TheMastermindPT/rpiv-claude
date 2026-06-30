@@ -26,6 +26,7 @@
 //   tip:            <hash>|(n/a)
 //   range:          <base>..<tip>|(n/a)
 //   fp_flag:        --first-parent|(empty)
+//   patch_path:     <gitdir>/code-review-patch.diff   (worktree-safe diff tempfile for the orchestrator's `> <patch_path>` redirect)
 //   note:           <reason>          (only when strategy=unrecognised)
 //   ---changed-files---
 //   <deduplicated file list, capped at 2000 entries OR 40 KB whichever first>
@@ -134,6 +135,7 @@ const result = {
 	tip: "(n/a)",
 	range: "(n/a)",
 	fp_flag: "(empty)",
+	patch_path: safe(["rev-parse", "--git-path", "code-review-patch.diff"]) || ".git/code-review-patch.diff",
 	note: "",
 	changedFiles: "",
 };
@@ -261,6 +263,7 @@ const lines = [
 	`tip:            ${result.tip}`,
 	`range:          ${result.range}`,
 	`fp_flag:        ${result.fp_flag}`,
+	`patch_path:     ${result.patch_path}`,
 ];
 if (result.strategy === "unrecognised" && result.note) {
 	lines.push(`note:           ${result.note}`);

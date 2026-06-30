@@ -47,15 +47,19 @@ The final artifact feeds design or blueprint.
    - Carry the FRD's Open Questions forward verbatim into the research artifact's Open Questions section in Step 4.
    - If the input is plain free-text or includes a non-discover path, skip this sub-step and proceed directly to scope-tracer dispatch with the input as the topic.
 
-3. **Dispatch the scope-tracer agent** to formulate trace-quality research questions for the user's topic:
+3. **Structural pre-sweep (tool-gated), then dispatch the scope-tracer agent.** Seed scope-tracer with DIGESTED structural anchors when the tools are present:
+   - Probe once: `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/tool-probe.mjs" "."` — read the `ast-grep` / `rg` rows. If BOTH are `absent`, SKIP the pre-sweep (scope-tracer's own grep/find/ls sweep is the fallback — no degradation prompt; research is discovery, not a gated review).
+   - For the topic's anchor terms, run the orchestrator-side sweep READ-ONLY (scan-root-then-filter): `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/structural.mjs" --tool ast-grep --pattern '<anchor-shape>' --lang <l> .` (definition/usage shapes) and/or `--tool rg --pattern '<anchor>' .` (reference counts).
+   - REDUCE the output to a few DIGESTED anchor rows — `def <Symbol> @ file:line`, `refs=N` — NEVER the raw `--json`/block dump. **No-raw-dump discipline (imported — research's own steps lack it): pasting raw tool output makes the agent narrativise instead of reading the code, producing hallucinated findings (see `deep-review/SKILL.md` Wave-2 isolation + `architectural-review/SKILL.md:230`). The digest is ground truth the agent still OPENS and verifies.**
+   - Dispatch scope-tracer with the anchors appended to the topic:
    ```
    Agent({
      subagent_type: "scope-tracer",
      description: "trace scope",
-     prompt: "$ARGUMENTS"
+     prompt: "$ARGUMENTS\n\nStructural anchors (ground truth — open and verify, do not narrativise):\n{digested anchor rows; omit this block entirely when the pre-sweep was skipped}"
    })
    ```
-   The agent reads any mentioned files, sweeps anchor terms via grep/find/ls, reads 5-10 key files for depth, then emits a Discovery Summary + 5-10 dense numbered questions inline in its final message. Nothing is written to disk.
+   The agent reads any mentioned files, sweeps anchor terms via grep/find/ls (its Grep tool already uses ripgrep), reads 5-10 key files for depth, then emits a Discovery Summary + 5-10 dense numbered questions inline in its final message. Nothing is written to disk.
 
 4. **Parse the agent's final message** as the questions artifact body. Extract: Discovery Summary (3-5 sentence file-landscape overview), Questions (numbered dense 3-6 sentence paragraphs).
 
@@ -85,6 +89,8 @@ Spawn analysis agents using the Agent tool. All agents run in parallel.
 
 Each agent receives the dense question paragraph(s) directly as its prompt. The question IS the instruction.
 
+**Group-scoped structural re-sweep (tool-gated):** before each dispatch, when ast-grep/rg are present, re-run the orchestrator-side structural sweep SCOPED to that group's files (the file refs from the Step-1.6 grouping), reduce to a few DIGESTED anchor rows, and weave them into the `{Structural anchors …}` slot in the template. Same no-raw-dump discipline as Step 1.3 — digested rows only; the agent still reads behind them. Omit the slot when no tool is present (codebase-analyzer's Grep tool, already ripgrep, is the fallback).
+
 For standalone questions (no grouping):
 ```
 Research topic: {topic from frontmatter}
@@ -92,6 +98,8 @@ Research topic: {topic from frontmatter}
 Answer the following research question thoroughly with file:line references. Read the files mentioned, trace the code paths described, and provide a complete analysis.
 
 {Full dense question paragraph}
+
+{Structural anchors for this question's files (ground truth — open and verify, do not narrativise): digested `def <Symbol> @ file:line` / `refs=N` rows from the group-scoped ast-grep/rg re-sweep; omit when no tool present.}
 
 Provide your analysis with exact file:line references. Focus on DEPTH — trace the actual code, don't just locate it.
 ```
@@ -105,6 +113,8 @@ Answer the following related research questions thoroughly with file:line refere
 Question 1: {Full dense question paragraph}
 
 Question 2: {Full dense question paragraph}
+
+{Structural anchors for this group's files (ground truth — open and verify): digested rows from the group-scoped re-sweep; omit when no tool present.}
 
 For each question, provide your analysis with exact file:line references. Note connections between the questions where the same code serves multiple roles. Focus on DEPTH — trace the actual code, don't just locate it.
 ```

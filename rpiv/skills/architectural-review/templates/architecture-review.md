@@ -463,6 +463,9 @@ Plan ready for the implementation phase.
 | jscpd | D | {configured / installed / absent} | {yes/no} | {N clones, M% duplicated lines (Rust v5), or "absent — D on metrics dup-candidates"} |
 | coverage ({vitest/jest/…}) | T | {status} | {yes/no} | {report path, or "no report — gathered via checkpoint" / "running unaided"} |
 | ts-morph | S / Fe / A / C | {configured / installed-unconfigured / absent} | {yes/no} | {type-resolved write-sites / feature-envy / dead-exports / type-fragmentation via `semantic.mjs`, or "unavailable: {reason} — S/Fe/A/C on regex+agent signals"} |
+| ast-grep | D/M (+C/S/Fe confirm) | {configured / installed / absent} | {yes/no} | {structural confirmation of NAMED candidate shapes via `structural.mjs`; curated arch pattern pack deferred} |
+| opengrep | L/M (deep-review Security) | {status} | {yes/no} | {arch rule pack deferred — registered; runs live only in deep-review's Security lens} |
+| rg | search | {installed / absent} | {n/a} | {orchestrator / claim-verifier prefer rg over literal grep} |
 | {other} | {lens} | {status} | {no} | {suggested: `{install hint}`} |
 
 **Lenses running unaided (no backing tool):** {M, C, …; + S/Fe/A when ts-morph absent} — inherently agent-only.
