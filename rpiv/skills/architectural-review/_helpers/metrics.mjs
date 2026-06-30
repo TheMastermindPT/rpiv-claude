@@ -25,12 +25,18 @@
 //   ---export-usage---      path \t exports=N \t inbound=M   (speculative-generality signal)
 //   ---test-density---      path \t cases=N \t asserts=M \t ratio=R   (test-theater signal)
 //   ---dup-candidates---    fileA | fileB \t shared=N \t overlap=R \t tokenSim=R \t via=...   (literal line-overlap + structural token-MinHash; either clears threshold)
-//   ---co-change-candidates--- fileA | fileB \t support=N \t conf=R   (hidden/temporal-coupling pre-signal)
+//   ---co-change-candidates--- fileA -> fileB \t support=N \t conf=R   (hidden coupling, directional; arrow points from the driver)
+//   ---co-change-groups---  g{n} \t files=... \t modules=...   (ripple-groups: connected components of the hidden-coupling edges; the entity-model seed)
+//   ---write-sites---       table:x|rpc:y \t writers=N \t files=...   (S-lens ownership: distinct modules writing each entity; writers>=2 = scattered write path)
 //
-// The co-change block is the temporal-coupling lens' deterministic feed: file PAIRS
+// The co-change blocks are the temporal-coupling lens' deterministic feed: file PAIRS
 // that change together across history (support = # shared commits; conf = support /
-// fewer file's total changes) but share NO static import edge. Bulk commits are capped
-// out; thin-history targets emit nothing. Non-authoritative — the synthesis layer judges.
+// driver file's total changes) but share NO REAL import edge (resolved graph) and where
+// NEITHER file is a re-export barrel (whose co-change is a shadow of its impl). Surviving
+// edges cluster into ripple-groups. Bulk/refactor commits (touching more files than an
+// ADAPTIVE cap — the Pth percentile of the repo's own commit sizes, clamped) are skipped
+// so they don't invent O(n^2) spurious pairs; thin-history targets emit nothing.
+// Non-authoritative — the synthesis layer judges.
 //
 // Design constraints (mirror code-review/_helpers/review-range.mjs):
 //   - execFileSync only — no `sh -c`, no shell globbing, no heredocs (Windows-safe).
@@ -48,11 +54,13 @@ const OUT_LINE_CAP = 200; // max rows per block
 const OUT_BYTE_CAP = 40 * 1024; // total block-bytes budget
 const CHURN_DAYS = 180;
 const INBOUND_SCAN_CAP = 60; // bound git-grep calls for export-usage
-const CO_CHANGE_COMMIT_CAP = 25; // commits touching > N source files are bulk/refactor noise — skipped
+const CO_CHANGE_CAP_PERCENTILE = 0.95; // adaptive bulk-commit cap = this percentile of THIS repo's commit sizes (a fixed number can't fit repos whose features routinely touch many files)
+const CO_CHANGE_CAP_FLOOR = 15; // ...but never treat a commit this small (or smaller) as bulk — protects young / tiny-commit repos
+const CO_CHANGE_CAP_CEILING = 50; // ...and never count a commit bigger than this — bounds the O(n^2) pair blow-up from giant refactors
 const CO_CHANGE_MIN_SUPPORT = 3; // a pair must change together at least this many times
 const CO_CHANGE_MIN_CONF = 0.5; // support / (fewer file's total changes) must clear this
-const CO_CHANGE_EXAMINE_CAP = 80; // bound import-link checks (file reads) over candidate pairs
 const CO_CHANGE_OUT_CAP = 15; // max emitted co-change pairs
+const CO_CHANGE_GROUP_MIN_SUPPORT = 4; // ripple-group edges need more support than a lone display candidate, so groups stay entity-sized (connected components blow up on weak edges)
 const SOURCE_EXT = new Set([
 	"ts", "tsx", "js", "jsx", "mjs", "cjs", "cts", "mts",
 	"py", "go", "rs", "java", "kt", "cs", "rb", "php", "swift", "scala",
@@ -113,8 +121,8 @@ const ENVY_MIN_REFS = 5; // Fe lens: a module must be referenced at least this m
 const ENVY_MIN_RATIO = 0.6; // Fe lens: external refs / (external + own) must clear this
 const ENVY_INTERNAL_ONLY = true; // Fe lens: only flag envy toward relative/alias imports (not 3rd-party libs)
 const ENVY_INTERNAL_RE = /^(?:\.|~|@\/|@app\/|@lib\/)/; // what counts as an internal module specifier
-const DUP_MIN_LINES = 8; // D lens: a pair must share at least this many normalized lines
-const DUP_OVERLAP_MIN = 0.4; // D lens: shared / min(|A|,|B|) must clear this
+const DUP_MIN_RUN = 6; // D lens: a literal copy-paste needs >= this many CONTIGUOUS shared lines (scattered idiom never forms a run; file-size-independent)
+const DUP_RUN_EXAMINE_CAP = 500; // D lens: bound the O(m*n) contiguous-run scan to the strongest line candidates
 const DUP_FILE_MIN_LINES = 8; // D lens: skip files with fewer interesting lines (too small to judge)
 const DUP_LINE_FANOUT_CAP = 6; // D lens: a line/shingle shared by > this many files is boilerplate, ignored
 const DUP_TOKENSIM_MIN = 0.4; // D lens: token-MinHash Jaccard (structural clones) must clear this
@@ -149,6 +157,8 @@ const result = {
 	testDensity: [],
 	dupCandidates: [],
 	coChange: [],
+	coGroups: [],
+	writeSites: [],
 	godfileCandidates: [],
 	lowCohesion: [],
 	featureEnvy: [],
@@ -220,6 +230,7 @@ for (const f of sourceFiles) {
 	locByFile.set(f, nonBlankLoc(text));
 }
 result.file_count = locByFile.size;
+const sourceSet = new Set(locByFile.keys()); // tracked source files; reused by the import graph, co-change, and the Fe pre-filter
 const locValues = [...locByFile.values()].sort((a, b) => a - b);
 result.loc_total = locValues.reduce((a, b) => a + b, 0);
 
@@ -392,6 +403,70 @@ const envyOf = (text, syms) => {
 	return { module: best.module, ext: best.ext, own, ratio };
 };
 
+// --- Resolved import graph (real edges, JS/TS) ------------------------------
+// Reuses collectSpecifiers; resolves relative + alias specifiers to tracked
+// source files so co-change (Phase 2) and the system model can ask "is there a
+// REAL import edge?" instead of the old stem-substring heuristic that went blind
+// on stopword-stem hubs (e.g. `types.ts`). Bare/3rd-party specifiers resolve to
+// null. Degrades to no edges on non-JS/TS (callers fall back to prior behavior).
+const RESOLVE_EXTS = ["ts", "tsx", "js", "jsx", "mjs", "cjs", "cts", "mts"];
+
+// Join a posix dir with a relative specifier, collapsing `.`/`..`.
+const joinPosix = (dir, rel) => {
+	const out = [];
+	for (const part of `${dir}/${rel}`.split("/")) {
+		if (part === "" || part === ".") continue;
+		if (part === "..") out.pop();
+		else out.push(part);
+	}
+	return out.join("/");
+};
+
+// Resolve one import specifier from `fromFile` to a tracked source file, or null.
+// `@/`, `@app/`, `@lib/` map to the repo root (the repo's `@/*` -> root alias).
+const resolveImportSpecifier = (fromFile, spec, sourceSet) => {
+	let base;
+	if (spec.startsWith("@/")) base = spec.slice(2);
+	else if (spec.startsWith("@app/")) base = `app/${spec.slice(5)}`;
+	else if (spec.startsWith("@lib/")) base = `lib/${spec.slice(5)}`;
+	else if (spec.startsWith("./") || spec.startsWith("../")) {
+		base = joinPosix(fromFile.slice(0, fromFile.lastIndexOf("/")), spec);
+	} else return null; // bare / 3rd-party
+	const candidates = [base];
+	for (const e of RESOLVE_EXTS) candidates.push(`${base}.${e}`);
+	for (const e of RESOLVE_EXTS) candidates.push(`${base}/index.${e}`);
+	for (const c of candidates) if (sourceSet.has(c)) return c;
+	return null;
+};
+
+// file -> Set<file> of resolved internal import targets (a real edge graph).
+const buildImportGraph = (files, sourceSet) => {
+	const edges = new Map();
+	for (const f of files) {
+		if (!isJsTs(f)) continue;
+		const text = readText(f);
+		if (text === null) continue;
+		const out = new Set();
+		for (const spec of collectSpecifiers(text)) {
+			const target = resolveImportSpecifier(f, spec, sourceSet);
+			if (target && target !== f) out.add(target);
+		}
+		if (out.size) edges.set(f, out);
+	}
+	return edges;
+};
+
+// A re-export barrel: re-exports something AND declares no behavioral symbol of
+// its own (a pure public-surface file). Barrels co-change as a shadow of their
+// impl files, so the co-change lens excludes them — a structural exclusion, not
+// a judgment call. A file with no re-export `from` (e.g. a type/const bag) is
+// NOT a barrel.
+const isBarrel = (text) => {
+	const reExports = /\bexport\s+\*|\bexport\b[^\n;]*\bfrom\s*['"]/.test(text);
+	if (!reExports) return false;
+	return topLevelSymbols(text).every((s) => !s.behavioral);
+};
+
 const catByFile = new Map();
 const cohByFile = new Map(); // f -> { cohesion, symbols, components } | null
 for (const f of sourceFiles) {
@@ -413,6 +488,18 @@ for (const f of sourceFiles) {
 	if (envy) result.featureEnvy.push({ f, ...envy });
 }
 result.featureEnvy.sort((a, b) => b.ratio - a.ratio || b.ext - a.ext);
+// Fe pre-filter: feature-envy requires the envied module to expose BEHAVIOR to misplace.
+// Drop the candidate when the resolved target has NO behavioral top-level symbol — a
+// constants / types / data module (e.g. progression-knobs); you cannot envy data. An
+// unresolved target (already internal-only) is kept for the agent to judge.
+const behavioralExports = (file) => {
+	const t = readText(file);
+	return t === null ? 1 : topLevelSymbols(t).filter((s) => s.behavioral).length;
+};
+result.featureEnvy = result.featureEnvy.filter((r) => {
+	const target = resolveImportSpecifier(r.f, r.module, sourceSet);
+	return target ? behavioralExports(target) > 0 : true;
+});
 
 // --- God-file gate (union + bidirectional cohesion) -------------------------
 // (a) high concern-mixing flags regardless of LOC -> small tangles surface.
@@ -522,13 +609,18 @@ for (const f of testFiles) {
 result.testDensity.sort((a, b) => Number(a.ratio) - Number(b.ratio));
 
 // --- Duplication candidates (literal copy-paste + structural clones) ---------
-// Two content signals per file PAIR, reported together:
-//   * overlap  — shared normalized LINES / min(|A|,|B|): literal copy-paste.
+// Two INDEPENDENT content signals per file PAIR:
+//   * run      — longest CONTIGUOUS shared block of normalized lines (line-level
+//                LCSubstr). The literal-copy-paste signal, and FILE-SIZE-INDEPENDENT:
+//                a real block flags even when the two files are otherwise entirely
+//                different (low overlap ratio). Scattered shared idiom lines (db
+//                CRUD, error handling) never form a run, so they no longer flag.
 //   * tokenSim — Jaccard of token-shingle MinHash sketches: STRUCTURAL (Type-2)
-//                clones (same shape, renamed identifiers/literals) that share
-//                few literal lines. Candidate pairs come from BOTH inverted
-//                indexes; a pair is flagged when EITHER signal clears threshold.
-// Name coincidence alone never flags a pair (that was the old slop).
+//                clones (same shape, renamed identifiers/literals) sharing few
+//                identical lines. Clears on its own.
+//   * overlap/shared — reported as CONTEXT only (no longer a gate).
+// A pair flags when EITHER signal clears its bar; name coincidence never flags.
+// The agent makes the final D-vs-M (copy-paste logic vs missing-named-shape) call.
 const dupHash = (s) => {
 	let h = 2166136261;
 	for (let i = 0; i < s.length; i += 1) {
@@ -540,6 +632,7 @@ const dupHash = (s) => {
 const dupInteresting = (l) =>
 	l.length >= 12 &&
 	!/^(?:import\b|export\s+\{|export\s+\*|export\s+type\b|\/\/|\/\*|\*|@)/.test(l) &&
+	!/^[A-Za-z_$][\w$]*,?$/.test(l) && // bare identifier: re-export / enum / union member (facade noise) — duplicated TYPES are the C lens' job, not D
 	!/^[)}\];,{(]+$/.test(l);
 
 // Token normalizer (JS/TS-shaped): identifiers -> I, numbers -> N, strings -> S,
@@ -571,17 +664,21 @@ const dupSketch = (toks) => {
 	return new Set([...shingles].sort((a, b) => a - b).slice(0, DUP_SKETCH_K)); // bottom-k MinHash
 };
 
-const dupLineSets = new Map(); // f -> Set<lineHash>
+const dupLineSets = new Map(); // f -> Set<lineHash>   (inverted index + overlap context)
+const dupLineSeq = new Map(); // f -> [lineHash, ...]  (ordered, for the contiguous-run LCSubstr)
 const dupSketches = new Map(); // f -> Set<shingleHash>  (JS/TS only)
 for (const f of sourceFiles) {
 	const text = readText(f);
 	if (text === null) continue;
-	const lineSet = new Set();
+	const seq = [];
 	for (const raw of text.split(/\r?\n/)) {
 		const l = raw.trim().replace(/\s+/g, " ");
-		if (dupInteresting(l)) lineSet.add(dupHash(l));
+		if (dupInteresting(l)) seq.push(dupHash(l));
 	}
-	if (lineSet.size >= DUP_FILE_MIN_LINES) dupLineSets.set(f, lineSet);
+	if (seq.length >= DUP_FILE_MIN_LINES) {
+		dupLineSeq.set(f, seq);
+		dupLineSets.set(f, new Set(seq));
+	}
 	if (isJsTs(f)) {
 		const sk = dupSketch(dupNormalize(text));
 		if (sk) dupSketches.set(f, sk);
@@ -625,23 +722,61 @@ const dupJaccard = (a, b) => {
 	for (const x of small) if (big.has(x)) inter += 1;
 	return inter / (a.size + b.size - inter);
 };
+// Longest common CONTIGUOUS run of normalized line-hashes (line-level LCSubstr).
+// The literal copy-paste signal: file-size-independent, so a real block flags
+// even inside otherwise-different files. O(m*n) time, O(min) space.
+const dupMaxRun = (seqA, seqB) => {
+	if (!seqA || !seqB || seqA.length === 0 || seqB.length === 0) return 0;
+	const [A, B] = seqA.length <= seqB.length ? [seqA, seqB] : [seqB, seqA];
+	const n = A.length;
+	let prev = new Uint32Array(n + 1);
+	let best = 0;
+	for (let i = 0; i < B.length; i += 1) {
+		const cur = new Uint32Array(n + 1);
+		const bi = B[i];
+		for (let j = 0; j < n; j += 1) {
+			if (A[j] === bi) {
+				const v = prev[j] + 1;
+				cur[j + 1] = v;
+				if (v > best) best = v;
+			}
+		}
+		prev = cur;
+	}
+	return best;
+};
 
-const dupFlagged = [];
+// Score every candidate cheaply (shared/overlap/tokenSim), then compute the
+// contiguous run ONLY for the strongest line candidates (bounds the LCSubstr).
+const dupScored = [];
 for (const key of dupPairs) {
 	const [a, b] = key.split("|");
 	const { inter: shared, overlap } = dupOverlap(dupLineSets.get(a), dupLineSets.get(b));
 	const tokenSim = dupJaccard(dupSketches.get(a), dupSketches.get(b));
-	const byLines = shared >= DUP_MIN_LINES && overlap >= DUP_OVERLAP_MIN;
-	const byTokens = tokenSim >= DUP_TOKENSIM_MIN;
-	if (!byLines && !byTokens) continue;
-	const via = byLines && byTokens ? "both" : byLines ? "lines" : "structural";
-	dupFlagged.push({ a, b, shared, overlap, tokenSim, via });
+	dupScored.push({ a, b, shared, overlap, tokenSim });
 }
-// Keep the top pairs of EACH signal so a high line-overlap idiom (e.g. similar
-// pages) cannot crowd out a genuine structural clone, or vice versa.
+const runByKey = new Map();
+const runCandidates = dupScored
+	.filter((p) => p.shared >= DUP_MIN_RUN) // a run of >=DUP_MIN_RUN needs at least that many shared lines
+	.sort((x, y) => y.shared - x.shared)
+	.slice(0, DUP_RUN_EXAMINE_CAP);
+for (const p of runCandidates) {
+	runByKey.set(`${p.a}|${p.b}`, dupMaxRun(dupLineSeq.get(p.a), dupLineSeq.get(p.b)));
+}
+
+const dupFlagged = [];
+for (const p of dupScored) {
+	const run = runByKey.get(`${p.a}|${p.b}`) ?? 0;
+	const byLines = run >= DUP_MIN_RUN; // a contiguous literal copy-paste block
+	const byTokens = p.tokenSim >= DUP_TOKENSIM_MIN; // a structural (renamed) clone — independent
+	if (!byLines && !byTokens) continue;
+	const via = byLines && byTokens ? "both" : byTokens ? "structural" : "lines";
+	dupFlagged.push({ ...p, run, via });
+}
+// Keep the top pairs of EACH signal so neither buries the other.
 const topLines = dupFlagged
 	.filter((p) => p.via !== "structural")
-	.sort((x, y) => y.overlap - x.overlap || y.shared - x.shared)
+	.sort((x, y) => y.run - x.run || y.shared - x.shared)
 	.slice(0, DUP_OUT_PER_SIGNAL);
 const topStructural = dupFlagged
 	.filter((p) => p.via !== "lines")
@@ -654,26 +789,60 @@ for (const p of [...topStructural, ...topLines]) {
 	dupSeen.add(key);
 	result.dupCandidates.push(p);
 }
+// Lead with the structural signal: both > structural > lines, then tokenSim, then run.
+const viaRank = (p) => (p.via === "both" ? 0 : p.via === "structural" ? 1 : 2);
 result.dupCandidates.sort(
-	(x, y) => Math.max(y.overlap, y.tokenSim) - Math.max(x.overlap, x.tokenSim) || y.shared - x.shared,
+	(x, y) => viaRank(x) - viaRank(y) || y.tokenSim - x.tokenSim || y.run - x.run,
 );
 
-// --- Co-change candidates (hidden / temporal-coupling pre-signal) ------------
-// File pairs that change together across history but share no static import edge.
-// Same `git log` source as churn-hotspots, but commit boundaries are preserved
-// (one record per commit, sentinel-delimited) so we can build a co-occurrence matrix.
+// --- Co-change candidates + ripple-groups (hidden / temporal coupling) -------
+// File pairs that change together across history but share NO real import edge
+// (resolved graph) and where NEITHER file is a re-export barrel. Direction:
+// conf(a->b) = support / changes(a) ("when a changes, b follows"). Survivors
+// cluster into ripple-groups (connected components) — the system-model seed.
+// Same `git log` source as churn-hotspots, commit boundaries preserved.
 const COMMIT_DELIM = "@@@COMMIT@@@"; // no source filename starts with this
-const sourceSet = new Set(locByFile.keys());
+const importGraph = buildImportGraph(sourceFiles, sourceSet); // real resolved edges (Phase 1)
+const moduleOf = (p) => { const i = p.lastIndexOf("/"); return i < 0 ? "." : p.slice(0, i); };
+const barrelSet = new Set(); // re-export files whose co-change is a shadow of their impl
+for (const f of sourceFiles) {
+	if (!isJsTs(f)) continue;
+	const text = readText(f);
+	if (text !== null && isBarrel(text)) barrelSet.add(f);
+}
+// Hidden = NO real import edge either way (replaces the stem heuristic that went
+// blind on stopword-stem hubs like `types.ts`).
+const importLinked = (a, b) =>
+	Boolean(importGraph.get(a)?.has(b)) || Boolean(importGraph.get(b)?.has(a));
 const coRaw = safe([
 	"log", `--since=${CHURN_DAYS}.days`, "--name-only", "--find-renames", `--pretty=format:${COMMIT_DELIM}`, "--", target,
 ]);
 if (coRaw) {
+	// First pass: collect each commit's distinct source files, then derive the
+	// adaptive bulk-commit cap (the Pth percentile of THIS repo's commit sizes,
+	// clamped to [floor, ceiling]) before counting co-occurrences below.
+	const coCommits = [];
+	{
+		let buf = null;
+		const flushSizes = () => { if (buf && buf.length) coCommits.push([...new Set(buf)]); };
+		for (const line of coRaw.split("\n")) {
+			if (line.startsWith(COMMIT_DELIM)) { flushSizes(); buf = []; continue; }
+			const p = toPosix(line.trim());
+			if (!p || !sourceSet.has(p)) continue;
+			buf?.push(p);
+		}
+		flushSizes();
+	}
+	const commitSizes = coCommits.map((c) => c.length).sort((a, b) => a - b);
+	const commitCap = Math.min(
+		CO_CHANGE_CAP_CEILING,
+		Math.max(CO_CHANGE_CAP_FLOOR, quantile(commitSizes, CO_CHANGE_CAP_PERCENTILE)),
+	);
 	const pairSupport = new Map(); // "a\u0000b" (sorted) -> shared-commit count
 	const fileChanges = new Map(); // file -> total commits it appears in (within source set)
-	let current = null;
 	const flush = (files) => {
 		if (!files || files.length === 0) return;
-		if (files.length > CO_CHANGE_COMMIT_CAP) return; // bulk/refactor commit — not coupling signal
+		if (files.length > commitCap) return; // bulk/refactor commit (> adaptive cap) — not coupling signal
 		const uniq = [...new Set(files)];
 		for (const f of uniq) fileChanges.set(f, (fileChanges.get(f) ?? 0) + 1);
 		for (let i = 0; i < uniq.length; i += 1) {
@@ -683,43 +852,103 @@ if (coRaw) {
 			}
 		}
 	};
-	for (const line of coRaw.split("\n")) {
-		if (line.startsWith(COMMIT_DELIM)) { flush(current); current = []; continue; } // COMMIT_DELIM line begins a new commit record
-		const p = toPosix(line.trim());
-		if (!p || !sourceSet.has(p)) continue;
-		current?.push(p);
-	}
-	flush(current); // final commit
+	for (const c of coCommits) flush(c);
 
-	// Import-link heuristic: a pair is NOT hidden coupling if either file references
-	// the other's stem (an explicit, known dependency). Stopword/short stems are too
-	// generic to test reliably, so a pair resting only on those is treated as unlinked.
-	const textCache = new Map();
-	const cachedText = (f) => {
-		if (!textCache.has(f)) textCache.set(f, (readText(f) ?? "").toLowerCase());
-		return textCache.get(f);
-	};
-	const stemOf = (p) => baseOf(p).replace(/\.[a-z0-9]+$/i, "").toLowerCase();
-	const refsStem = (text, stem) =>
-		stem.length >= 4 && !DUP_STOPWORDS.has(stem) && text.includes(stem);
-	const importLinked = (a, b) =>
-		refsStem(cachedText(a), stemOf(b)) || refsStem(cachedText(b), stemOf(a));
+	// (hidden-coupling filter uses the real import graph via importLinked, defined above.)
 
-	const scored = [];
+	const survivors = [];
 	for (const [key, support] of pairSupport) {
 		if (support < CO_CHANGE_MIN_SUPPORT) continue;
 		const [a, b] = key.split("\u0000");
-		const denom = Math.min(fileChanges.get(a) ?? support, fileChanges.get(b) ?? support) || support;
-		const conf = support / denom;
+		if (barrelSet.has(a) || barrelSet.has(b)) continue; // re-export shadow, not coupling
+		if (importLinked(a, b)) continue; // explicit dependency — not hidden
+		const confAB = support / (fileChanges.get(a) ?? support);
+		const confBA = support / (fileChanges.get(b) ?? support);
+		const conf = Math.max(confAB, confBA);
 		if (conf < CO_CHANGE_MIN_CONF) continue;
-		scored.push({ a, b, support, conf });
+		// Arrow points from the driver — the file whose changes more often imply the other.
+		const [from, to] = confAB >= confBA ? [a, b] : [b, a];
+		survivors.push({ from, to, support, conf });
 	}
-	scored.sort((x, y) => y.support - x.support || y.conf - x.conf);
-	for (const s of scored.slice(0, CO_CHANGE_EXAMINE_CAP)) {
-		if (importLinked(s.a, s.b)) continue; // explicit dependency — not hidden
-		result.coChange.push(s);
-		if (result.coChange.length >= CO_CHANGE_OUT_CAP) break;
+	survivors.sort((x, y) => y.support - x.support || y.conf - x.conf);
+	result.coChange = survivors.slice(0, CO_CHANGE_OUT_CAP);
+
+	// Ripple-groups: connected components over ALL survivor edges (not just the
+	// capped display slice) — the entity ripple seed the system model consumes.
+	const parent = new Map();
+	const find = (x) => {
+		if (!parent.has(x)) parent.set(x, x);
+		let r = x;
+		while (parent.get(r) !== r) r = parent.get(r);
+		while (parent.get(x) !== r) { const n = parent.get(x); parent.set(x, r); x = n; }
+		return r;
+	};
+	const groupEdges = survivors.filter((s) => s.support >= CO_CHANGE_GROUP_MIN_SUPPORT);
+	for (const s of groupEdges) parent.set(find(s.from), find(s.to));
+	const groups = new Map();
+	for (const s of groupEdges) {
+		const root = find(s.from);
+		if (!groups.has(root)) groups.set(root, new Set());
+		groups.get(root).add(s.from);
+		groups.get(root).add(s.to);
 	}
+	result.coGroups = [...groups.values()]
+		.map((set) => {
+			const files = [...set].sort();
+			return { files, modules: [...new Set(files.map(moduleOf))].sort() };
+		})
+		.filter((g) => g.files.length >= 2)
+		.sort((a, b) => b.files.length - a.files.length || a.files[0].localeCompare(b.files[0]));
+}
+
+// --- Write-site ownership (S lens pre-signal) -------------------------------
+// Per persisted entity (db table) or RPC, the set of distinct modules that WRITE it.
+// >= 2 writing modules => the entity's write path is scattered (an owner: NONE candidate
+// the S lens + entity-mapper consume). Regex/token-based (dependency-free): finds
+// `.from("t")...insert|update|upsert|delete` and `.rpc("fn")`. Coarse — no alias /
+// indirection tracking; the count is the structural anchor, the agent names the invariant.
+{
+	const FROM_LIT_RE = /\.from\s*\(\s*["'`]([^"'`]+)["'`]\s*\)/g;
+	const FROM_VAR_RE = /\.from\s*\(\s*([A-Za-z_$][\w$]*)\s*\)/g; // const-named table -> resolved below
+	const CONST_STR_RE = /\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*["'`]([^"'`]+)["'`]/g;
+	const WRITE_CALL_RE = /\.(?:insert|update|upsert|delete)\s*\(/g;
+	const RPC_RE = /\.rpc\s*\(\s*["'`]([^"'`]+)["'`]/g;
+	const writeSites = new Map(); // "table:x" | "rpc:y" -> Set<file>
+	const addWrite = (key, f) => {
+		if (!writeSites.has(key)) writeSites.set(key, new Set());
+		writeSites.get(key).add(f);
+	};
+	for (const f of sourceFiles) {
+		if (!isJsTs(f)) continue;
+		const text = readText(f);
+		if (text === null) continue;
+		// Resolve same-file `const TABLE = "name"` so `.from(TABLE).insert` is caught
+		// (a common pattern, e.g. `.from(BODY_METRIC_ENTRIES_TABLE)`); unresolved const
+		// names are keyed by the identifier so the write is still counted.
+		const constStr = new Map();
+		let m;
+		CONST_STR_RE.lastIndex = 0;
+		while ((m = CONST_STR_RE.exec(text)) !== null) constStr.set(m[1], m[2]);
+		const froms = [];
+		FROM_LIT_RE.lastIndex = 0;
+		while ((m = FROM_LIT_RE.exec(text)) !== null) froms.push({ at: m.index, table: m[1] });
+		FROM_VAR_RE.lastIndex = 0;
+		while ((m = FROM_VAR_RE.exec(text)) !== null) froms.push({ at: m.index, table: constStr.get(m[1]) ?? m[1] });
+		froms.sort((a, b) => a.at - b.at);
+		WRITE_CALL_RE.lastIndex = 0;
+		while ((m = WRITE_CALL_RE.exec(text)) !== null) {
+			let table = null;
+			for (let i = froms.length - 1; i >= 0; i -= 1) {
+				if (froms[i].at < m.index && m.index - froms[i].at < 400) { table = froms[i].table; break; }
+			}
+			if (table) addWrite(`table:${table}`, f);
+		}
+		RPC_RE.lastIndex = 0;
+		while ((m = RPC_RE.exec(text)) !== null) addWrite(`rpc:${m[1]}`, f);
+	}
+	result.writeSites = [...writeSites.entries()]
+		.map(([key, set]) => ({ key, writers: set.size, files: [...set].sort() }))
+		.sort((a, b) => b.writers - a.writers || a.key.localeCompare(b.key));
 }
 
 emit();
@@ -761,8 +990,10 @@ function emit() {
 	block("churn-hotspots", result.churnHotspots.map((r) => `${r.f}\t${r.c}`));
 	block("export-usage", result.exportUsage.map((r) => `${r.f}\texports=${r.exports}\tinbound=${r.inbound === null ? "?" : r.inbound}`));
 	block("test-density", result.testDensity.map((r) => `${r.f}\tcases=${r.cases}\tasserts=${r.asserts}\tratio=${r.ratio}`));
-	block("dup-candidates", result.dupCandidates.map((r) => `${r.a} | ${r.b}\tshared=${r.shared}\toverlap=${r.overlap.toFixed(2)}\ttokenSim=${r.tokenSim.toFixed(2)}\tvia=${r.via}`));
-	block("co-change-candidates", result.coChange.map((r) => `${r.a} | ${r.b}\tsupport=${r.support}\tconf=${r.conf.toFixed(2)}`));
+	block("dup-candidates", result.dupCandidates.map((r) => `${r.a} | ${r.b}\trun=${r.run}\tshared=${r.shared}\toverlap=${r.overlap.toFixed(2)}\ttokenSim=${r.tokenSim.toFixed(2)}\tvia=${r.via}`));
+	block("co-change-candidates", result.coChange.map((r) => `${r.from} -> ${r.to}\tsupport=${r.support}\tconf=${r.conf.toFixed(2)}`));
+	block("co-change-groups", result.coGroups.map((r, i) => `g${i + 1}\tfiles=${r.files.join(", ")}\tmodules=${r.modules.join(", ")}`));
+	block("write-sites", result.writeSites.map((r) => `${r.key}\twriters=${r.writers}\tfiles=${r.files.join(", ")}`));
 
 	process.stdout.write(body);
 	process.exit(0);

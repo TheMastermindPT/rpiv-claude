@@ -8,6 +8,7 @@ repository: {Repository name}
 target: {repo-relative target path}
 target_kind: {module | directory | file}
 layer_count: {N}
+entities: {N domain entities from the System Model}
 file_count: {N source files, from metrics.mjs}
 prior_review: {relative path of the prior review for this target | none}
 health_score: {composite verdict — healthy | drifting | degraded}
@@ -47,10 +48,40 @@ Quantified structural health from `metrics.mjs` + ingested linters. Every number
 | Speculative-generality candidates (many exports, low inbound) | {count} | 0 ideal | {verdict} |
 | Test-theater candidates (assert/case ratio < 1) | {count} | 0 ideal | {verdict} |
 | dependency-cruiser violations | {count | n/a} | 0 | {verdict} |
+| Most-unstable folders (instability `I`, from `--metrics`) | {folder: I, … | n/a} | — | {SDP watch} |
 | knip dead exports / files | {count | n/a} | 0 | {verdict} |
+| Coverage (stmt / branch / fn) | {%/%/% | n/a} | — | {branch-gap watch} |
 | **Composite** | **{health_score}** | healthy | **{healthy / drifting / degraded}** |
 
 > Single-file target: peer-relative outlier detection is unavailable; size is judged against the language's absolute threshold instead (TS/Rust/Go ~200 LOC, Python/Kotlin ~300, C# ~400, Java ~500).
+
+---
+
+## System Model
+
+Top-down domain-entity / data-flow model from the `entity-mapper` agent (Build System Model step), seeded by the `co-change-groups` ripple-groups + db row-types + domain contracts. **The review reasons against THIS**: the layers below are a *view* of it, findings carry `(entity, stage)` coordinates, and themes attach to entities. Reading rules: **missing stage = unguarded entity; >= 2 owners = split-brain; `owner: NONE` = the ownerless-entity finding the synthesis elevates.**
+
+### L0 — System (entities + cross-entity edges)
+
+{one line per entity with its outbound entity edges, e.g. `WeeklyPlan -> consumes ExerciseCatalog, AthleteProfile`}
+
+### Entity x Stage matrix
+
+| Entity | DEFINE | PRODUCE | VALIDATE | PERSIST | READ | RENDER | MUTATE | AUDIT | Owner |
+|---|---|---|---|---|---|---|---|---|---|
+| {Entity} | `{file}` | `{file(s)}` | `{file}` | `{file(s)}` | `{file}` | `{file}` | {file or -} | {file or -} | {module \| NONE + scattered sites} |
+
+> Cells are owning file(s); `-` = stage absent (explain real gaps under L1). PRODUCE for a compute-heavy entity is a fat edge — expand its pipeline under L2.
+
+### L1 / L2 — per entity
+
+#### {Entity}
+- **Stages:** `file:line` per present stage (DEFINE -> PRODUCE -> VALIDATE -> PERSIST -> READ -> RENDER -> MUTATE -> AUDIT); PRODUCE expands to its L2 pipeline steps.
+- **Owner:** {module | NONE + scattered write sites}
+- **Ripple-group:** {the `co-change-groups` cluster that seeded this entity}
+- **Unguarded / split-brain:** {missing or duplicated stages + why it matters}
+
+{repeat per entity}
 
 ---
 
@@ -215,6 +246,7 @@ Each finding is a level-3 heading `### L<layer>-<seq> — <title>` followed by t
 | **Effort** | S (single-file, no consumers) / M (<=5 files, mechanical) / L (public-API or >=6 files) |
 | **Blast radius** | `internal` / `public-API` / `on-disk` / `cross-module` (from integration-scanner) |
 | **Class** | `polish` (rename / refactor / DRY) vs `redesign` (structural shift) |
+| **Entity / stage** | the System Model coordinate (entity + lifecycle stage, e.g. `WeeklyPlan/PERSIST`) this finding lives in, or `—` when no model |
 | **Verify** | `Verified` / `Weakened` (demoted one tier) — `Falsified` findings are dropped, never written |
 | **Status** | `open` / `accepted` / `rejected` / `deferred` / `withdrawn` |
 | **Depends on** | other finding IDs that must land first |
@@ -296,6 +328,7 @@ _Principles emerge during Step 5 triage and are captured at Step 7. Patterns tha
 - **Effort:** {S | M | L}
 - **Blast radius:** {internal | public-API | on-disk | cross-module}
 - **Class:** {polish | redesign}
+- **Entity / stage:** {System Model coordinate, e.g. `WeeklyPlan/PERSIST` | — when no model}
 - **Verify:** {Verified | Weakened — narrower than first stated}
 - **Status:** {open -> triaged outcome inline, e.g., **accepted** — {chosen option summary}}
 - **Depends on:** {LX-YY, ...}
@@ -369,6 +402,14 @@ Root-caused threads tying multiple findings to ONE architectural decision. Drawn
 
 {Repeat per phase.}
 
+### Guardrail rules (prevention)
+
+<!-- Proposed dependency-cruiser `forbidden` rules that would PREVENT the boundary leaks (L lens) from recurring. The review is READ-ONLY — these are actionable fixes for the downstream implement skill / the developer, NOT applied here. Omit if no L finding is rule-codifiable. -->
+
+| Prevents (finding) | Proposed `.dependency-cruiser.cjs` rule |
+|---|---|
+| {L{X}-{YY}} | `{ name: "{rule-name}", severity: "error", from: { path: "{from}" }, to: { path: "{to}" }, comment: "{why}" }` |
+
 ### Dependency graph (phase-level)
 
 ```
@@ -411,14 +452,30 @@ Plan ready for the implementation phase.
 
 ---
 
-## Linter ground-truth
+## Tool Coverage
 
-<!-- OMIT this whole section when no linter signal was available (no deps/knip scripts, or both timed out). -->
+<!-- From the Step-2 capability probe (`tool-probe.mjs`). Records which external tools backed which lens — explicit about what ran vs ran unaided. Tools are SUGGESTED, never installed. OMIT only when no manifest/ecosystem was recognized. -->
 
-Ingested verbatim from the repo's own tooling and treated as ground truth — the findings above intentionally do NOT re-report these; they address the slop the linters miss.
+| Tool | Lens | Status | Ran? | Notes |
+|---|---|---|---|---|
+| dependency-cruiser | L | {configured / installed-unconfigured / absent} | {yes/no} | {N forbidden rules — "meaningful" OR "weak: no-violations not trustworthy, suggested `depcruise --init`"} |
+| knip | A | {status} | {yes/no} | {dead-export summary} |
+| jscpd | D | {configured / installed / absent} | {yes/no} | {N clones, M% duplicated lines (Rust v5), or "absent — D on metrics dup-candidates"} |
+| coverage ({vitest/jest/…}) | T | {status} | {yes/no} | {report path, or "no report — gathered via checkpoint" / "running unaided"} |
+| ts-morph | S / Fe / A / C | {configured / installed-unconfigured / absent} | {yes/no} | {type-resolved write-sites / feature-envy / dead-exports / type-fragmentation via `semantic.mjs`, or "unavailable: {reason} — S/Fe/A/C on regex+agent signals"} |
+| {other} | {lens} | {status} | {no} | {suggested: `{install hint}`} |
 
-**dependency-cruiser** ({command}): {N violations | clean | unavailable}
-{- rule -> `file` -> `file` (one line per violation, capped)}
+**Lenses running unaided (no backing tool):** {M, C, …; + S/Fe/A when ts-morph absent} — inherently agent-only.
 
-**knip** ({command}): {N dead exports, M dead files | clean | unavailable}
-{- `file` — dead export `{symbol}` (capped)}
+### Ground truth ingested (do NOT re-report)
+
+Ingested verbatim from the repo's own tooling — the findings above intentionally do NOT re-report these; they address the slop the tools miss.
+
+- **dependency-cruiser** ({command}): {N violations | clean | rules-weak | unavailable}; instability — {highest-I folders}; circular — {N}; orphans — {N}.
+  {- rule -> `file` -> `file` (one line per violation, capped)}
+- **knip** ({command}): {N dead exports, M dead files | clean | unavailable}.
+  {- `file` — dead export `{symbol}` (capped)}
+- **jscpd** ({command}): {N clones, M% duplicated lines (Rust v5) | clean | absent — D ran on metrics dup}.
+  {- `fileA` <-> `fileB` (N lines) (capped)}
+- **coverage** ({command}): overall {stmt% / branch% / fn%}; {N} files with branch-gaps fed to the T lens.
+- **ts-morph / semantic.mjs** ({command}): {N type-resolved write-sites (writers>=2: …), N feature-envy candidates (behavioral split), dead-exports: N | "delegated to knip", type-fragmentation: N drift + N same-shape | unavailable: {reason}}.
