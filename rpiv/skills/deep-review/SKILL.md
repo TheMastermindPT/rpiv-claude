@@ -1,5 +1,5 @@
 ---
-name: code-review
+name: deep-review
 description: "Conduct comprehensive code reviews of pending changes, a branch, or a PR using parallel specialist agents that audit the diff, compare against peer code, and verify claims. Use when the user asks to 'review this', wants pending changes, a PR, a branch, or a diff reviewed, or asks for a code review. Produces review documents in .rpiv/artifacts/reviews/. Internal mechanics like row-only agent contracts and Gap-Finder set arithmetic are documented in the skill body."
 argument-hint: "[scope]"
 shell-timeout: 10
@@ -40,7 +40,7 @@ Every Wave-2 agent prompt contains EXACTLY: (a) `Known Context:` followed by the
 1. **Resolve scope via the bundled helper.** Determine the scope spec from the value the user supplied (visible in `## Input` above as the substituted argument). If empty, use the literal string `auto`; if ambiguous (prose, mixed list, unrecognised branch name), clarify via `ask_user_question` — options: (A) "review current branch vs default branch (first-parent)" → `auto`, (B) "review every tracked change vs HEAD (staged + unstaged)" → `modified`, (C) "review unstaged changes only" → `working`, (D) "restate scope" → free-text — then re-invoke. Then run:
 
    ```bash
-   node "${CLAUDE_PLUGIN_ROOT}/skills/code-review/_helpers/review-range.mjs" "<scope-spec>"
+   node "${CLAUDE_PLUGIN_ROOT}/skills/deep-review/_helpers/review-range.mjs" "<scope-spec>"
    ```
 
    The helper emits labeled key/value lines (`default_branch:`, `strategy:`, `oldest:`, `newest:`, `base:`, `tip:`, `range:`, `fp_flag:`) followed by a `---changed-files---` block. Read those as authoritative for the rest of Step 1. If `strategy: unrecognised` appears, the `note:` field explains why — clarify via `ask_user_question` and re-invoke with a valid spec.
@@ -481,7 +481,7 @@ Ask follow-ups, or chain forward.
 
 ---
 
-💬 Follow-up: describe the question in chat to append a timestamped Follow-up section. Retired IDs stay retired; re-run `/rpiv:code-review` for a fresh review.
+💬 Follow-up: describe the question in chat to append a timestamped Follow-up section. Retired IDs stay retired; re-run `/rpiv:deep-review` for a fresh review.
 
 **Next step:** `/rpiv:design "Address findings from .rpiv/artifacts/reviews/{filename}.md"` — run the design phase over the review document to produce a fix plan (only when status is `needs_changes` or `requesting_changes`).
 
@@ -493,7 +493,7 @@ Ask follow-ups, or chain forward.
 - **Append, never rewrite.** Edit the artifact to add a `## Follow-up {ISO 8601 timestamp}` section. The section heading's timestamp is the append-time record — no frontmatter update needed.
 - **Re-dispatch narrowly.** Spawn a single targeted `codebase-analyzer` on the area in question (1 agent max).
 - **Retired IDs stay retired.** Findings dropped at Step 6 (Falsified) do not re-enter follow-ups; new findings introduce new IDs with the same lens-prefix scheme (next ordinal).
-- **When to re-invoke instead.** If the diff itself changed (new commits, scope shift, different branch), re-run `/rpiv:code-review` for a fresh review. The previous block's `Next step:` stays valid for the existing review.
+- **When to re-invoke instead.** If the diff itself changed (new commits, scope shift, different branch), re-run `/rpiv:deep-review` for a fresh review. The previous block's `Next step:` stays valid for the existing review.
 
 ## Important Notes
 

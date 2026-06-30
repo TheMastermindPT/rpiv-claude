@@ -3,7 +3,7 @@
 // LLM-invoked (not render-time substituted). The LLM derives the scope spec
 // from `$ARGUMENTS` (or `ask_user_question` clarification) and runs:
 //
-//   node "${CLAUDE_PLUGIN_ROOT}/skills/code-review/_helpers/review-range.mjs" "<scope-spec>"
+//   node "${CLAUDE_PLUGIN_ROOT}/skills/deep-review/_helpers/review-range.mjs" "<scope-spec>"
 //
 // Accepted <scope-spec> values:
 //   auto                — empty-scope-default: feature branch vs default branch, first-parent

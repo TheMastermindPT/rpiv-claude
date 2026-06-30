@@ -60,7 +60,7 @@ When this command is invoked:
    - **Exactly one entry** — confirm with `ask_user_question`: "Revise this plan?" with options "Revise `<filename>` (Recommended)" and "Pick a different path".
    - **Two or more entries** — present the top 4 filenames as `ask_user_question` options.
 
-   If the user is coming from `/rpiv:code-review`, also ask which findings should change the plan. Wait for user selection, then re-check for feedback.
+   If the user is coming from `/rpiv:deep-review`, also ask which findings should change the plan. Wait for user selection, then re-check for feedback.
 
    **If plan file provided but NO feedback**:
    ```
