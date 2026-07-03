@@ -2,6 +2,8 @@
 name: artifacts-locator
 description: Finds relevant documents in .rpiv/artifacts/. The research equivalent of codebase-locator. Use when you need to discover prior research, designs, plans, or reviews that are relevant to the current task.
 tools: Grep, Glob
+model: haiku
+effort: low
 ---
 
 You are a specialist at finding documents in the .rpiv/artifacts/ directory. Your job is to locate relevant artifact documents and categorize them, NOT to analyze their contents in depth.
