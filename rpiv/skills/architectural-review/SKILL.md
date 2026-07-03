@@ -203,7 +203,7 @@ Layers mirror dependency direction. Higher layers consume lower-layer vocabulary
 
 3. **Write the skeleton** with the Write tool, `status: in-progress`:
    - **Frontmatter** with all template_version 2 fields. Fill `file_count`, `loc_*`, `entities`, and the **Health Scorecard** NOW from Step 2 metrics + linter summary (this is the quantified backbone, available before any finding). Set `prior_review` to the Step 2 path or `none`. Leave `severity`/`verification`/`drift`/`slop_by_lens` as zeros for now.
-   - **System Model:** write the `## System Model` section from the Step 2.7 `entity-mapper` output (L0 + Entity x Stage matrix + per-entity L1/L2). Omit only when Step 2.7 was gate-skipped.
+   - **System Model:** write the `## System Model` section from the Step 2.7 `entity-mapper` output (L0 table + per-entity L1/L2 with style-specific stage bullets). Omit only when Step 2.7 was gate-skipped.
    - **Drift Delta:** placeholder if a prior review exists, else omit the section (scorecard Composite notes "Baseline review").
    - **Methodology / Slop Inventory / per-layer / themes / polish plan:** empty placeholders; one `## Layer N — {name}` heading per approved layer.
 
@@ -211,9 +211,9 @@ Layers mirror dependency direction. Higher layers consume lower-layer vocabulary
 
 ### Step 5: Slop-Lens Wave (two-wave, context-isolated)
 
-Detect the judgment-level slop linters miss. Instead of dispatching all 10 lenses at once, dispatch in two waves. **Wave 1** runs the structural lenses — god-file (G), low-cohesion (Lc), and duplication (D) — which are metric-gated (run only on the files metrics flagged), cheap, and produce findings immediately actionable at the steering checkpoint. **Wave 2** runs the cross-cutting lenses — fragmentation (C), dead abstraction (A), test theater (T), leaky boundary (L), missing abstraction (M), state ownership (S), and feature envy (Fe) — which search the full codebase and are more expensive. A lightweight sweeper between waves finds G+Lc+D interactions; a steering checkpoint lets the developer skip/narrow Wave 2 based on Wave 1 results.
+Detect the judgment-level slop linters miss. Instead of dispatching all 10 lenses at once, dispatch in two waves. **Wave 1** runs the structural lenses — god-file (G), low-cohesion (Lc), and duplication (D) — which are metric-gated (run only on the files metrics flagged), cheap, and produce findings immediately actionable at the steering checkpoint. **Wave 2** runs the cross-cutting lenses — fragmentation (C), dead abstraction (A), test theater (T), leaky boundary (L), missing abstraction (M), state ownership (S), and feature envy (Fe) — which search the full codebase and are more expensive. A lightweight sweeper between waves finds G+Lc+D interactions; a **warrant-driven** steering checkpoint (Step 5c) then decides — from the FULL deterministic seed surface, not just the Wave-1 findings — whether to skip Wave 2, run it selectively (only the warranted lenses), or run it in full.
 
-**The M and S lenses always fire in Wave 2** (they have no metric pre-filter and search the full codebase).
+**M and L always fire whenever Wave 2 runs** — missing-abstraction and boundary have no cheap metric seed, so they run in every selective or full wave (skipped only when the wave is skipped entirely). **S is seed-gated**: it fires when `write-sites` shows `writers >= 2` OR the System Model has an `owner: NONE` entity (a `writers=1` path with a clear owner is clean by design), so the warrant runs it only where an ownership concern actually exists.
 
 #### 5a. Build the Slop Map (shared across both waves)
 
@@ -241,8 +241,8 @@ The **co-change pairs are the temporal-coupling (Tc) lens in full** — there is
 
 Dispatch these three metric-gated lenses in a single multi-Agent message. Skip any whose metric block is empty (no godfile-candidates → skip G; no low-cohesion → skip Lc; no dup-candidates + no jscpd → skip D).
 
-- **G — God-file / oversized-module** (per `godfile-candidates` row — NOT raw `size-outliers`): `codebase-analyzer` — "For `{file}` ({loc} LOC, {x}x median, {cats} concern categories, cohesion {coh}, flagged: {reason}), name each DISTINCT responsibility with its line-range and the natural split boundary — name each extractable unit and its target filename. Do NOT say 'split into modules'. Severity = responsibility-mixing FIRST (category count + reason), then x_median scaled by inbound blast. A file rescued by cohesion is not a candidate; do not invent one from `size-outliers`."
-- **Lc — Low cohesion / disjoint responsibilities** (per `low-cohesion` row): `codebase-analyzer` — "For `{file}` (cohesion {coh}, {syms} top-level symbols, {islands} disjoint islands), identify the clusters of top-level symbols that never reference each other. Per cluster emit: its responsibility, its symbols + line-range, and the file it should become. Severity = island count + spread across responsibilities."
+- **G — God-file / oversized-module** (per `godfile-candidates` row — NOT raw `size-outliers`): `codebase-analyzer` — "For `{file}` ({loc} LOC, {x}x median, {cats} concern categories, cohesion {coh}, flagged: {reason}), name each DISTINCT responsibility with its line-range and the natural split boundary — name each extractable unit and its target filename. Do NOT say 'split into modules'. Severity = responsibility-mixing FIRST (category count + reason), then x_median scaled by inbound blast. A file flagged for mixed responsibilities is high-severity regardless of LOC — the mixing IS the defect, not the size. A file rescued by cohesion is not a candidate; do not invent one from `size-outliers`."
+- **Lc — Low cohesion / disjoint responsibilities** (per `low-cohesion` row): `codebase-analyzer` — "For `{file}` (cohesion {coh}, {syms} top-level symbols, {islands} disjoint islands), identify the clusters of top-level symbols that never reference each other. Per cluster emit: its responsibility, its symbols + line-range, and the file it should become. Severity = island count + spread across responsibilities. This is NOT a size finding — flag low cohesion even at normal LOC."
 - **D — Semantic duplication / parallel implementations** (per dup pair): `codebase-pattern-finder` — "When jscpd ran, its `duplicates` are AUTHORITATIVE. For each candidate PAIR (`{a}`, `{b}`), read both ends. `via=lines`/`both` = literal copy-paste — anchor on the contiguous block. `via=structural` = Type-2 clone — read for matching control flow. REJECT convention idioms (CRUD scaffolding, error boilerplate, re-export facades). If the shared block is a repeated DECLARATION that should be a named type/helper, emit tagged **M (missing abstraction)** — don't force it into D. Then, for the strongest pair, `peer-comparator` — emit Mirrored / Missing / Diverged / Intentionally-absent, no severity."
 
 Also dispatch in the same message:
@@ -268,32 +268,44 @@ The Wave 1 sweeper output is lightweight — typically 0-3 compounds. Its findin
 - Are passed to Wave 2 lenses as context ("when analyzing concept fragmentation, check these interacting god-files first")
 - Are re-consumed by the full sweeper (Step 6.5) alongside Wave 2 findings
 
-#### 5c. Steering Checkpoint
+#### 5c. Steering Checkpoint (warrant-driven)
 
-Use `ask_user_question` to decide Wave 2 strategy:
+The decision to run the expensive cross-cutting wave is driven by the **full deterministic seed surface**, not just the Wave-1 structural findings. This closes a real blind spot: a target can be structurally clean (no god-files, cohesive, no dup) yet carry genuine fragmentation, dead code, scattered writes, or feature-envy that only the cross-cutting lenses find — and the old structural-only gate would skip right past it. (Verified on gymapp: `lib/generation/adaptive-context` — 17 files, G=0 Lc=0 D=0, structurally silent — nonetheless has a real feature-envy finding the old gate skipped.)
 
-"Wave 1: {G-count} god-files, {Lc-count} cohesion issues, {D-count} duplications. {IX-count} interaction compounds. {file_count} files, median {loc_median} LOC. Wave 2 cross-cutting analysis (7 lenses on full codebase)?"
+Compute the warrant deterministically. `metrics_out.txt` and `semantic_out.txt` are the Step 2 outputs; `{knip_dead}` is the count of knip dead exports+types whose path is under the target (from the Step 2 knip run — omit the flag when knip was absent); `{owner_none}` is the count of System-Model entities with `owner: NONE` (Step 2.7):
 
-Header: "Wave 2". Options:
-- **"Skip — 10-dim only (Recommended)"** when Wave 1 found 0-1 findings AND file_count < 100 AND this is not a pre-1.0 review. Proceed directly to per-layer 10-dim sweep (Step 7) — skip the entire Wave 2 + verify gate + full sweeper. The review runs as a lightweight health check.
-- **"Run full Wave 2 (Recommended)"** when Wave 1 found >= 2 findings OR file_count >= 100 OR this is a pre-1.0 review. Execute Step 5d below.
-- **"Narrow scope"** — run Wave 2 lenses only on files touched by Wave 1 findings + their direct consumers (from integration-scanner). The orchestrator computes the restricted file set and passes it to each Wave 2 lens.
-- **"Pause — I'll fix Wave 1 findings first"** — STOP the review. The developer resolves structural issues, then re-runs the review (Wave 1 will find fewer candidates).
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/_helpers/warrant.mjs" \
+  --files={file_count} --knip-dead={knip_dead} --owner-none={owner_none} \
+  --semantic=semantic_out.txt {--pre10 if pre-1.0} \
+  < metrics_out.txt
+```
 
-On "Skip": record in the artifact that Wave 2 was skipped. The review proceeds to Step 7 (per-layer 10-dim sweep) directly.
+It applies each lens's DEFECT PREDICATE — not raw row counts (`export-usage` and `write-sites` are dominated by non-defect rows; A is knip-primary) — and returns one JSON line: `band` (`skip` / `selective` / `full`), `liveLenses`, `selectiveWave2` (the exact Wave-2 lens set to dispatch), `prompt`, `reason`. Act on `band`:
 
-On "Pause": print "Review paused. Re-run /rpiv:architectural-review after fixing Wave 1 findings." and stop.
+- **`skip`** (nothing warranted — no cross-cutting seed AND no structural finding) — auto-skip Wave 2 + verify gate + full sweeper; go straight to the per-layer 10-dim sweep (Step 7). Record "Wave 2 skipped — warrant 0" and the per-lens vector in the artifact. **No prompt.**
+- **`selective`** (1–3 lenses warranted, < 100 files, not pre-1.0) — auto-run Step 5d on **exactly `selectiveWave2`** — the live cross-cutting lenses plus the always-on M and L. The dead seed-driven lenses are skipped (e.g. no A agent dispatched when nothing is dead). Record the vector + which lenses ran. **No prompt** — it is cheap and targeted.
+- **`full`** (`prompt: true` — ≥ 4 lenses warranted, or ≥ 100 files, or pre-1.0) — the expensive path, and the ONLY band that stops for input. Present the warrant via `ask_user_question`:
+
+  "Warrant: {liveLenses, each with its seed count}. {file_count} files. {reason}. Run the full Wave 2 (7 lenses)?" Header "Wave 2". Options:
+  - **"Run full Wave 2 (Recommended)"** — execute Step 5d on all seven cross-cutting lenses.
+  - **"Narrow scope"** — run Wave 2 only on files touched by Wave 1 findings + their direct consumers (from integration-scanner). The orchestrator computes the restricted file set and passes it to each lens.
+  - **"Pause — I'll fix findings first"** — STOP. Print "Review paused. Re-run /rpiv:architectural-review after fixing findings." and stop.
+
+The warrant never overrides a developer choice — on the `full` band the developer still decides full / narrow / pause. It removes the reflexive prompt on the cheap bands and makes the skip decision **evidence-based**: it sees the cross-cutting seeds the old structural proxy could not.
+
+**Fallback:** if `warrant.mjs` is unavailable (missing node, etc.), degrade to the structural heuristic — skip only when Wave 1 found 0–1 findings AND file_count < 100 AND not pre-1.0; otherwise run full — and note "warrant unavailable — structural heuristic" in the artifact.
 
 #### 5d. Wave 2 — Cross-cutting lenses (C, A, T, L, M, S, Fe)
 
-Dispatch these seven lenses in a single multi-Agent message. Each receives the full Slop Map + the Wave 1 findings + IX compounds as context (they CAN see each other's output — Wave 2 lenses run cooperatively, not isolated from Wave 1).
+**Dispatch only the lenses the checkpoint selected.** On the `full` band, dispatch all seven. On the `selective` band, dispatch exactly the warrant's `selectiveWave2` set (the live cross-cutting lenses + always-on M and L) — skip the rest and note them as "no seed — not dispatched" in the artifact. Below, each lens is described in full; run the subset that applies. Send them in a single multi-Agent message. Each receives the full Slop Map + the Wave 1 findings + IX compounds as context (they CAN see each other's output — Wave 2 lenses run cooperatively, not isolated from Wave 1).
 
 - **C — Concept / type fragmentation** (always for typed targets): `codebase-pattern-finder` — "Start from `type-fragmentation-semantic` seeds when present (drift: same name, different shapes; same-shape: same shape, different names). Then also find name-based duplicates: `export type X` / `interface X` / enum / const-union NAMES. Per concept emit every definition `file:line`, whether definitions AGREE or DRIFTED, and the canonical home."
 - **A — Speculative generality / dead abstraction** (per `export-usage` row with `inbound=0`, cross-ref knip): `codebase-analyzer` — "Confirm whether the abstraction is speculative: cite actual consumers or `<none found>`. Distinguish genuinely-unused from knip false-negative. `inbound=?` means unmeasured, NOT dead. When `skipped (knip present)`, A rests on knip + `export-usage`."
 - **T — Test theater** (fires on `test-density` rows AND/OR `coverage` gaps): `codebase-analyzer` — "Cross assert-density with coverage. 2x2: covered+asserted=real (skip); covered+NOT asserted=theater; NOT covered+has asserts=mock theater; covered with 0%-branch region=coverage gap (not theater). Per finding: `file:line` + verbatim test + coverage number."
 - **L — Leaky abstraction / boundary erosion** (always; fed depcruise's FULL graph): `codebase-analyzer` — "depcruise violations are ground truth — do NOT re-report. Find SDP violations (stable→unstable), SEMANTIC leaks (implementation types exposed), circular clusters / orphans the rules miss. For any leak that a `forbidden` rule could prevent, emit a `prevention:` line with the proposed rule (read-only — do NOT modify `.dependency-cruiser.cjs`)."
 - **M — Missing abstraction** (always): `codebase-pattern-finder` — "Find the same CONCEPTUAL shape re-implemented inline across >= 2 files — NOT literal copy-paste (that's D). Per cluster: every `file:line`, the shared shape, the missing primitive (named function/type/module). Severity = repetition count + layer spread."
-- **S — State / data-flow ownership** (always; grounded by write-site counts + System Model): `codebase-analyzer` — "START from `write-sites` with `writers >= 2`. Then the System Model's `owner: NONE` entities. Per finding: `file:line`, what the invariant IS, which sites can violate it. `writers=1` = clean — do NOT manufacture. Flag lower-confidence unless backed by `writers>=2`. **Respect style-specific ownership: event-driven PERSIST has no single owner by design; CQRS READ has no owner — do NOT flag these.**"
+- **S — State / data-flow ownership** (seed-gated: fires on `write-sites writers >= 2` OR a System-Model `owner: NONE` entity; grounded by write-site counts + System Model): `codebase-analyzer` — "START from `write-sites` with `writers >= 2`. Then the System Model's `owner: NONE` entities. Per finding: `file:line`, what the invariant IS, which sites can violate it. `writers=1` = clean — do NOT manufacture. Flag lower-confidence unless backed by `writers>=2`. **Respect style-specific ownership: event-driven PERSIST has no single owner by design; CQRS READ has no owner — do NOT flag these.**"
 - **Fe — Feature envy** (per `feature-envy` row; REJECT first, confirm second): `codebase-analyzer` — "When `feature-envy-semantic` is present: `behavioralRefs` is the genuine-envy magnitude (data-only leans already dropped). REJECT: thin forwarders, facade/orchestrator layers, constants/config files. Confirm genuine envy at FUNCTION granularity: a function doing substantial LOGIC on the envied module's members. Per finding: `file:line`, function name, suggested home on the envied module."
 
 Also dispatch in the same message:
@@ -379,7 +391,7 @@ Present each via `ask_user_question`: "L{X}-{YY} ({lens}) — {headline}. Eviden
 - **God-file candidates:** include "Split into `<dir>/` with the proposed decomposition" using the G-lens's named extractable units.
 
 #### 7.5 Persist Each Triaged Finding
-Edit the `## Layer N` section the instant an outcome is chosen. Write the FULL enriched finding block (per the template's Finding shape): Lens, Evidence (+verbatim), Quantified anchor, What it is, Why it's slop, **Remediation** (safe-refactor sequence + Acceptance criteria + Test strategy + Trade-off/alternative — use integration-scanner's consumer list for blast radius and precedent-locator for the sequence), Severity/Effort/Blast radius/Class, Verify, Status (verbatim from the chosen option: `accepted` / `rejected` / `deferred` / `withdrawn`), Entity/stage (the System Model coordinate this finding lives in, or `—` when no model), Depends on, Cross-cut tag. Maintain `unresolved_finding_count` (increment on file from 7.2, decrement on triage).
+Edit the `## Layer N` section the instant an outcome is chosen. Write the FULL enriched finding block (per the template's Finding shape): Lens, Evidence (+verbatim), Quantified anchor, What it is, Why it's slop, **Remediation** (safe-refactor sequence + Acceptance criteria + Test strategy + Trade-off/alternative — use integration-scanner's consumer list for blast radius and (when Wave 2 ran) precedent-locator for the sequence, or `git log --grep` for the target when Wave 2 was skipped), Severity/Effort/Blast radius/Class, Verify, Status (verbatim from the chosen option: `accepted` / `rejected` / `deferred` / `withdrawn`), Entity/stage (the System Model coordinate this finding lives in, or `—` when no model), Depends on, Cross-cut tag. Maintain `unresolved_finding_count` (increment on file from 7.2, decrement on triage).
 
 #### 7.6 Tally
 Append the layer tally table (accepted/rejected/deferred/withdrawn), the **slop lenses fired in this layer** (D/C/G/A/T/L/M/S/Tc/IX/10dim counts), cross-cut tags introduced/reused, and within-layer dependency edges. Batched layers: per-batch tally + a roll-up after all batches.
@@ -405,7 +417,13 @@ Feed it one JSON line per finding:
 
 The `quotedLines` field is the verbatim evidence line(s) from the finding. The helper normalises whitespace, strips comments, and produces a deterministic SHA-256 prefix. Two findings with the same lens class, same normalised code, and same symbol produce the same fingerprint regardless of file path or line numbers.
 
-Collect fingerprint → finding ID mappings for all accepted/deferred findings.
+The helper emits **exactly one stdout line per input finding**. A well-formed finding yields `{id, fp, lens, symbol}`; a malformed one yields `{id, fp: null, error}` (surfaced, never silently dropped). The run summary (`N ok, M invalid`) goes to stderr only, so it never pollutes the fingerprint stream.
+
+**Assertion (two checks, both must hold before matching):**
+1. **Count:** stdout line count == number of input findings. A mismatch means the helper itself misbehaved — abort and report.
+2. **No nulls:** no stdout line has `fp: null`. Any such line is a malformed finding — abort, print its `error`, and fix the input before proceeding.
+
+Then collect fingerprint → finding ID mappings from the `fp`-bearing lines for all accepted/deferred findings.
 
 #### 8b. Compute fingerprints for the prior review
 

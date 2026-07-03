@@ -89,7 +89,7 @@ Top-down domain-entity / data-flow model from the `entity-mapper` agent (Build S
 
 **Scorecard:** Resolved {R} · Regressed {Rg} · Still-open {S} · NEW {N} · **Net slop Δ {+/-Δ}**
 
-Matched by fingerprint `path#symbol@lens` (line-independent). Prior finding IDs shown as display aliases.
+Matched by content-hash fingerprint via `fingerprint.mjs` — survives file renames and line drift. Prior finding IDs shown as display aliases.
 
 ### Regressed — was fixed, slop returned ({Rg})
 
@@ -237,6 +237,7 @@ Each finding is a level-3 heading `### L<layer>-<seq> — <title>` followed by t
 | **Lens** | `D` duplication / `C` fragmentation / `G` god-file / `A` dead-abstraction / `T` test-theater / `L` leaky-boundary / `M` missing-abstraction / `S` state-flow / `Lc` low-cohesion / `Fe` feature-envy / `Tc` temporal-coupling / `IX` interaction-compound / `10dim` (classic dimension sweep) |
 | **Entity / stage** | the System Model coordinate (entity name + style-specific stage, e.g. `Order/EMIT` (event-driven), `WeeklyPlan/PERSIST` (CRUD), `Report/TRANSFORM` (pipeline)) this finding lives in, or `—` when no model |
 | **Fingerprint** | content-hash fingerprint for drift delta matching (survives file renames and line drift). Computed via `fingerprint.mjs` at Step 8 |
+| **Symbol** | the canonical symbol name this finding targets (e.g. `GodFile`, `validateOrder`). Used with `lens` + evidence to construct the fingerprint. Omit only when the finding targets no single named symbol (e.g. co-change pairs) |
 | **Evidence** | `file.ext:lineA-lineB` + verbatim line in backticks (citation contract) |
 | **Quantified anchor** | the metric that sets severity (e.g. `1178 LOC = 11.9x median`; `21 exports, 0 inbound`; `3 definition sites`) |
 | **What it is** | what the code does today |
@@ -246,7 +247,6 @@ Each finding is a level-3 heading `### L<layer>-<seq> — <title>` followed by t
 | **Effort** | S (single-file, no consumers) / M (<=5 files, mechanical) / L (public-API or >=6 files) |
 | **Blast radius** | `internal` / `public-API` / `on-disk` / `cross-module` (from integration-scanner) |
 | **Class** | `polish` (rename / refactor / DRY) vs `redesign` (structural shift) |
-| **Entity / stage** | the System Model coordinate (entity + lifecycle stage, e.g. `WeeklyPlan/PERSIST`) this finding lives in, or `—` when no model |
 | **Verify** | `Verified` / `Weakened` (demoted one tier) — `Falsified` findings are dropped, never written |
 | **Status** | `open` / `accepted` / `rejected` / `deferred` / `withdrawn` |
 | **Depends on** | other finding IDs that must land first |
