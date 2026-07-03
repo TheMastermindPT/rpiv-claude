@@ -10,47 +10,51 @@ disable-model-invocation: true
 
 You are tasked with implementing an approved technical plan from `.rpiv/artifacts/plans/`. These plans contain phases with specific changes and success criteria.
 
-For behavior-changing work, implementation must follow the plan's TDD Contract: write or update the failing test first, run it to confirm meaningful failure, implement the smallest change required to pass, refactor, and re-run the relevant tests.
-
-Passing tests are necessary but not always sufficient. For user-facing, API-backed, persistence-backed, job-backed, or integration-heavy behavior, implementation must also perform the Runtime Verification Contract when tooling is available: browser checks, API/network inspection, database verification, logs/jobs, screenshots, or other real-system evidence.
-
 ## Input
 
-`$1` is the plan path (empty/literal → ask user); `${@:2}` is the phase scope (empty → all phases sequentially; else scope to that phase only).
+$ARGUMENTS
+
+The input above is `<plan-path> [phase]`:
+- First token is the plan path under `.rpiv/artifacts/plans/`.
+- Anything after it (e.g. "Phase 2") names a single phase to scope to.
+
+Rules:
+- If a phase is named, implement ONLY that phase. Stop and print the closing block as soon as its success criteria pass. Do not read, edit, or check off other phases' sections.
+- If no phase is named, implement every phase in the plan sequentially.
+- If the input is empty or the plan path is missing/literal, ask the user for the plan path before proceeding.
 
 ## Getting Started
 
 With a plan path in hand:
 - Read the plan completely and check for any existing checkmarks (- [x])
-- Extract each phase's TDD Contract, Runtime Verification Contract, success criteria, and explicit exemptions
+- Extract each phase's `### Test Contract:` (Behavior/Oracle/Expected-red entries + TDD-exempt markers) and `### Success Criteria:`
+- **Contract gate**: if any in-scope behavior-changing phase has no `### Test Contract:` (or an empty one), STOP before editing any file and print:
+
+  ```
+  This plan has no Test Contract for Phase {N} ({name}) — pre-TDD plan.
+  TDD is the standard workflow: implement does not execute behavior-changing
+  phases without a contract.
+
+  Retrofit contracts first:
+  /rpiv:revise {plan-path} "Retrofit Test Contracts onto each behavior-changing phase"
+
+  Then re-run /rpiv:implement.
+  ```
+
+  A phase whose contract is a single whole-phase `TDD-exempt` marker passes the gate — that's an explicit exemption, not a missing contract.
 - Read the original ticket and all files mentioned in the plan
 - **Read files fully** - never use limit/offset parameters, you need complete context
-- Read relevant existing tests, test utilities, fixtures, mocks, and runtime verification helpers before editing source files
 - Think deeply about how the pieces fit together
 - Create a todo list to track your progress
-- Start implementing only after you understand:
-  - the behavior being changed,
-  - the public interface to test through,
-  - the expected red failure,
-  - the minimal implementation path,
-  - the runtime proof required after tests pass.
+- Start implementing if you understand what needs to be done
 
 ## Implementation Philosophy
 
 Plans are carefully designed, but reality can be messy. Your job is to:
 - Follow the plan's intent while adapting to what you find
-- Implement each phase fully before moving to the next
-- Use test-first implementation for behavior-changing work unless the plan explicitly marks the item as TDD-exempt
+- Implement each in-scope phase fully before starting the next
 - Verify your work makes sense in the broader codebase context
-- Prove important behavior through automated tests and, where required, runtime verification
-- Update progress checkboxes and implementation evidence in the plan as you complete sections
-
-Do not treat "code compiles" as implementation complete. A phase is complete only when:
-- required red/green/refactor steps are done or validly exempted,
-- relevant automated tests pass,
-- phase success criteria pass,
-- runtime verification is performed or explicitly marked unavailable with a reason,
-- evidence is recorded clearly enough for validate to audit.
+- Update checkboxes in the plan as you complete sections
 
 When things don't match the plan exactly, think about why and communicate clearly. The plan is your guide, but your judgment matters too.
 
@@ -65,184 +69,61 @@ If you encounter a mismatch:
 
   ```
 
-  Use the `ask_user_question` tool to resolve the mismatch. Question: "{Brief summary of the mismatch}". Header: "Mismatch". Options: "Follow the plan" (Adapt the plan's approach to the current code state while preserving required behavior/proof); "Skip this change" (Move on without this change — it may not be needed); "Update the plan" (The plan needs to be revised before continuing); "Mark proof unavailable" (Only for runtime verification that cannot be performed in this environment; record the gap clearly).
+  Use the `ask_user_question` tool to resolve the mismatch. Question: "{Brief summary of the mismatch}". Header: "Mismatch". Options: "Follow the plan" (Adapt the plan's approach to the current code state); "Skip this change" (Move on without this change — it may not be needed); "Update the plan" (The plan needs to be revised before continuing).
 
-## TDD Execution Approach
+## TDD Execution (per behavior-changing item)
 
-For each behavior-changing item in a phase, follow this loop:
+Work each phase's `### Test Contract:` Behavior entries red -> green, one at a time, BEFORE writing the implementation code they prove:
 
-### 1. Behavior
+1. **Red** — author the test by transcribing the contract: the contract's Oracle values become the test's assertions verbatim (exact inputs, exact expected outputs — do not weaken to shape/presence checks), in the contract's named test file. Run it. It must fail **for the contract's Expected red reason**. A compile/import error or an unrelated failure is not a valid red — fix the test until the failure matches, and if the contract's expected-red reason turns out to be impossible, that's a plan mismatch (use the mismatch flow above; contract changes go through `/rpiv:revise`).
+2. **Green** — write the smallest implementation that passes the test. Run it again; confirm pass.
+3. **Refactor** — clean up while keeping the test green.
 
-- Identify the exact behavior from the plan.
-- Identify the public interface to test through.
-- Read nearby tests and follow existing project conventions.
-- Avoid testing private implementation details unless no public seam exists and the plan explicitly allows it.
+Items marked `TDD-exempt` in the contract skip the loop — note the exemption in evidence and proceed. Never edit implementation files for a contract Behavior before its failing test exists and has been observed red.
 
-### 2. Red
+**Test-theater lint** (after a phase's tests are written or changed): if the project exposes a test-lint command (e.g. an npm script like `lint:test-theater`) or an ast-grep rule pack (an `sgconfig.yml` under `tools/` or the repo root), run it on the changed test files. Rule-pack **warnings** on newly written tests: fix before marking the phase complete. **Hints**: fix or record a one-line justification in evidence. If no pack/tool exists, record `test-lint: unavailable` and move on — never fail on absence.
 
-- Write the smallest test that proves the behavior is missing or broken.
-- Run the narrowest relevant test command.
-- Confirm the test fails for the expected reason.
+**Evidence** — append a `## TDD Evidence (implement)` section at the end of the plan file (create it on first use; append per phase, never rewrite prior entries). This is the audit trail `/rpiv:validate` checks:
 
-If the test passes before implementation:
-- Check whether the behavior already exists.
-- If the behavior already exists, record that no source change is needed for that behavior.
-- If the test is weak, strengthen the test until it meaningfully proves the missing behavior.
-- Do not proceed to implementation until the red phase is meaningful or the item is explicitly marked as already satisfied.
+```markdown
+## TDD Evidence (implement)
 
-### 3. Green
-
-- Implement the smallest source change required to pass the failing test.
-- Re-run the same narrow test command.
-- Fix failures until the test passes for the right reason.
-
-### 4. Refactor
-
-- Improve names, structure, duplication, boundaries, and clarity without changing behavior.
-- Re-run the narrow test command after refactoring.
-- Run broader tests at the phase boundary.
-
-### 5. Evidence
-
-Record TDD evidence for each behavior:
-
-```md
-TDD Evidence:
-- Behavior:
-- Test file:
-- Test name:
-- Red command:
-- Red failure:
-- Implementation files:
-- Green command:
-- Refactor:
-- Final relevant test command:
+### Phase {N}: {name}
+- Behavior: {behavior} — Test: `{test name}` (`path/to/test-file.ext`)
+  - Red: `{command}` -> {one-line failure output proving the Expected red reason}
+  - Green: `{command}` -> pass
+- TDD-exempt: `{item}` — {reason from the contract}
+- Test-lint: {clean | {K} warnings fixed, {J} hints justified | unavailable}
 ```
-
-Do not batch source implementation ahead of tests unless the phase or item is explicitly marked `TDD Exempt` with a reason.
-
-## Runtime Verification Approach
-
-After tests pass for behavior that affects users, APIs, persistence, jobs, external integrations, or application state, execute the phase's Runtime Verification Contract when tooling is available.
-
-Runtime verification may include:
-- opening the app in a browser and exercising the user flow,
-- inspecting rendered UI states, disabled controls, messages, loading states, and recovery paths,
-- checking API requests/responses or network payloads,
-- querying the database or inspecting persisted records,
-- checking logs, background jobs, queues, cron output, or external integration effects,
-- capturing screenshots, terminal output, query results, or observed behavior.
-
-For each runtime verification item, record:
-
-```md
-Runtime Evidence:
-- Verification target:
-- Command/tool used:
-- Flow or query performed:
-- Expected result:
-- Observed result:
-- Evidence captured:
-- Gaps/unverified items:
-```
-
-If runtime verification cannot be performed:
-- state why,
-- record what remains unverified,
-- do not claim the behavior is fully proven.
 
 ## Verification Approach
 
-During each phase:
-- Run narrow tests immediately after the red, green, and refactor steps.
-- Run broader phase-level checks at natural stopping points.
+After implementing a phase:
+- Run the success criteria checks (usually `make check test` covers everything)
+- Fix any issues before proceeding
+- Update your progress in both the plan and your todos
+- Check off completed items in the plan file itself using Edit
+- If the input scopes you to a single phase, stop immediately after that phase's checks pass — do not advance to other phases
 
-After completing a phase:
-- Run the phase success criteria checks.
-- Run relevant automated tests.
-- Run typecheck/lint/build if listed by the plan.
-- Execute runtime verification items listed by the plan when tooling is available.
-- Fix any issues before proceeding.
-- Update your todos.
-- Check off completed progress items in the plan file itself using Edit.
-- Record TDD evidence and runtime evidence in the phase completion notes when the plan has a place for evidence.
-
-Do not mark a phase complete if:
-- behavior-changing code lacks required tests,
-- the red phase was skipped without exemption,
-- runtime verification was required but not performed or not marked unavailable with a reason,
-- success criteria are failing.
-
-Batch expensive verification at natural stopping points, but never skip the narrow test feedback loop required by TDD.
+For non-behavioral chores (renames, config, TDD-exempt items), don't let verification interrupt your flow — batch it at natural stopping points. Behavior-changing items are the exception: their red -> green cycle IS the flow and cannot be batched (the red must be observed before the implementation exists).
 
 ## If You Get Stuck
 
 When something isn't working as expected:
 - First, make sure you've read and understood all the relevant code
-- Re-read the relevant tests, fixtures, mocks, runtime verification notes, and integration points
 - Consider if the codebase has evolved since the plan was written
-- If a test fails unexpectedly, determine whether the test, implementation, or plan assumption is wrong
-- If runtime verification fails while tests pass, treat that as a real implementation problem unless evidence proves the runtime check is invalid
 - Present the mismatch clearly and ask for guidance
 
 Use skills sparingly - mainly for targeted debugging or exploring unfamiliar territory.
-
-## Implementation Rules
-
-- Do not edit implementation files before writing or identifying the relevant failing test unless the item is explicitly TDD-exempt.
-- Do not claim TDD was followed unless red, green, and refactor evidence exists.
-- Do not test private implementation details when public behavior can be tested.
-- Do not over-mock internal collaborators; mock external boundaries when needed.
-- Do not mark user-facing work complete only because tests pass.
-- Do not skip runtime verification when the plan requires it and tooling is available.
-- Do not silently change expected user behavior to make implementation easier.
-- Do not broaden the phase scope without using the mismatch flow.
-- Prefer the narrowest useful test command during red/green/refactor.
-- Prefer broader verification at phase boundaries.
-- Treat runtime verification failure as a real failure even if automated tests pass.
 
 ## Resuming Work
 
 If the plan has existing checkmarks:
 - Trust that completed work is done
 - Pick up from the first unchecked item
-- Verify previous work only if something seems off, if local code has changed, or if required TDD/runtime evidence is missing for the phase you are about to depend on
-
-When resuming in the middle of a phase, identify the last completed TDD step:
-- red written but not green,
-- green passing but not refactored,
-- refactored but phase checks not run,
-- tests passing but runtime verification not performed,
-- runtime verification complete but evidence not recorded.
+- Verify previous work only if something seems off
 
 Remember: You're implementing a solution, not just checking boxes. Keep the end goal in mind and maintain forward momentum.
-
-## Phase Evidence Summary
-
-At the end of each phase, produce a concise evidence summary:
-
-```md
-Phase {N} Evidence:
-
-TDD:
-- Behavior(s):
-- Red:
-- Green:
-- Refactor:
-- Tests:
-
-Runtime:
-- Browser/UI:
-- API/network:
-- Database/persistence:
-- Logs/jobs/external:
-- Unverified:
-
-Success Criteria:
-- {criterion}: pass/fail
-```
-
-Use this summary to decide whether the phase can be checked off.
 
 ## Present and Chain
 
@@ -253,15 +134,14 @@ Implementation complete:
 `.rpiv/artifacts/plans/{filename}.md`
 
 {P} phases completed, {M} files changed, {T} tests passing.
-TDD: {R} red checks confirmed, {G} green checks confirmed, {F} refactor checks confirmed.
-Runtime proof: {V} verification items completed, {U} unavailable/not applicable.
+TDD evidence: {B} behaviors red->green, {E} exemptions (recorded in the plan's TDD Evidence section).
 Outstanding: none.
 
-Please review the diff, test evidence, and runtime evidence. Let me know if anything should reopen a phase.
+Please review the diff and let me know if anything should reopen a phase.
 
 ---
 
-💬 Follow-up: surface code/plan mismatches inline via the `ask_user_question` flow ("Follow the plan / Skip this change / Update the plan / Mark proof unavailable") — that is implement's only in-skill follow-up surface. For plan-level changes run `/rpiv:revise <plan-path>`; for session pauses run `/rpiv:create-handoff`.
+💬 Follow-up: surface code/plan mismatches inline via the `ask_user_question` flow ("Follow the plan / Skip this change / Update the plan") — that is implement's only in-skill follow-up surface. For plan-level changes run `/rpiv:revise <plan-path>`; for session pauses run `/rpiv:create-handoff`.
 
 **Next step:** `/rpiv:validate .rpiv/artifacts/plans/{filename}.md` — verify the implementation against the plan's success criteria before committing.
 
@@ -275,15 +155,13 @@ Implementation paused at Phase {N}:
 `.rpiv/artifacts/plans/{filename}.md`
 
 {P} phases completed, {M} files changed, {T} tests passing.
-TDD: {R} red checks confirmed, {G} green checks confirmed, {F} refactor checks confirmed.
-Runtime proof: {V} verification items completed, {U} unavailable/not applicable.
 Outstanding: {list of unchecked items, blockers}.
 
-Please review what landed, what was proven, and what remains unverified before resuming.
+Please review what landed and let me know if anything needs to change before resuming.
 
 ---
 
-💬 Follow-up: surface code/plan mismatches inline via the `ask_user_question` flow ("Follow the plan / Skip this change / Update the plan / Mark proof unavailable") — that is implement's only in-skill follow-up surface. For plan-level changes run `/rpiv:revise <plan-path>` first.
+💬 Follow-up: surface code/plan mismatches inline via the `ask_user_question` flow ("Follow the plan / Skip this change / Update the plan") — that is implement's only in-skill follow-up surface. For plan-level changes run `/rpiv:revise <plan-path>` first.
 
 **Next step:** `/rpiv:create-handoff` — capture in-flight state so the next session can resume cleanly via `/rpiv:resume-handoff`.
 
@@ -292,7 +170,7 @@ Please review what landed, what was proven, and what remains unverified before r
 
 ## Handle Follow-ups
 
-- **Implement does not own plan design.** Source-file edits happen in implement. Implement may update progress checkboxes and implementation evidence in the plan, but must not change phase scope, architecture, success criteria, TDD contracts, or runtime verification contracts. For plan-level changes, use revise.
+- **Implement owns checkboxes and TDD evidence, not plan content.** Check off `#### Automated Verification:` items `- [ ]` → `- [x]` as each phase's checks pass, and append to the `## TDD Evidence (implement)` section (append-only — never rewrite prior entries). Everything else — including `### Test Contract:` changes — is revise's: run `/rpiv:revise <plan-path>`; never rewrite plan content from inside implement.
 - **For plan-level changes.** Run `/rpiv:revise <plan-path>` first — it appends a timestamped Follow-up section to the plan and preserves history. Then resume implement at the affected phase.
 - **For session pauses.** Run `/rpiv:create-handoff` to capture in-flight state, then `/new` and `/rpiv:resume-handoff` in the next session.
-- **Mismatch handling stays inline.** When code reality diverges from the plan, use the inline `ask_user_question` flow ("Follow the plan / Skip this change / Update the plan / Mark proof unavailable") — that is implement's only follow-up surface; everything else escalates to revise or create-handoff.
+- **Mismatch handling stays inline.** When code reality diverges from the plan, use the inline `ask_user_question` flow ("Follow the plan / Skip this change / Update the plan") — that is implement's only follow-up surface; everything else escalates to revise or create-handoff.

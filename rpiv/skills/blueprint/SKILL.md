@@ -199,7 +199,7 @@ After the design summary is confirmed, decompose the feature into vertical slice
    - Timestamp: use `<iso>` from `now.mjs` line 1 for `date:` and `last_updated:` (copy the offset verbatim).
    - Write skeleton using the Write tool with `status: in-progress` in frontmatter
    - **Include all prose sections filled** from Steps 1-5: Overview, Requirements, Current State Analysis, Desired End State, What We're NOT Doing, Decisions, Ordering Constraints, Verification Notes, Performance Considerations, Migration Notes, Pattern References, Developer Context, References
-   - **Phase sections**: one `## Phase N: {slice name}` heading per slice from the decomposition (in slice order), each with `### Overview`, `### Changes Required:` (one `#### N. path/to/file.ext` subsection per file with empty code fence + NEW/MODIFY label), and `### Success Criteria:` (empty Automated + Manual subsection headers — filled in Step 6.4 on approval)
+   - **Phase sections**: one `## Phase N: {slice name}` heading per slice from the decomposition (in slice order), each with `### Overview`, `### Changes Required:` (one `#### N. path/to/file.ext` subsection per file with empty code fence + NEW/MODIFY label), `### Test Contract:` (empty — filled in Step 6.4 on approval), and `### Success Criteria:` (empty Automated + Manual subsection headers — filled in Step 6.4 on approval)
    - **Plan History section**: list all phases with `— pending` status
    - This is the living artifact — all subsequent writes use the Edit tool
 
@@ -212,10 +212,16 @@ After the design summary is confirmed, decompose the feature into vertical slice
    - **## Current State Analysis**: What exists now, what's missing, key constraints. Include `### Key Discoveries` with `file:line` references, patterns to follow, constraints to work within.
    - **## Desired End State**: Usage examples showing the feature in use from a consumer's perspective — concrete code, not prose.
    - **## What We're NOT Doing**: Developer-stated exclusions AND likely scope-creep vectors (alternative architectures not chosen, nearby code that looks related but shouldn't be touched).
-   - **## Decisions**: `###` per decision. Complex: Ambiguity → Explored (Option A/B with `file:line` + pro/con) → Decision. Simple: just state decision with evidence.
+   - **## Decisions**: `###` per decision. Complex: Ambiguity → Explored (Option A/B with `file:line` + pro/con) → Decision. Simple: just state decision with evidence. ALWAYS include the standing TDD decision verbatim as the first entry:
+
+     ```markdown
+     ### TDD Standard (standing)
+     Every behavior-changing phase MUST carry a `### Test Contract:` with at least one **Behavior** whose **Oracle** pins exact input -> expected-output values (the strongest checkable oracle; any weakening justified inline) and an **Expected red** reason. Non-behavioral phases/items carry explicit `TDD-exempt` markers with reasons. Recorded as a commitment so slice-verifier's commitments audit flags violations per slice.
+     ```
    - **## Phase N: {slice name}** (one per slice, in slice order):
      - `### Overview`: one sentence describing what this phase delivers + parallelism note from `Depends on:` (e.g., "Depends on Phase 1; can run in parallel with Phase 3.").
      - `### Changes Required:` — one `#### N. path/to/file.ext` subsection per file in this slice. Each subsection has `**File**: path`, `**Changes**: {NEW | MODIFY — summary}`, and an empty code fence (filled in Step 6.4). NEW files get full implementation. MODIFY files get only modified/added code — no "Current" block, the original is on disk.
+     - `### Test Contract:` — empty in skeleton; filled in Step 6.4 on phase approval with the Behavior/Oracle/Expected-red entries generated in 6.1. This is what `implement` transcribes into failing tests at red time.
      - `### Success Criteria:` with empty `#### Automated Verification:` and `#### Manual Verification:` subsection headers — no TBD bullets; filled in Step 6.4 on phase approval, scoped to that phase's deliverables and matching `## Verification Notes`.
    - **## Ordering Constraints**: What must come before what. What can run in parallel. (Carries the cross-phase view; per-phase parallelism note also lives in each Phase Overview.)
    - **## Verification Notes**: Carry forward from research — known risks, build/test warnings, precedent lessons. Format as verifiable checks (commands, grep patterns, visual inspection). Step 6.1 lifts these into per-phase Success Criteria during slice generation; Step 6.4 writes them to the artifact on approval.
@@ -238,13 +244,24 @@ Generate code one slice at a time. Each slice sees the fixed code from all previ
 
 **For each slice in the decomposition (sequential order):**
 
-#### 6.1. Generate slice code and success criteria (internal)
+#### 6.1. Generate slice code, Test Contract, and success criteria (internal)
 
-Generate complete, copy-pasteable code AND the phase's `### Success Criteria:` for every file in this slice — but **hold both for the artifact, do NOT present full code to the developer**. The developer sees a condensed review in 6.3; the full code and criteria go into the artifact in 6.4.
+Generate complete, copy-pasteable code AND the phase's `### Test Contract:` AND `### Success Criteria:` for every file in this slice — but **hold all three for the artifact, do NOT present full code to the developer**. The developer sees a condensed review in 6.3; the full code, contract, and criteria go into the artifact in 6.4.
 
 - **New files**: complete code — imports, types, implementation, exports. Follow the pattern template from Step 2.
 - **Modified files**: read current file FULLY, generate only the modified/added code scoped to changed sections (no full "Current" block — the original is on disk)
-- **Test files**: complete test suites following project patterns
+- **Test Contract** (replaces authoring test-file code at blueprint time — implement writes the actual tests at red time, transcribing this contract): for every behavior this phase introduces or changes, emit one Behavior entry. Pre-written test code tends to mirror the planned implementation (theater at the source); the contract pins the oracle instead so the test author has no freedom to weaken it. Format:
+
+  ```markdown
+  ### Test Contract:
+  - **Behavior**: {the behavior this phase must prove, one sentence}
+    - Test: `{test name}` -> `path/to/test-file.ext`
+    - Oracle: {exact input -> expected-output values — the strongest checkable oracle; pin concrete values, not shapes. Justify inline any weakening (genuinely nondeterministic output only)}
+    - Expected red: {why this test fails before this phase's code lands — the failure implement must observe}
+  - **TDD-exempt**: `{item}` — {reason}   <!-- only for non-behavioral items (renames, config, pure re-exports) -->
+  ```
+
+  A phase with no behavior change carries a single `- **TDD-exempt**: whole phase — {reason}` line. Test files are NOT `### Changes Required:` entries — the contract names them; implement authors them.
 - **Wiring**: show where new code hooks into existing code
 - **Success Criteria**: derive `### Success Criteria:` from this phase's file changes plus `## Verification Notes` entries that map to this phase's scope. Use the same `- [ ]` format as 6.4 (see template below). Project-baseline checks (`npm run check`, `npm test`) go on the terminal phase only. Commands in backticks.
 
@@ -259,7 +276,7 @@ No pseudocode, no TODOs, no placeholders — the code must be copy-pasteable by 
 Mandatory for every slice — no skipping, no shortcuts. Dispatch the `slice-verifier` agent with:
 - `artifact_path`: the Step-5 Write `file_path` (contains the skeleton plus locked prior phases)
 - `slice_id`: `Phase N`
-- `current_slice_code`: inline the just-generated slice verbatim — every `#### N. path/...` block with its full code fence AND the `### Success Criteria:` block (Automated + Manual subsections).
+- `current_slice_code`: inline the just-generated slice verbatim — every `#### N. path/...` block with its full code fence AND the `### Test Contract:` block AND the `### Success Criteria:` block (Automated + Manual subsections). The standing TDD decision is in the artifact's `## Decisions`, so a missing/oracle-less contract on a behavior-changing phase surfaces as a Commitments VIOLATION.
 - `target_files`: files this slice modifies, plus key files prior phases introduced
 
 The agent emits a 3-row summary (`Decisions / Cross-slice / Research`). On any VIOLATION, take one of:
@@ -278,7 +295,7 @@ Present a **condensed review** of the slice — NOT the full generated code. The
 3. **Key code blocks**: factory calls, wiring, non-obvious logic — the interesting parts that show the design decision in action
 
 **Omit**: boilerplate, import lists, full function bodies, obvious implementations.
-**MODIFY files**: focused diff (`- old` / `+ new`) with ~3 lines context. **Test files**: test case names only.
+**MODIFY files**: focused diff (`- old` / `+ new`) with ~3 lines context. **Test Contract**: shown IN FULL — behaviors, oracles, expected-red reasons, exemptions. The contract is the developer's main test-review surface (there is no test code to review at blueprint time); never condense it.
 
 **If the developer asks to see full code**, show it inline — exception, not default.
 
@@ -290,11 +307,12 @@ Use the `ask_user_question` tool to confirm. Question: "Slice {N/M}: {slice name
 
 #### 6.4. Incorporate feedback
 
-**Approve**: Lock this slice's code and criteria and **Edit the artifact immediately**:
+**Approve**: Lock this slice's code, Test Contract, and criteria and **Edit the artifact immediately**:
 1. For each file in this slice, Edit the skeleton artifact to replace the empty code fence under that file's `#### N. path/...` subsection inside this slice's `## Phase N: {slice name}` section with the full generated code from 6.1
 2. If a later slice contributes to a file already filled by an earlier phase: emit a NEW `#### N. path/to/file.ext` subsection inside the later phase with only that phase's incremental changes (do NOT mutate the earlier phase's code fence — implement runs phases sequentially and the codebase state evolves between them). Each phase's code fence is the change set for that phase, applied on top of the codebase state after the previous phase.
 3. After fill, verify within this phase: no duplicate function definitions inside the same code fence, imports deduplicated, exports list complete
-4. **Write `### Success Criteria:`** for this phase: Edit the empty Automated + Manual subsections with the `- [ ]` bullets generated in 6.1. Contract: `implement` flips `- [ ]` → `- [x]` as it completes each; `validate` extracts and runs every command under `#### Automated Verification:`.
+4. **Write `### Test Contract:`** for this phase: Edit the empty section with the Behavior/Oracle/Expected-red entries (and TDD-exempt markers) generated in 6.1. Contract: `implement` transcribes each Behavior's Oracle into a failing test at red time and records red->green evidence; `validate` audits that evidence against this contract.
+5. **Write `### Success Criteria:`** for this phase: Edit the empty Automated + Manual subsections with the `- [ ]` bullets generated in 6.1. Contract: `implement` flips `- [ ]` → `- [x]` as it completes each; `validate` extracts and runs every command under `#### Automated Verification:`.
 
    ```markdown
    ### Success Criteria:
@@ -308,11 +326,11 @@ Use the `ask_user_question` tool to confirm. Question: "Slice {N/M}: {slice name
    - [ ] New widget renders correctly above the editor
    - [ ] Performance acceptable with 1000+ todo items
    ```
-5. Update the Plan History section: `- Phase N: {name} — approved as generated`
-6. Decrement frontmatter `unresolved_phase_count` by 1
+6. Update the Plan History section: `- Phase N: {name} — approved as generated`
+7. Decrement frontmatter `unresolved_phase_count` by 1
 - Proceed to next slice
 
-**Revise**: Update code and/or success criteria per developer feedback. Re-run verify (6.2). Re-present the same slice (6.3). The artifact is NOT touched — only "Approve" writes to the artifact.
+**Revise**: Update code, Test Contract, and/or success criteria per developer feedback. Re-run verify (6.2). Re-present the same slice (6.3). The artifact is NOT touched — only "Approve" writes to the artifact.
 
 **Rethink**: Developer spotted a design issue. If a previously approved slice is affected, flag the conflict and offer cascade revision — developer decides whether to reopen (if yes, Edit the affected `## Phase N` entry).
 Update decomposition (add/remove/reorder remaining slices) and confirm before continuing.
@@ -323,7 +341,7 @@ Update decomposition (add/remove/reorder remaining slices) and confirm before co
 
 The artifact was created as a skeleton in Step 5 and filled progressively in Step 6.4 (code fences + Success Criteria). This step verifies and flips status.
 
-1. **Verify all Phase content is filled**: every `#### N. path/...` has a non-empty code block AND every `### Success Criteria:` has non-empty Automated + Manual subsections (generated in Step 6.1, written in Step 6.4). If any are empty, **return to Step 6** — never fill at finalize time (bypasses 6.2/6.3). Empty here = workflow off-rail.
+1. **Verify all Phase content is filled**: every `#### N. path/...` has a non-empty code block AND every `### Test Contract:` is non-empty (at least one Behavior with an Oracle, or an explicit whole-phase TDD-exempt) AND every `### Success Criteria:` has non-empty Automated + Manual subsections (generated in Step 6.1, written in Step 6.4). If any are empty, **return to Step 6** — never fill at finalize time (bypasses 6.2/6.3). Empty here = workflow off-rail.
 
 2. **Verify frontmatter counters**:
    - `unresolved_phase_count == 0` (every phase approved in Step 6.4)
@@ -500,8 +518,9 @@ Spawn multiple agents in parallel when they're searching for different things. E
   - ALWAYS resolve all ambiguities (Step 4) before decomposing into slices (Step 5)
   - ALWAYS complete holistic decomposition before generating any slice code (Step 6)
   - ALWAYS create the skeleton artifact immediately after decomposition approval (Step 5)
-  - ALWAYS generate Success Criteria in Step 6.1 alongside code; NEVER leave Phase code fences or Success Criteria empty after their slice is approved — both are written via Edit in Step 6.4 from what 6.1 produced
+  - ALWAYS generate the Test Contract AND Success Criteria in Step 6.1 alongside code; NEVER leave Phase code fences, Test Contracts, or Success Criteria empty after their slice is approved — all are written via Edit in Step 6.4 from what 6.1 produced
   - NEVER fill empty Phase content at Step 7 — empty at finalize time = return to Step 6 (preserves the 6.3 micro-checkpoint)
+  - NEVER author test-file code at blueprint time — the Test Contract (behaviors + exact oracle + expected red) is the artifact-time test spec; implement authors the tests at red time. Test files are not Changes Required entries.
   - ALWAYS dispatch slice-verifier at Step 6.2 for every slice before presenting at 6.3; never skip, never batch across slices
   - NEVER silently dismiss a slice-verifier VIOLATION — either fix and re-dispatch, or surface the verbatim finding to the developer at 6.3 for ratification
   - ALWAYS dispatch artifact-code-reviewer AND artifact-coverage-reviewer in parallel at Step 8 after Step 7 finalize, BEFORE the developer review at Step 9
@@ -516,8 +535,8 @@ Spawn multiple agents in parallel when they're searching for different things. E
 
 ## Common Planning Patterns
 
-- **New Features**: types first → backend logic → API surface → UI last. Research existing patterns first. Include tests alongside each implementation.
+- **New Features**: types first → backend logic → API surface → UI last. Research existing patterns first. Author the Test Contract alongside each phase (the tests themselves are written by implement at red time).
 - **Modifications**: Read current file FULLY. Show only the modified/added code scoped to changed sections. Check integration points for side effects.
 - **Database Changes**: schema/migration → store/repository → business logic → API → client. Include rollback strategy.
-- **Refactoring**: Document current behavior first. Plan incremental backwards-compatible changes. Verify existing behavior preserved.
+- **Refactoring**: Document current behavior first. Plan incremental backwards-compatible changes. Verify existing behavior preserved (Test Contract oracles pin the preserved behavior's exact outputs).
 - **Novel Work**: Include approach comparison in Decisions. Ground in codebase evidence OR web research. Get explicit developer sign-off BEFORE writing code.

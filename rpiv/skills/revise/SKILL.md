@@ -148,6 +148,8 @@ Use the `ask_user_question` tool to confirm before editing. Question: "{Summary 
    - If modifying scope, update "What We're NOT Doing" section
    - If changing approach, update "Implementation Approach" section
    - Maintain the distinction between automated vs manual success criteria
+   - If a change touches a phase's behavior, keep its `### Test Contract:` in sync — same rigor as authoring (exact Oracle values, Expected red reason, justified exemptions). A phase whose code changed but whose contract didn't is a revision defect.
+   - Never touch the `## TDD Evidence (implement)` section — it is implement's append-only audit trail
    - If the plan has YAML frontmatter, set `last_updated` to `<iso>` from the Metadata block; set `last_updated_by` to your name. Copy the offset verbatim — do not reformat.
 
 3. **Preserve quality standards**:
@@ -225,6 +227,26 @@ Use the `ask_user_question` tool to confirm before editing. Question: "{Summary 
    - Do NOT update the plan with unresolved questions
    - Every change must be complete and actionable
 
+## Test Contract Retrofit (pre-TDD plans)
+
+When the feedback asks to add Test Contracts to a plan that predates them (the routing `/rpiv:implement` prints when its contract gate refuses a plan), revise is the authoring surface — the plan's design is already fixed, so the contract derives from what each phase's code fence and criteria already commit to:
+
+1. For each behavior-changing phase, author a `### Test Contract:` section (placed before `### Success Criteria:`):
+
+   ```markdown
+   ### Test Contract:
+   - **Behavior**: {the behavior this phase must prove, one sentence}
+     - Test: `{test name}` -> `path/to/test-file.ext`
+     - Oracle: {exact input -> expected-output values — strongest checkable; concrete values, not shapes. Justify inline any weakening}
+     - Expected red: {why this test fails before this phase's code lands}
+   - **TDD-exempt**: `{item}` — {reason}
+   ```
+
+2. Derive Behaviors from the phase's code fence + Overview; pin Oracle values from the code's actual input/output shapes (research via agents if the domain values aren't obvious — do not guess oracles).
+3. Non-behavioral phases get a single whole-phase `TDD-exempt` line with the reason.
+4. For phases already implemented AND verified (checked-off criteria), mark the contract `- **TDD-exempt**: whole phase — implemented pre-TDD; behavior covered by existing checked criteria` rather than fabricating retroactive red evidence — the red->green loop only applies to phases not yet executed.
+5. Same rigor as design-time authoring: an oracle that says "returns the right value" is a defect; it must say WHICH value.
+
 ## Success Criteria Guidelines
 
 When updating success criteria, always maintain the two-category structure:
@@ -288,4 +310,10 @@ User: /rpiv:revise .rpiv/artifacts/reviews/2025-10-16_10-00-00_feature.md
 Assistant: `revise` updates implementation plans, not review artifacts. Please provide the target plan path plus the changes to make.
 User: /rpiv:revise .rpiv/artifacts/plans/2025-10-16_09-00-00_feature.md "Address the review findings by splitting Phase 2 and adding validation coverage"
 Assistant: {Proceeds with update}
+```
+
+**Scenario 5: Contract retrofit (routed from implement's contract gate)**
+```
+User: /rpiv:revise .rpiv/artifacts/plans/2025-10-16_09-00-00_feature.md "Retrofit Test Contracts onto each behavior-changing phase"
+Assistant: {Reads plan, derives Behavior/Oracle/Expected-red per phase from code fences + criteria per the Test Contract Retrofit section, presents approach, edits}
 ```

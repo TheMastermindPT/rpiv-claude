@@ -1,5 +1,5 @@
 ---
-template_version: 1
+template_version: 3
 date: {Current date and time with timezone in ISO format}
 author: {`author:` from Metadata block}
 commit: {Current commit hash}
@@ -21,12 +21,28 @@ last_updated: {Same ISO timestamp as date: above}
 - ✓ Phase 2: {name} — {…}
 - ⚠️ Phase 3: {name} — {Partial — see Findings}
 
+### TDD Evidence Audit
+
+{One line per contract Behavior, checked against the plan's `## TDD Evidence (implement)` section. For pre-TDD plans emit the single line: "Pre-TDD plan (no Test Contracts) — evidence audit not applicable."}
+
+- ✓ Phase {N} — {behavior}: red (`{expected-red reason observed}`) -> green; test `{name}` asserts the contract's Oracle values
+- ✗ Phase {N} — {behavior}: {missing red | red for the wrong reason | test asserts weaker oracle than contract} — **forces verdict: fail**
+- ✓ Phase {N} — TDD-exempt: `{item}` — {reason recorded}
+
 ### Automated Verification Results
 
 - ✓ {1-line label}: `{command from plan}` — {brief outcome, e.g., "368 files, no errors"}
 - ✓ {1-line label}: `{command from plan}` — {brief outcome}
 - ✗ {1-line label}: `{command from plan}` — {failure summary}
 - ✓ No regressions detected
+
+### Test Quality
+
+- Test-theater lint (advisory — never affects the verdict): {clean | {K} warnings / {J} hints on changed test files — listed below | unavailable}
+  - {rule-id}: `{file}:{line}` — {one-line finding}
+- Mutation gate: {not applicable ({no mutation command | wholly TDD-exempt plan}) | {score}% on the plan's changed source (`{command}`)}
+  - {Per surviving mutant on changed source: `{file}:{line}` {mutator} — killable (test-strength gap → action required, listed under Potential Issues) | justified: equivalent mutant / Hazard-4-optimistic file}
+  - {When mandatory and clean:} No survivors on changed source — gate passed.
 
 ### Code Review Findings
 

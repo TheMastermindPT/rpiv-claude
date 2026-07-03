@@ -65,6 +65,8 @@ When invoked:
 4. **Identify what should have changed**:
    - List all files that should be modified
    - Note all success criteria (automated and manual)
+   - Extract each phase's `### Test Contract:` (Behavior/Oracle/Expected-red + TDD-exempt markers) and the plan's `## TDD Evidence (implement)` section — the evidence audit in Step 2 checks one against the other
+   - If the plan has no `### Test Contract:` sections at all, note "pre-TDD plan — TDD evidence audit not applicable" for the report and skip the evidence audit (do not fail on this alone; the contract gate lives in implement)
    - Identify key functionality to verify
 
 5. **Gather implementation evidence**:
@@ -99,16 +101,34 @@ For each phase in the plan:
    - Look for checkmarks in the plan (- [x])
    - Verify the actual code matches claimed completion
 
-2. **Run automated verification**:
+2. **Audit TDD evidence** (skip only for pre-TDD plans per Step 1.4):
+   - For each contract **Behavior** in the phase, the `## TDD Evidence (implement)` section must show a Red entry whose failure matches the contract's Expected red reason, followed by a Green entry — and the named test must exist in the named file with assertions matching the contract's Oracle values
+   - For each **TDD-exempt** marker, the evidence must note the exemption with the contract's reason
+   - **Missing or contradicted evidence for any contract Behavior forces `verdict: fail`** — an implementation whose tests were never observed red is unproven, regardless of green criteria
+   - Evidence findings go in the report's TDD Evidence Audit section
+
+3. **Run automated verification**:
    - Execute each command from "Automated Verification"
    - Document pass/fail status
    - If failures, investigate root cause
 
-3. **Assess manual criteria**:
+4. **Test-theater lint (report-only)**:
+   - If the project exposes a test-lint command (e.g. an npm script like `lint:test-theater`) or an ast-grep rule pack (`sgconfig.yml` under `tools/` or the repo root), run it on the test files this implementation added or changed
+   - Findings are report-only — they NEVER affect the verdict; record them for the developer to weigh
+   - If no pack/tool exists, record `test-lint: unavailable`
+
+5. **Mutation testing (mandatory where testing is not exempt)**:
+   - **When it is mandatory**: run mutation testing whenever BOTH hold — (a) the project exposes a mutation-testing command, AND (b) the plan is not *wholly* TDD-exempt (it has at least one non-`TDD-exempt` contract Behavior). A plan whose every phase is a whole-phase `TDD-exempt` marker introduces no new behavioral assertions to strengthen, so mutation is `not applicable` there.
+   - **Which command**: PREFER a plan-scoped command — an npm script like `mutate:plan` that takes the plan path and mutates exactly the plan's changed source (e.g. `npm run mutate:plan -- <plan-path>`). Only if none exists, fall back to a generic `mutation` command (e.g. Stryker `stryker run`) scoped BY HAND to the modules this implementation changed — never run it unscoped (mutation costs minutes per file).
+   - **Read the survivors, not just the score**: list every mutant that SURVIVED on the plan's changed source. Triage each as either **killable** (a real test-strength gap) or **justified** (an equivalent mutant, or a file the runner flagged as source-text/Hazard-4 optimistic). Killable survivors are gaps the developer must close in a follow-up test-improvement pass, then re-validate.
+   - **Skipping is a gap**: when mandatory, running it is required. Record `mutation: skipped ({reason})` ONLY for a genuine blocker (the command errored, or a single scoped file would blow a hard time budget) — an unexplained skip on a non-exempt plan is itself a validation gap.
+   - **When not applicable**: record `mutation: not applicable ({no mutation command | wholly TDD-exempt plan})` — no verdict impact. This keeps the skill portable: projects without a mutation command are never blocked.
+
+6. **Assess manual criteria**:
    - List what needs manual testing
    - Provide clear steps for user verification
 
-4. **Think deeply about edge cases**:
+7. **Think deeply about edge cases**:
    - Were error conditions handled?
    - Are there missing validations?
    - Could the implementation break existing functionality?
@@ -125,8 +145,9 @@ For each phase in the plan:
    - `topic:` ← `"Validation of <plan topic>"`.
 
 2. **Determine verdict** (`status` is always `ready` — written once):
-   - `verdict: pass` — every phase marked `- [x]` in the plan is verified against the code, every automated command passes, no Deviations from Plan and no Potential Issues require action.
-   - `verdict: fail` — any phase fails verification, any automated command fails, or Deviations / Potential Issues list items that require action.
+   - `verdict: pass` — every phase marked `- [x]` in the plan is verified against the code, every automated command passes, TDD evidence is complete for every contract Behavior (or the plan is pre-TDD), the mutation gate is satisfied (run where mandatory per Step 2.5, with no un-triaged killable survivors on changed source), and no Deviations from Plan and no Potential Issues require action.
+   - `verdict: fail` — any phase fails verification, any automated command fails, TDD evidence is missing or contradicted for any contract Behavior, a mandatory mutation run was skipped without a genuine blocker OR left un-triaged killable survivors on the plan's changed source, or Deviations / Potential Issues list items that require action.
+   - Test-theater lint findings are advisory — they inform the report, never the verdict. The mutation SCORE is advisory too, but the mutation GATE is not: where mutation is mandatory (Step 2.5), an unexplained skip or un-triaged killable survivors on changed source are action-required (route them into `#### Potential Issues:`). Survivors justified as equivalent mutants or Hazard-4-optimistic files stay advisory.
 
 3. **Write the artifact** using the Write tool (no Edit — this skill writes once per run). Read `templates/validation.md`, fill every `{placeholder}` with the values determined above and the observations gathered in Step 2, apply the section-omission rules in the template (omit `#### Pattern Conformance:` and `#### Potential Issues:` entirely when empty; keep all other sections and emit `None — …` literals when empty), and Write the result to the target path.
 
@@ -178,7 +199,11 @@ If you were part of the implementation:
 
 Always verify:
 - [ ] All phases marked complete are actually done
+- [ ] TDD evidence complete: every contract Behavior has red (matching the Expected red reason) -> green, exemptions justified
+- [ ] Contract tests exist as named, with assertions matching the contract's Oracle values
 - [ ] Automated tests pass
+- [ ] Test-theater lint run on changed test files (report-only) — or recorded unavailable
+- [ ] Mutation gate satisfied where mandatory (non-exempt plan + a mutation command exists): run plan-scoped, survivors triaged (killable → action-required, equivalent/Hazard-4 → justified) — or recorded `not applicable`
 - [ ] Code follows existing patterns
 - [ ] No regressions introduced
 - [ ] Error handling is robust

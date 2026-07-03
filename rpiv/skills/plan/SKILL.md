@@ -41,10 +41,11 @@ When this command is invoked:
 
    **Design artifact provided** (path to a `.md` file in `.rpiv/artifacts/designs/`):
    - Read the design artifact FULLY using the Read tool WITHOUT limit/offset
-   - Extract: Architecture (the code changes), **`## Slices` (slice boundaries + per-slice Success Criteria — authored by `/rpiv:design` Step 6.1, verified by slice-verifier at 6.2)**, File Map, Ordering Constraints, Verification Notes, Performance Considerations, Scope
-   - These are the inputs for phasing. `## Slices` is the phase contract: each `### Slice N: {name}` becomes `## Phase N: {name}` with the same `**Files**:` list and the same Success Criteria. No reauthoring.
+   - Extract: Architecture (the code changes), **`## Slices` (slice boundaries + per-slice Test Contracts + Success Criteria — authored by `/rpiv:design` Step 6.1, verified by slice-verifier at 6.2)**, File Map, Ordering Constraints, Verification Notes, Performance Considerations, Scope
+   - These are the inputs for phasing. `## Slices` is the phase contract: each `### Slice N: {name}` becomes `## Phase N: {name}` with the same `**Files**:` list, the same Test Contract, and the same Success Criteria. No reauthoring.
    - Design decisions are settled — do not re-evaluate them
    - If the design has unresolved questions OR the `## Slices` section is missing/empty, STOP — tell the developer to return to design
+   - If a behavior-changing slice lacks a `#### Test Contract:` (pre-TDD design), STOP — tell the developer to return to `/rpiv:design` (or retrofit via `/rpiv:revise` once a plan exists); do not author contracts here
 
    **No arguments provided**:
    ```
@@ -75,7 +76,7 @@ Inheriting {N} slices from `{design path}` as {N} phases (1:1):
 3. {Slice 3 name} - {what it delivers} ({N} files)
 
 Parallelism per design's Ordering Constraints: {e.g., "Phases 2 and 3 independent after Phase 1"}.
-Total: {N} files across {M} phases. Success Criteria pass through from design's `## Slices` unchanged.
+Total: {N} files across {M} phases. Test Contracts + Success Criteria pass through from design's `## Slices` unchanged.
 
 Proceeding to write the plan artifact.
 ```
@@ -84,7 +85,7 @@ No developer question — boundary changes are out of scope for plan. If the dev
 
 ### Step 3: Write Plan
 
-Write the plan **incrementally** — skeleton first, then fill each phase. Code comes from the design's `## Architecture` (file-grouped); Success Criteria come from the design's `## Slices` section **unchanged** — no reauthoring, no re-derivation from Verification Notes.
+Write the plan **incrementally** — skeleton first, then fill each phase. Code comes from the design's `## Architecture` (file-grouped); Test Contracts and Success Criteria come from the design's `## Slices` section **unchanged** — no reauthoring, no re-derivation from Verification Notes.
 
 1. **Write the plan skeleton** to `.rpiv/artifacts/plans/<slug>_<description>.md` (use `<slug>` from the Metadata block's `now.mjs` line 1; copy `<iso>` verbatim into frontmatter `date:` and `last_updated:`).
    - Format: `<slug>_<description>.md` where:
@@ -93,11 +94,11 @@ Write the plan **incrementally** — skeleton first, then fill each phase. Code 
    - Examples:
      - With ticket: `2025-01-08_14-30-00_ENG-1478-parent-child-tracking.md`
      - Without ticket: `2025-01-08_14-30-00_improve-error-handling.md`
-   - The skeleton includes everything EXCEPT large code blocks: frontmatter, Overview, Desired End State, What We're NOT Doing, full phase structure (Overview, Changes Required with file paths and change summaries, **Success Criteria copied verbatim from design's `## Slices`**, parallelism annotations), Testing Strategy, Performance Considerations, References. Phase boundaries are inherited 1:1 from `## Slices` — no recomposition.
+   - The skeleton includes everything EXCEPT large code blocks: frontmatter, Overview, Desired End State, What We're NOT Doing, full phase structure (Overview, Changes Required with file paths and change summaries, **Test Contract and Success Criteria copied verbatim from design's `## Slices`**, parallelism annotations), Testing Strategy, Performance Considerations, References. Phase boundaries are inherited 1:1 from `## Slices` — no recomposition.
 
 2. **Fill code blocks using Edit** — one phase at a time:
    - For each phase, Edit to insert the code blocks from the design's `## Architecture` section into the Changes Required subsections. Use the slice's `**Files**:` list (from the design's `## Slices`) to know which Architecture entries belong to which phase.
-   - Success Criteria for each phase are **already populated in the skeleton** from the design's matching `### Slice N` subsection — do not re-author. If the design's criteria look wrong, that's a design defect; do not patch here.
+   - Test Contracts and Success Criteria for each phase are **already populated in the skeleton** from the design's matching `### Slice N` subsection — do not re-author. If the design's contract or criteria look wrong, that's a design defect; do not patch here.
 
 3. **Use this template structure**:
 
@@ -145,6 +146,16 @@ last_updated_by: {`author:` from Metadata block}
 // Code from design artifact's Architecture section
 ```
 
+### Test Contract:
+
+{Copied verbatim from design's `### Slice N` → `#### Test Contract:` — the Behavior/Oracle/Expected-red entries (and TDD-exempt markers) slice-verifier already validated. Do NOT re-author here. `implement` transcribes each Behavior's Oracle into a failing test at red time; `validate` audits red->green evidence against it.}
+
+- **Behavior**: {from design}
+  - Test: `{test name}` -> `path/to/test-file.ext`
+  - Oracle: {exact input -> expected-output values}
+  - Expected red: {why it fails before this phase lands}
+- **TDD-exempt**: `{item}` — {reason}
+
 ### Success Criteria:
 
 {Copied verbatim from design's `### Slice N` subsection — same `- [ ]` bullets that slice-verifier (design 6.2) already validated against the slice's code. Do NOT re-author here.}
@@ -164,6 +175,8 @@ last_updated_by: {`author:` from Metadata block}
 ---
 
 ## Testing Strategy
+
+{Informational only — the load-bearing test spec is each phase's `### Test Contract:` (what implement executes red->green) and `### Success Criteria:` (what implement checks off and validate runs).}
 
 ### Automated:
 - {Standard project checks from success criteria}
@@ -321,7 +334,7 @@ The 8-column header is retained when only one source returns; only rows from the
 
 1. **Trust the Design**:
    - Design decisions are fixed — do not re-evaluate architectural choices
-   - Success Criteria are also fixed — pass them through verbatim from design's `## Slices`; do not re-author, re-derive, or "improve" them. Slice-verifier already validated them against the slice's code at design 6.2
+   - Test Contracts and Success Criteria are also fixed — pass them through verbatim from design's `## Slices`; do not re-author, re-derive, or "improve" them. Slice-verifier already validated them against the slice's code at design 6.2
    - Phase boundaries are fixed — inherit 1:1 from design's `## Slices`; do not recompose
    - If something in the design seems wrong, flag it to the developer; do not silently patch in plan
    - The design is the source of truth for what to build
@@ -329,7 +342,7 @@ The 8-column header is retained when only one source returns; only rows from the
 2. **Pass-Through, Not Author**:
    - Plan transforms a design artifact into phased shape; it does not invent content
    - Code blocks in `## Phase N` come from the design's `## Architecture` entries
-   - Success Criteria come from the design's `## Slices` `### Slice N` subsections, unchanged
+   - Test Contracts and Success Criteria come from the design's `## Slices` `### Slice N` subsections, unchanged
    - The only place plan exercises judgment is Step 5 triage of reviewer findings — and even there, design-root-cause findings should route back to `/rpiv:design`
 
 3. **Be Practical**:
@@ -382,6 +395,21 @@ Success Criteria are **authored upstream in `/rpiv:design` Step 6.1** and verifi
 
 If the design's criteria don't match this shape, the defect lives upstream — return to `/rpiv:design` to fix, do not patch in plan.
 
+## Test Contract — Format Reference
+
+Test Contracts are **authored upstream in `/rpiv:design` Step 6.1** (per slice) and verified by slice-verifier at design 6.2 against the standing TDD decision. Plan copies them through into each phase's `### Test Contract:` block **unchanged**. The reference below is for understanding the expected shape, not for authoring inside plan.
+
+```markdown
+### Test Contract:
+- **Behavior**: {the behavior this phase must prove, one sentence}
+  - Test: `{test name}` -> `path/to/test-file.ext`
+  - Oracle: {exact input -> expected-output values — strongest checkable; concrete values, not shapes}
+  - Expected red: {why this test fails before this phase's code lands}
+- **TDD-exempt**: `{item}` — {reason}
+```
+
+Downstream consumption: `implement` transcribes each Behavior's Oracle into a failing test (red), observes the Expected red reason, implements to green, and records evidence; `validate` audits that evidence. If a contract is missing or oracle-less, the defect lives upstream — return to `/rpiv:design`, do not patch in plan.
+
 ## Subagent Usage
 
 | Context | Agents Spawned |
@@ -397,7 +425,8 @@ Both reviewers dispatch in parallel against the final artifact (code + Success C
 - Always read the design artifact FULLY before inheriting phase boundaries
 - The plan template must be compatible with implement — preserve the phase/success criteria structure
 - If the design artifact has unresolved questions OR is missing its `## Slices` section, STOP — send the developer back to design
-- **Slice ≡ phase, 1:1**: NEVER recompose slice boundaries into different phase boundaries; NEVER reauthor Success Criteria (they pass through from design's `## Slices`); slice-verifier in design Step 6.2 already guaranteed per-slice atomicity and criteria/code alignment, and recomposing here would discard that guarantee
+- **Slice ≡ phase, 1:1**: NEVER recompose slice boundaries into different phase boundaries; NEVER reauthor Test Contracts or Success Criteria (both pass through from design's `## Slices`); slice-verifier in design Step 6.2 already guaranteed per-slice atomicity and contract/criteria/code alignment, and recomposing here would discard that guarantee
+- **Contract-less designs STOP**: a behavior-changing slice without a `#### Test Contract:` is a pre-TDD design — send the developer back to `/rpiv:design`; plan never authors contracts (pass-through constitution)
 - ALWAYS dispatch artifact-code-reviewer AND artifact-coverage-reviewer in parallel at Step 4 after Step 3 finalize, BEFORE the developer review at Step 5
 - NEVER auto-apply a Step 4 reviewer finding; triage is the developer's call at Step 5
 - ALWAYS hold `status: in-review` from Step 4.0 through Step 5; flip to `ready` only after every row has a `resolution` (or the table is empty)
