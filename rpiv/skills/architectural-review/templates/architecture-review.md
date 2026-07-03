@@ -59,27 +59,25 @@ Quantified structural health from `metrics.mjs` + ingested linters. Every number
 
 ## System Model
 
-Top-down domain-entity / data-flow model from the `entity-mapper` agent (Build System Model step), seeded by the `co-change-groups` ripple-groups + db row-types + domain contracts. **The review reasons against THIS**: the layers below are a *view* of it, findings carry `(entity, stage)` coordinates, and themes attach to entities. Reading rules: **missing stage = unguarded entity; >= 2 owners = split-brain; `owner: NONE` = the ownerless-entity finding the synthesis elevates.**
+Top-down domain-entity / data-flow model from the `entity-mapper` agent (Build System Model step), seeded by the `co-change-groups` ripple-groups + db row-types + domain contracts. **Architecture-style-aware per entity** (CRUD, CQRS, event-driven, pipeline, or hexagonal — auto-detected). **The review reasons against THIS**: the layers below are a *view* of it, findings carry `(entity, stage)` coordinates, and themes attach to entities. Reading rules: **missing stage the style expects = unguarded entity; style-appropriate ownership semantics (event-driven PERSIST has no single owner by design; CQRS READ has no independent owner — do NOT flag these).**
 
-### L0 — System (entities + cross-entity edges)
+### L0 — System (entities + styles + cross-entity edges)
 
-{one line per entity with its outbound entity edges, e.g. `WeeklyPlan -> consumes ExerciseCatalog, AthleteProfile`}
-
-### Entity x Stage matrix
-
-| Entity | DEFINE | PRODUCE | VALIDATE | PERSIST | READ | RENDER | MUTATE | AUDIT | Owner |
-|---|---|---|---|---|---|---|---|---|---|
-| {Entity} | `{file}` | `{file(s)}` | `{file}` | `{file(s)}` | `{file}` | `{file}` | {file or -} | {file or -} | {module \| NONE + scattered sites} |
-
-> Cells are owning file(s); `-` = stage absent (explain real gaps under L1). PRODUCE for a compute-heavy entity is a fat edge — expand its pipeline under L2.
+| Entity | Style | Outbound edges |
+|---|---|---|
+| {Entity} | {crud \| event-driven \| cqrs \| pipeline \| hexagonal} | consumes {EntityB}, feeds {EntityC} |
 
 ### L1 / L2 — per entity
 
-#### {Entity}
-- **Stages:** `file:line` per present stage (DEFINE -> PRODUCE -> VALIDATE -> PERSIST -> READ -> RENDER -> MUTATE -> AUDIT); PRODUCE expands to its L2 pipeline steps.
-- **Owner:** {module | NONE + scattered write sites}
+#### {Entity} (style: {crud | event-driven | cqrs | pipeline | hexagonal})
+
+- **Stage: {NAME}** — `file:line` ...
+- **Stage: {NAME}** — `file:line` ...
+{one row per stage in the style's lifecycle; expand fat stages (PRODUCE / TRANSFORM) to L2 sub-steps}
+
+- **Owner:** {style-appropriate description — CRUD: module or NONE + scattered writes; event-driven: EMIT owner + per-HANDLE owners; CQRS: WRITE aggregate owns invariant, READ is a projection; pipeline: TRANSFORM stage owns; hexagonal: DOMAIN owns ports, each ADAPTER owns its impl}
 - **Ripple-group:** {the `co-change-groups` cluster that seeded this entity}
-- **Unguarded / split-brain:** {missing or duplicated stages + why it matters}
+- **Unguarded / split-brain:** {missing stages the style expects; duplicated stages; contradictory invariants — or "none"}
 
 {repeat per entity}
 
@@ -237,6 +235,8 @@ Each finding is a level-3 heading `### L<layer>-<seq> — <title>` followed by t
 | Field | Meaning |
 |---|---|
 | **Lens** | `D` duplication / `C` fragmentation / `G` god-file / `A` dead-abstraction / `T` test-theater / `L` leaky-boundary / `M` missing-abstraction / `S` state-flow / `Lc` low-cohesion / `Fe` feature-envy / `Tc` temporal-coupling / `IX` interaction-compound / `10dim` (classic dimension sweep) |
+| **Entity / stage** | the System Model coordinate (entity name + style-specific stage, e.g. `Order/EMIT` (event-driven), `WeeklyPlan/PERSIST` (CRUD), `Report/TRANSFORM` (pipeline)) this finding lives in, or `—` when no model |
+| **Fingerprint** | content-hash fingerprint for drift delta matching (survives file renames and line drift). Computed via `fingerprint.mjs` at Step 8 |
 | **Evidence** | `file.ext:lineA-lineB` + verbatim line in backticks (citation contract) |
 | **Quantified anchor** | the metric that sets severity (e.g. `1178 LOC = 11.9x median`; `21 exports, 0 inbound`; `3 definition sites`) |
 | **What it is** | what the code does today |

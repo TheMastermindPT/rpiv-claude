@@ -1,6 +1,6 @@
 ---
 name: architectural-review
-description: Conduct a deep, anti-slop architecture review of a module or path. Quantifies structural health (metrics.mjs, incl. a directional hidden-coupling co-change signal clustered into entity ripple-groups), ingests the repo's own linters as ground truth, builds a top-down entity/data-flow System Model (each domain entity across an 8-stage lifecycle with ownership) that frames the review, then runs the slop lenses (semantic duplication, concept fragmentation, god-files, dead abstractions, test theater, boundary erosion, missing abstraction, state/data-flow ownership, temporal coupling) the linters miss, walks a top-down 10-dimension checklist per layer, and verifies every agent-found finding before triage. Its depth is systemic synthesis: an Interaction Sweep re-joins the deliberately-isolated lenses into root-caused compound findings, cluster discovery surfaces patterns nobody hand-tagged, themes name the architectural decision behind each cluster, and the risk rollup promotes compound risk over isolated findings. Diffs against the previous review to track drift. Produces a phased polish plan in .rpiv/artifacts/architecture-reviews/ that blueprint consumes per phase. Language-agnostic. Use before a 1.0, after a major refactor, or to sweep accumulated AI slop a module has grown.
+description: Conduct a deep, anti-slop architecture review of a module or path. Quantifies structural health (metrics.mjs, incl. a directional hidden-coupling co-change signal clustered into entity ripple-groups), ingests the repo's own linters as ground truth, builds a top-down entity/data-flow System Model (architecture-style-aware per entity — CRUD, CQRS, event-driven, pipeline, or hexagonal — with style-appropriate lifecycle stages and ownership semantics) that frames the review, then runs the slop lenses (semantic duplication, concept fragmentation, god-files, dead abstractions, test theater, boundary erosion, missing abstraction, state/data-flow ownership, temporal coupling, low-cohesion, feature-envy) the linters miss in a two-wave dispatch (structural first, cross-cutting second with a steering checkpoint between them), walks a top-down 10-dimension checklist per layer, and verifies every agent-found finding before triage. Its depth is systemic synthesis: an Interaction Sweep re-joins the deliberately-isolated lenses into root-caused compound findings, cluster discovery surfaces patterns nobody hand-tagged, themes name the architectural decision behind each cluster, and the risk rollup promotes compound risk over isolated findings. Diffs against the previous review using content-hash fingerprints (survive file renames and line drift). Produces a phased polish plan in .rpiv/artifacts/architecture-reviews/ that blueprint consumes per phase. Language-agnostic. Use before a 1.0, after a major refactor, or to sweep accumulated AI slop a module has grown.
 argument-hint: "[target path: file, directory, or module — empty auto-picks the densest source root]"
 shell-timeout: 10
 contract:
@@ -44,11 +44,11 @@ contract:
 You are tasked with conducting a deep, anti-slop architecture review of a target module: a single living artifact that **quantifies** structural health, hunts the **judgment-level slop** that linters (dependency-cruiser, knip, biome, tsc) cannot see, **verifies** every agent-found finding before it reaches the developer, **tracks drift** against the prior review, and ends in a phased polish plan downstream skills consume.
 
 The review runs in three phases:
-- **A. Measure & detect** (Steps 1-6.5) — automated, quantified, agent-driven; ends with the **Interaction Sweep** that re-joins the deliberately-isolated lenses to surface compound defects.
+- **A. Measure & detect** (Steps 1-6.5) — automated, quantified, agent-driven in **two waves** (Wave 1: structural lenses G+Lc+D with a lightweight interaction pass; steering checkpoint; Wave 2: cross-cutting lenses C+A+T+L+M+S+Fe); ends with the **full Interaction Sweep** that re-joins ALL waves' findings into root-caused compound defects.
 - **B. Per-layer review & triage** (Step 7) — interactive, top-down, human judgment.
-- **C. Synthesize** (Steps 8-13) — drift delta, **cluster discovery**, root-caused themes, compound-risk-promoted phased plan, chain-out.
+- **C. Synthesize** (Steps 8-13) — drift delta via **content-hash fingerprints** (survive renames), **cluster discovery**, root-caused themes, compound-risk-promoted phased plan, chain-out.
 
-Synthesis is the load-bearing depth of this skill: the lenses find symptoms in isolation; Steps 6.5, 9.5, 10 and 11 connect them into the systemic story — *what one decision produced this cluster, and how do these findings compound* — instead of merely re-sorting findings already in hand.
+Synthesis is the load-bearing depth of this skill: the lenses find symptoms in isolation; Steps 6.5, 9.5, 10 and 11 connect them into the systemic story — *what one decision produced this cluster, and how do these findings compound* — instead of merely re-sorting findings already in hand. The two-wave dispatch gives the developer a steering checkpoint between structural and cross-cutting analysis so clean modules pay less and messy modules get smarter-targeted deep analysis.
 
 ## Input
 
@@ -68,14 +68,18 @@ Copy values verbatim — do not reformat the timezone offset. `now.mjs` line 1 i
 
 ```
 A. Measure & detect
-   1. Identify target -> 2. Metrics + linters + prior review -> 2.7 Build System Model (top-down entity map)
+   1. Identify target -> 2. Metrics + linters + prior review -> 2.7 Build System Model (style-aware entity map)
    -> 3. Plan layers as a view of the model (+ checkpoint)
-   -> 4. Skeleton artifact (Health Scorecard + System Model) -> 5. Slop-lens wave -> 6. Verify gate
-   -> 6.5 Interaction sweep (re-join isolated lenses; root-cause compounds)
+   -> 4. Skeleton artifact (Health Scorecard + System Model)
+   -> 5a. Wave 1: G + Lc + D (structural, metric-gated) -> 5b. Wave 1 sweeper (lightweight, over G+Lc+D)
+   -> 5c. Steering checkpoint (skip/full/narrow Wave 2)
+   -> 5d. Wave 2: C + A + T + L + M + S + Fe (cross-cutting, full-scope, informed by Wave 1)
+   -> 6. Verify gate -> 6.5 Full interaction sweep (all waves, root-cause compounds)
 B. Per-layer review & triage
    7. Per-layer loop: read -> 10-dim sweep -> merge verified slop + interactions -> triage -> persist -> tally
 C. Synthesize
-   8. Drift delta -> 9. Methodology -> 9.5 Cluster discovery (set-arithmetic over findings)
+   8. Drift delta (content-hash fingerprint matching) -> 9. Methodology
+   -> 9.5 Cluster discovery (set-arithmetic over findings)
    -> 10. Root-caused cross-cut themes -> 11. Polish plan + compound-risk Rollup
    -> 12. Present & chain -> 13. Follow-ups
 ```
@@ -166,7 +170,7 @@ Before planning layers, build the top-down domain-entity / data-flow model the r
 
 **Gate:** SKIP for a single-file target, or when `---co-change-groups---` is empty AND there are no db row-type / domain-contract files to seed entities — note "no system model (insufficient structure)" and proceed to Step 3. Otherwise dispatch ONE `entity-mapper`:
 
-   **Agent — entity-mapper:** "Target: `{target}`. Build the top-down System Model. Seeds — ripple-groups (`co-change-groups` rows from metrics): {paste rows}. Write-site counts (the `write-sites-semantic` rows when semantic.mjs ran — type-resolved, incl. imported/aliased table names — else the regex `write-sites` rows: table/RPC -> writers=N + files): {paste rows}. Type seeds: the db row-type file(s) (e.g. `lib/db/types.ts`) and domain contracts (`lib/<domain>/*-contracts.ts`). Name the canonical entities from the type/contract seeds, attach the ripple-group files, place each entity's files across the 8-stage lifecycle (DEFINE -> PRODUCE -> VALIDATE -> PERSIST -> READ -> RENDER -> MUTATE -> AUDIT), and **judge ownership FROM the write-site counts** (`writers=1` -> that module owns the entity; `writers>=2` -> `owner: NONE` + list the writers; fall back to reading only when no count exists), and record cross-entity edges. Output L0 + the Entity x Stage matrix + per-entity L1/L2 per your format. Cite `file:line`; emit the model only, no findings."
+   **Agent — entity-mapper:** "Target: `{target}`. Style: `auto` (detect per entity — use event/CQRS/pipeline/hex signal when present; fall back to CRUD). Build the top-down System Model. Seeds — ripple-groups (`co-change-groups` rows from metrics): {paste rows}. Write-site counts (the `write-sites-semantic` rows when semantic.mjs ran — type-resolved, incl. imported/aliased table names — else the regex `write-sites` rows: table/RPC -> writers=N + files): {paste rows}. Type seeds: the db row-type file(s) (e.g. `lib/db/types.ts`) and domain contracts (`lib/<domain>/*-contracts.ts`). Name the canonical entities from the type/contract seeds, attach the ripple-group files, auto-detect the architecture style per entity, place each entity's files across its style-appropriate lifecycle stages, **judge ownership per the style-specific rule** (CRUD: `writers=1` -> that module owns; `writers>=2` -> `owner: NONE`; event-driven: multiple owners by design, EMIT owns schema, each HANDLE owns side effects; CQRS: WRITE aggregate owns invariant, READ is a projection — no independent owner; pipeline: TRANSFORM stage owns; hexagonal: DOMAIN owns ports, each ADAPTER owns its impl), and record cross-entity edges. Output L0 (Entity | Style | Outbound edges) + per-entity L1 (name each entity, style, stage placement with style-specific stage names, owner per the style's rule, unguarded/split-brain notes). Cite `file:line`; emit the model only, no findings."
 
 Hold the returned model. It is written into the skeleton (Step 4) as the `## System Model` section and carried into:
 - **Step 3** — layers are grouped as a *view* of the model's entities/stages.
@@ -205,51 +209,97 @@ Layers mirror dependency direction. Higher layers consume lower-layer vocabulary
 
 4. **All subsequent writes use the Edit tool.** Never re-Write the whole file — the artifact is the durable checkpoint between sessions.
 
-### Step 5: Slop-Lens Wave (global, context-isolated)
+### Step 5: Slop-Lens Wave (two-wave, context-isolated)
 
-Detect the judgment-level slop linters miss. Build a compact **Slop Map** first, then dispatch only the lenses their metric signal warrants — all in a single multi-Agent message.
+Detect the judgment-level slop linters miss. Instead of dispatching all 10 lenses at once, dispatch in two waves. **Wave 1** runs the structural lenses — god-file (G), low-cohesion (Lc), and duplication (D) — which are metric-gated (run only on the files metrics flagged), cheap, and produce findings immediately actionable at the steering checkpoint. **Wave 2** runs the cross-cutting lenses — fragmentation (C), dead abstraction (A), test theater (T), leaky boundary (L), missing abstraction (M), state ownership (S), and feature envy (Fe) — which search the full codebase and are more expensive. A lightweight sweeper between waves finds G+Lc+D interactions; a steering checkpoint lets the developer skip/narrow Wave 2 based on Wave 1 results.
 
-**Slop Map** (orchestrator-synthesized; the ONLY context each lens receives besides its own file list):
+**The M and S lenses always fire in Wave 2** (they have no metric pre-filter and search the full codebase).
+
+#### 5a. Build the Slop Map (shared across both waves)
+
 ```
 Target: {target}   Layers: {layer table, one line each}
 Metrics: median {loc_median} LOC, p90 {loc_p90}
 Size outliers: {path  loc  x_median rows — raw LOC context}
 God-file candidates (G gate): {path  loc  x_median  cats  coh  reason rows from ---godfile-candidates---}
 Low-cohesion (Lc): {path  coh  syms  islands rows from ---low-cohesion--- — disjoint responsibilities, any size}
-Export-usage flags: {path  exports  inbound rows where inbound is 0 or low; PLUS dead-exports-semantic rows (path:export  extRefs=0) when semantic.mjs ran — type-resolved dead}
+Export-usage flags: {path  exports  inbound rows where inbound is 0 or low; PLUS dead-exports-semantic rows when semantic.mjs ran}
 Test-density flags: {path  cases  asserts  ratio rows}
-Dup-candidates: {jscpd clones (firstFile / secondFile / lines) when present = AUTHORITATIVE; ---dup-candidates--- (fileA | fileB  shared  overlap  tokenSim  via) = corroboration + structural-Type-2 supplement}
+Dup-candidates: {jscpd clones when present = AUTHORITATIVE; ---dup-candidates--- = corroboration + structural-Type-2 supplement}
 Co-change pairs (Tc): {fileA | fileB  support  conf rows — hidden coupling, no import edge}
-Feature-envy (Fe): {feature-envy-semantic rows when present (path  envies=module  ext  own  ratio  behavioralRefs  dataRefs — type-resolved, data-only leans already dropped), else ---feature-envy-candidates---}
-Write-sites (S ownership): {write-sites-semantic rows when present (type-resolved, resolves imported/aliased table names), else ---write-sites--- — writers>=2 = scattered write path}
-Type fragmentation (C): {type-fragmentation-semantic rows when present — kind=drift (same name, drifted shape) / kind=same-shape (same shape, different names = missing type); structural seed for the C lens}
+Feature-envy (Fe): {feature-envy-semantic rows when present, else ---feature-envy-candidates---}
+Write-sites (S ownership): {write-sites-semantic rows when present, else ---write-sites--- — writers>=2 = scattered write path}
+Type fragmentation (C): {type-fragmentation-semantic rows when present — kind=drift / kind=same-shape; structural seed for the C lens}
 Tool ground-truth: depcruise {violations summary; per-folder instability Ca/Ce/I; circular; orphans}; knip {dead-code summary}; coverage {per-file stmt/branch/fn% + branch-gaps}
 ```
 
-The **co-change pairs are the temporal-coupling (Tc) lens in full** — there is no Tc wave agent; the deterministic metric IS the lens. They ride in the Slop Map for the other lenses' context and are consumed whole by the Interaction Sweep (Step 6.5), where two findings on a co-changing pair become a grounded hidden-coupling compound.
+The **co-change pairs are the temporal-coupling (Tc) lens in full** — there is no Tc agent; the deterministic metric IS the lens. They ride in the Slop Map and are consumed by the full Interaction Sweep (Step 6.5).
 
-**Context isolation (load-bearing, per code-review):** each lens agent receives EXACTLY the Slop Map + the specific file list it must inspect. Do NOT paste raw agent dumps or another lens's output into a lens prompt — summary framing makes agents narrativise instead of reading the code, producing hallucinated findings. Citation contract applies to every lens: every `file:line` MUST carry the verbatim line in backticks; omit any finding you cannot quote.
+**Context isolation (load-bearing):** each lens agent receives EXACTLY the Slop Map + its specific file list. Do NOT paste raw agent dumps or another lens's output into a lens prompt. Citation contract: every `file:line` MUST carry the verbatim line in backticks; omit any finding you cannot quote.
 
-Dispatch the applicable lenses (skip a lens whose metric block is empty):
+#### 5b. Wave 1 — Structural lenses (G, Lc, D)
 
-- **D — Semantic duplication / parallel implementations** (per dup pair — **jscpd clones are ground truth when present; `dup-candidates` corroborates + adds Type-2**): `codebase-pattern-finder` — "When jscpd ran, treat its `duplicates` (firstFile/secondFile/lines) as the AUTHORITATIVE clone set — do NOT re-derive or re-report them; ADD only structural Type-2 clones from `---dup-candidates---` (`via=structural`, renamed identifiers) that jscpd's exact tokenizer missed. When jscpd is absent, the `dup-candidates` pairs are the primary signal. For each candidate PAIR (`{a}`, `{b}`) — {shared} shared lines, overlap {overlap}, tokenSim {tokenSim}, via {via} — read both ends and decide genuine redundancy vs distinct concern. `via=lines`/`both` = a literal copy-paste BLOCK — anchor on the contiguous `run` and read THAT {run}-line block, not whole-file overlap; `via=structural` = a Type-2 clone with the SAME shape but renamed identifiers/literals (few identical lines — anchor on tokenSim; read for matching control flow, not matching text). For real duplication emit both `file:line` ranges with verbatim lines, the divergence, which is canonical, why it is slop. Confirm it is real shared logic, not coincidental boilerplate. REJECT as non-findings (do NOT emit) convention-mandated idioms and facades even with a long run: shared db-repo CRUD scaffolding (createClient / .from().select().eq() / the `if (error) { console.error(...); throw }` idiom), uniform error-handling boilerplate, and re-export / `export type { ... }` facade blocks — these share lines by convention, not duplicated logic. If instead the shared block is a repeated DECLARATION or shape that should be a single named type / helper / constant rather than copied LOGIC (e.g. an inline param type re-declared across layers), emit it tagged **M (missing abstraction)** naming the primitive it should become — do NOT drop it, and do NOT force it into D. The metric flags any contiguous shared block; you are the final semantic guard that sorts copy-paste (D) from missing-name (M) from convention (reject)." Then, for the single strongest pair, `peer-comparator` — "Pair: (`{a}`, `{b}`). Emit one row per public invariant: Mirrored / Missing / Diverged / Intentionally-absent, with verbatim cites. No prose, no severity."
-- **C — Concept / type fragmentation** (always for typed targets; **seeded by `type-fragmentation-semantic` when present**): `codebase-pattern-finder` — "Start from the deterministic structural seeds in `type-fragmentation-semantic` (when present): a **`kind=drift`** row = ONE name declared with DIFFERENT structural shapes (a confirmed disagreement — reconcile to one); a **`kind=same-shape`** row = the SAME shape under DIFFERENT names (a missing shared type the name-based search cannot find). Treat each seed as ground-truth structure, then read both ends to confirm and name the canonical home. THEN also find name-based concepts the structural scan misses: duplicate `export type X` / `interface X` / enum / const-union NAMES (and concepts the seed couldn't shape — unions, generics). Per concept emit a row: every definition `file:line` with verbatim line, whether the definitions AGREE or have DRIFTED, and the canonical home. Severity = definition-count + drift. The seed is structural, you add the semantic/name layer — they are complementary, neither replaces the other."
-- **G — God-file / oversized-module** (per `godfile-candidates` row — NOT raw `size-outliers`): `codebase-analyzer` — "For `{file}` ({loc} LOC, {x}x median, {cats} concern categories, cohesion {coh}, flagged: {reason}), name each DISTINCT responsibility with its line-range and the natural split boundary — name each extractable unit and its target filename. Do NOT say 'split into modules'. Severity = responsibility-mixing FIRST (category count + reason), then x_median scaled by inbound blast — a `mixing` flag on a SMALL file is still high-severity. A file the gate rescued by cohesion is not a candidate; do not invent one from `size-outliers`."
-- **Lc — Low cohesion / disjoint responsibilities** (per `low-cohesion` row): `codebase-analyzer` — "For `{file}` (cohesion {coh}, {syms} top-level symbols, {islands} disjoint islands), identify the clusters of top-level symbols that never reference each other. Per cluster emit: its responsibility, its symbols + line-range with verbatim cites, and the file it should become. This is NOT a size finding — flag it even at normal LOC. Distinguish from G (god-file = size or import-mixing); Lc is a cohesion defect at any size. Severity = island count + spread across responsibilities."
-- **A — Speculative generality / dead abstraction** (per `export-usage` row with `inbound=0`, cross-ref knip): `codebase-analyzer` — "For each of {files}, confirm whether the abstraction is speculative: cite its actual consumers `file:line` or state `<none found>`. Distinguish genuinely-unused (inline/delete) from a knip false-negative. `inbound=?` means unmeasured, NOT dead — verify by reading. `dead-exports-semantic` rows appear ONLY when knip was unavailable (knip is the primary A tool — it sees dynamic/entry-point uses the type-checker cannot); when present, `extRefs=0` is a type-resolved dead export — still confirm it is not public API or dynamically referenced (string keys / dynamic import are invisible to `findReferences`). A `capped=true` header means the scan stopped early: an unexamined tail is NOT proven alive. When the header says `skipped (knip present)`, A rests on knip + `export-usage`."
-- **T — Test theater** (fires on `test-density` rows AND/OR `coverage` gaps; **coverage is the deterministic reach signal**): `codebase-analyzer` — "Cross the assert-density signal (`test-density`: assert/case ratio) with the coverage signal (`coverage`: per-file stmt/branch/fn%). Classify via the 2x2: (a) covered + asserted = real (skip); (b) covered + NOT asserted / asserts only on mocks = executes real code but verifies nothing — theater; (c) NOT covered (0%/low) + has asserts = asserts on mocks/stubs, never reaches real code — mock theater; (d) a covered file with a 0%-branch region = a missing test, not theater — emit it as a coverage gap. Per finding emit `file:line` + the verbatim test, the coverage number, what it claims to cover, and what a real assertion would check. If no coverage was available, fall back to the assert/case heuristic and flag findings **lower-confidence**. Note: test files live wherever the repo keeps them (e.g. a top-level `tests/` tree) — judge by what each test imports/exercises, not by co-location."
-- **L — Leaky abstraction / boundary erosion** (always; fed depcruise's FULL graph + metrics, not just violations): `codebase-analyzer` — "dependency-cruiser already flags these import-boundary violations: {paste violations} — treat them as ground truth and do NOT re-report them. **If the config has few/no rules, 'no violations' means UNCHECKED, not clean — reason from the graph instead.** Using the dependency graph + per-folder stability metrics {paste Ca/Ce/instability; circular; orphans}, find the boundary erosion the rules miss: (a) **Stable-Dependencies-Principle violations** — a stable module (low `I`, many dependents) depending on an unstable one (high `I`); (b) SEMANTIC leaks — public types exposing implementation details, domain importing infrastructure concepts, contracts forcing callers to know internals; (c) circular clusters / orphans the rules didn't forbid. Cite `file:line` (or module + its `I`) with verbatim lines. **Prevention (read-only):** for any boundary leak that a dependency-cruiser `forbidden` rule COULD prevent from recurring, emit a `prevention:` line with the concrete proposed rule (`name` + `from.path` + `to.path` + `comment`) — this is captured as an actionable guardrail in the artifact's polish plan; do NOT modify `.dependency-cruiser.cjs` yourself (the review never writes to the repo)."
-- **M — Missing abstraction** (always; the inverse of A): `codebase-pattern-finder` — "Find the same CONCEPTUAL shape re-implemented inline across >= 2 files in `{target}` that was never named or extracted — a recurring computation, guard, mapping, or validation pattern repeated structurally (NOT literal copy-paste; that is the D lens). Per cluster emit: every `file:line` with the verbatim line, the shared shape, and the missing primitive that should own it (a named function/type/module). Severity = repetition count + spread across layers. This is the slop that begs for a vocabulary the codebase never grew."
-- **S — State / data-flow ownership** (always; **grounded by the write-site counts — `write-sites-semantic` when present, else `write-sites` — + the System Model's ownership**): `codebase-analyzer` — "Trace mutable state and shared data in `{target}`: identify state with unclear ownership, invariants enforced in multiple places (or nowhere central), and partial-update hazards where one writer can leave the data inconsistent. **START from the `write-sites-semantic` rows when present (type-resolved — resolves imported/aliased table names; else the regex `write-sites`) with writers >= 2** (a table/RPC written from multiple modules = a scattered write path — the strongest, counted ownership signal), then the System Model's `owner: NONE` entities / split-brain stages. Per finding emit `file:line` with the verbatim line, what the invariant IS, the entity/stage it belongs to, and which sites can violate it. A table with `writers=1` is a clean single-owner — do NOT manufacture an ownership finding for it. Flag findings **lower-confidence** unless backed by a `writers>=2` count — cite at least two concrete sites or drop."
-- **Fe — Feature envy** (per `feature-envy-semantic` row when present — type-resolved — else `feature-envy-candidates`; the metric over-flags delegation, so REJECT first, confirm second): `codebase-analyzer` — "For `{file}` (envies `{module}`, {ext} external refs vs {own} own, ratio {ratio}), the metric only counts references — it CANNOT tell envy from intentional delegation. **When `feature-envy-semantic` is present it is AUTHORITATIVE over the coarse ratio: data-only leans (`behavioralRefs=0`) are already dropped, so `behavioralRefs` is the genuine-envy magnitude — a row with high `dataRefs` but modest `behavioralRefs` (a mapper/translator using the module's types & constants) is delegation, not envy.** **First reject the false positives, do NOT emit them:** (a) a thin **forwarder** — functions whose bodies just unpack args and call `{module}` then return (a wrapper/adapter, not envy); (b) a known **facade/orchestrator layer** (`admin/`, `system/`, barrels, `*-commands.ts`) whose JOB is to delegate; (c) a **constants/config file** that merely derives values from `{module}` (no behavior to misplace, e.g. `own=0`). **Only after rejecting those**, confirm genuine envy at FUNCTION granularity: a function doing substantial LOGIC on `{module}`'s members that belongs ON `{module}`. Per real finding emit `file:line` + verbatim, the function name, and the method/home on `{module}` it should move to. Scope away from L (exposed internals) and M (un-named repeated shape). Flag **lower-confidence**: cite >= 2 sites in the same function or drop it."
+Dispatch these three metric-gated lenses in a single multi-Agent message. Skip any whose metric block is empty (no godfile-candidates → skip G; no low-cohesion → skip Lc; no dup-candidates + no jscpd → skip D).
 
-Note the wave now runs **ten agent-lenses** (D, C, G, A, T, L, M, S, Lc, Fe) plus the metric-only **Tc** (temporal coupling) carried in the Slop Map — eleven lenses total. M and S always fire; the rest (Lc and Fe included) are metric-gated.
+- **G — God-file / oversized-module** (per `godfile-candidates` row — NOT raw `size-outliers`): `codebase-analyzer` — "For `{file}` ({loc} LOC, {x}x median, {cats} concern categories, cohesion {coh}, flagged: {reason}), name each DISTINCT responsibility with its line-range and the natural split boundary — name each extractable unit and its target filename. Do NOT say 'split into modules'. Severity = responsibility-mixing FIRST (category count + reason), then x_median scaled by inbound blast. A file rescued by cohesion is not a candidate; do not invent one from `size-outliers`."
+- **Lc — Low cohesion / disjoint responsibilities** (per `low-cohesion` row): `codebase-analyzer` — "For `{file}` (cohesion {coh}, {syms} top-level symbols, {islands} disjoint islands), identify the clusters of top-level symbols that never reference each other. Per cluster emit: its responsibility, its symbols + line-range, and the file it should become. Severity = island count + spread across responsibilities."
+- **D — Semantic duplication / parallel implementations** (per dup pair): `codebase-pattern-finder` — "When jscpd ran, its `duplicates` are AUTHORITATIVE. For each candidate PAIR (`{a}`, `{b}`), read both ends. `via=lines`/`both` = literal copy-paste — anchor on the contiguous block. `via=structural` = Type-2 clone — read for matching control flow. REJECT convention idioms (CRUD scaffolding, error boilerplate, re-export facades). If the shared block is a repeated DECLARATION that should be a named type/helper, emit tagged **M (missing abstraction)** — don't force it into D. Then, for the strongest pair, `peer-comparator` — emit Mirrored / Missing / Diverged / Intentionally-absent, no severity."
 
-Also dispatch, in the same message:
-- **Agent — integration-scanner:** "Map inbound references, outbound dependencies, and wiring for these files: {size-outliers + high-export files + dup-candidate files}. Flag hubs (>= 3 consumers) and any boundary crossings. Connections only — this feeds blast-radius for remediation."
-- **Agent — precedent-locator:** "In git history for `{target}`, find prior splits / dedups / boundary-moves. Per precedent: commit, blast radius, follow-up fixes within 30 days, one-sentence lesson. These weight severity (repeat offenders) and inform remediation sequencing."
+Also dispatch in the same message:
+- **Agent — integration-scanner:** "Map inbound references, outbound dependencies, and wiring for: {size-outliers + godfile-candidates + dup-candidate files}. Flag hubs (>= 3 consumers) and boundary crossings. Connections only — feeds blast-radius."
 
-Wait for ALL wave agents. Collect their findings as **candidate slop findings**, each keyed to a file and its layer, with a provisional `L<layer>-<seq>` ID and lens tag.
+Wait for all Wave 1 agents. Collect their findings — these are structural findings (G, Lc, D) with provisional IDs, each keyed to a file and layer.
+
+#### 5b2. Wave 1 Sweeper (lightweight, G+Lc+D only)
+
+**Gate:** skip when fewer than 4 Wave 1 findings OR they span < 2 files. Otherwise dispatch ONE `interaction-sweeper`:
+
+```
+Target: {target}   Layers: {layer table}
+
+Wave 1 findings (G, Lc, D only): {paste every finding with id, lens, file:line, verbatim line, severity, one-liner}
+Co-change pairs: {paste ---co-change-candidates--- rows}
+
+Group by shared file / concept / boundary / co-change pair. Per group, re-read the cited code. Emit only compounds with >= 2 file:line facts from DIFFERENT files. Name the root architectural decision behind each. Output: IX-{n} blocks per your format. These feed the steering checkpoint and Wave 2 context.
+```
+
+The Wave 1 sweeper output is lightweight — typically 0-3 compounds. Its findings:
+- Feed the steering checkpoint (so the developer sees "these god-files interact" before deciding on Wave 2)
+- Are passed to Wave 2 lenses as context ("when analyzing concept fragmentation, check these interacting god-files first")
+- Are re-consumed by the full sweeper (Step 6.5) alongside Wave 2 findings
+
+#### 5c. Steering Checkpoint
+
+Use `ask_user_question` to decide Wave 2 strategy:
+
+"Wave 1: {G-count} god-files, {Lc-count} cohesion issues, {D-count} duplications. {IX-count} interaction compounds. {file_count} files, median {loc_median} LOC. Wave 2 cross-cutting analysis (7 lenses on full codebase)?"
+
+Header: "Wave 2". Options:
+- **"Skip — 10-dim only (Recommended)"** when Wave 1 found 0-1 findings AND file_count < 100 AND this is not a pre-1.0 review. Proceed directly to per-layer 10-dim sweep (Step 7) — skip the entire Wave 2 + verify gate + full sweeper. The review runs as a lightweight health check.
+- **"Run full Wave 2 (Recommended)"** when Wave 1 found >= 2 findings OR file_count >= 100 OR this is a pre-1.0 review. Execute Step 5d below.
+- **"Narrow scope"** — run Wave 2 lenses only on files touched by Wave 1 findings + their direct consumers (from integration-scanner). The orchestrator computes the restricted file set and passes it to each Wave 2 lens.
+- **"Pause — I'll fix Wave 1 findings first"** — STOP the review. The developer resolves structural issues, then re-runs the review (Wave 1 will find fewer candidates).
+
+On "Skip": record in the artifact that Wave 2 was skipped. The review proceeds to Step 7 (per-layer 10-dim sweep) directly.
+
+On "Pause": print "Review paused. Re-run /rpiv:architectural-review after fixing Wave 1 findings." and stop.
+
+#### 5d. Wave 2 — Cross-cutting lenses (C, A, T, L, M, S, Fe)
+
+Dispatch these seven lenses in a single multi-Agent message. Each receives the full Slop Map + the Wave 1 findings + IX compounds as context (they CAN see each other's output — Wave 2 lenses run cooperatively, not isolated from Wave 1).
+
+- **C — Concept / type fragmentation** (always for typed targets): `codebase-pattern-finder` — "Start from `type-fragmentation-semantic` seeds when present (drift: same name, different shapes; same-shape: same shape, different names). Then also find name-based duplicates: `export type X` / `interface X` / enum / const-union NAMES. Per concept emit every definition `file:line`, whether definitions AGREE or DRIFTED, and the canonical home."
+- **A — Speculative generality / dead abstraction** (per `export-usage` row with `inbound=0`, cross-ref knip): `codebase-analyzer` — "Confirm whether the abstraction is speculative: cite actual consumers or `<none found>`. Distinguish genuinely-unused from knip false-negative. `inbound=?` means unmeasured, NOT dead. When `skipped (knip present)`, A rests on knip + `export-usage`."
+- **T — Test theater** (fires on `test-density` rows AND/OR `coverage` gaps): `codebase-analyzer` — "Cross assert-density with coverage. 2x2: covered+asserted=real (skip); covered+NOT asserted=theater; NOT covered+has asserts=mock theater; covered with 0%-branch region=coverage gap (not theater). Per finding: `file:line` + verbatim test + coverage number."
+- **L — Leaky abstraction / boundary erosion** (always; fed depcruise's FULL graph): `codebase-analyzer` — "depcruise violations are ground truth — do NOT re-report. Find SDP violations (stable→unstable), SEMANTIC leaks (implementation types exposed), circular clusters / orphans the rules miss. For any leak that a `forbidden` rule could prevent, emit a `prevention:` line with the proposed rule (read-only — do NOT modify `.dependency-cruiser.cjs`)."
+- **M — Missing abstraction** (always): `codebase-pattern-finder` — "Find the same CONCEPTUAL shape re-implemented inline across >= 2 files — NOT literal copy-paste (that's D). Per cluster: every `file:line`, the shared shape, the missing primitive (named function/type/module). Severity = repetition count + layer spread."
+- **S — State / data-flow ownership** (always; grounded by write-site counts + System Model): `codebase-analyzer` — "START from `write-sites` with `writers >= 2`. Then the System Model's `owner: NONE` entities. Per finding: `file:line`, what the invariant IS, which sites can violate it. `writers=1` = clean — do NOT manufacture. Flag lower-confidence unless backed by `writers>=2`. **Respect style-specific ownership: event-driven PERSIST has no single owner by design; CQRS READ has no owner — do NOT flag these.**"
+- **Fe — Feature envy** (per `feature-envy` row; REJECT first, confirm second): `codebase-analyzer` — "When `feature-envy-semantic` is present: `behavioralRefs` is the genuine-envy magnitude (data-only leans already dropped). REJECT: thin forwarders, facade/orchestrator layers, constants/config files. Confirm genuine envy at FUNCTION granularity: a function doing substantial LOGIC on the envied module's members. Per finding: `file:line`, function name, suggested home on the envied module."
+
+Also dispatch in the same message:
+- **Agent — precedent-locator:** "In git history for `{target}`, find prior splits / dedups / boundary-moves. Per precedent: commit, blast radius, follow-up fixes within 30 days, lesson."
+
+Wait for all Wave 2 agents. Collect their findings alongside the Wave 1 findings — together they form the complete **candidate slop findings** set, each keyed to a file and its layer, with a provisional `L<layer>-<seq>` ID and lens tag (G, Lc, D, C, A, T, L, M, S, Fe).
 
 ### Step 6: Verify Gate (anti-slop meta-guard)
 
@@ -275,9 +325,9 @@ Citation contract applies. No new findings.
 
 Apply: **Falsified -> drop** (ID retired, counted in frontmatter `verification.falsified`). **Weakened -> demote one severity tier**, rewrite the evidence to the narrower claim. **Verified -> carry**. Record `verified`/`weakened`/`falsified` counts in frontmatter. The surviving, verified slop findings now enter the Interaction Sweep and the per-layer loop alongside the dimension sweep.
 
-### Step 6.5: Interaction Sweep (re-join the isolated lenses)
+### Step 6.5: Full Interaction Sweep (re-join ALL waves)
 
-The slop lenses ran in deliberate isolation (Step 5 forbids them seeing each other) — so no lens could see a defect that emerges only when findings COMBINE. This is the single most important depth step: it undoes that isolation over the *verified* set and names the root architectural decision behind each cluster. Without it, synthesis later (Step 10) is just grouping-by-tag.
+The lenses ran in two waves: Wave 1 lenses were isolated from each other (the Wave 1 sweeper alone saw G+Lc+D interactions), and Wave 2 lenses received Wave 1 context but were still isolated from full cross-wave interactions. This step undoes ALL isolation over the *verified* set from both waves and names the root architectural decision behind each cluster. It consumes the Wave 1 sweeper's `IX` compounds (re-grounding them alongside Wave 2 findings) and surfaces emergent defects no single wave's isolation could see. Without it, synthesis later (Step 10) is just grouping-by-tag.
 
 **Gate:** SKIP only when fewer than 4 verified findings survived Step 6 OR they span fewer than 2 files — interactions need surface area. Otherwise dispatch ONE `interaction-sweeper`:
 
@@ -334,23 +384,48 @@ Edit the `## Layer N` section the instant an outcome is chosen. Write the FULL e
 #### 7.6 Tally
 Append the layer tally table (accepted/rejected/deferred/withdrawn), the **slop lenses fired in this layer** (D/C/G/A/T/L/M/S/Tc/IX/10dim counts), cross-cut tags introduced/reused, and within-layer dependency edges. Batched layers: per-batch tally + a roll-up after all batches.
 
-### Step 8: Drift Delta
+### Step 8: Drift Delta (content-hash fingerprints)
 
-If Step 2 found no prior review: omit the Drift Delta section; the scorecard Composite already says "Baseline review". Otherwise, match the prior review's findings against this run's. Dispatch ONE `claim-verifier` as a row-only matcher:
+If Step 2 found no prior review: omit the Drift Delta section; the scorecard Composite already says "Baseline review".
 
-```
-Prior findings (from {prior path}): {id, file#symbol, lens-ish class, severity, evidence}.
-Current findings (this run, post-triage): {id, file#symbol, lens, severity, evidence}.
+Otherwise, match prior review findings against this run's using **content-hash fingerprints** that survive file renames and line-number drift — unlike the old `path#symbol@lens` pattern which breaks when files move.
 
-Match by FINGERPRINT = path + '#' + nearest symbol + '@' + lens class (IGNORE line numbers). Tag every prior finding and surface every current finding with no prior match:
-- Resolved   — prior finding's evidence is gone; VERIFY by reading the cited file at HEAD (a falsely-claimed fix must not hide a regression).
-- Regressed  — prior finding was marked fixed/accepted, but the slop is present again now.
-- Still-open — prior finding still reproduces (fingerprint match to a current finding).
-- NEW        — a current finding with no prior match (net-new slop since last review).
-Return: `prior_id | fingerprint | status | current_id_or_'-' | current_evidence file:line — `line``.
+#### 8a. Compute fingerprints for the current run
+
+For each accepted/deferred finding, compute a fingerprint via the helper:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/_helpers/fingerprint.mjs"
 ```
 
-Write the **Drift Delta** section + scorecard `Resolved R · Regressed Rg · Still-open S · NEW N · Net Δ`. Update frontmatter `drift`. Headline the Regressed and NEW rows — they are the net-new slop the review exists to surface.
+Feed it one JSON line per finding:
+```json
+{"id": "L0-01", "lens": "G", "quotedLines": ["export class GodFile {"], "symbol": "GodFile"}
+```
+
+The `quotedLines` field is the verbatim evidence line(s) from the finding. The helper normalises whitespace, strips comments, and produces a deterministic SHA-256 prefix. Two findings with the same lens class, same normalised code, and same symbol produce the same fingerprint regardless of file path or line numbers.
+
+Collect fingerprint → finding ID mappings for all accepted/deferred findings.
+
+#### 8b. Compute fingerprints for the prior review
+
+Read the prior review artifact. For each finding (by its ID), extract `lens`, the verbatim evidence line(s), and the symbol name. Pipe through the same helper to get prior-finding fingerprints.
+
+#### 8c. Match by fingerprint
+
+Match `{prior_fp → prior_id}` against `{current_fp → current_id}`. The orchestrator computes this inline — no agent dispatch needed. For each match:
+
+- **Fingerprint match** → `Still-open`. The finding moved (possibly renamed file, shifted line numbers) but the code is the same.
+- **Prior fingerprint has NO current match** → check if the evidence is genuinely gone. Read the cited code at HEAD via the `claim-verifier`:
+  - Evidence genuinely absent → `Resolved` (VERIFY — do not trust path alone; a renamed file with the same bug must not read as Resolved)
+  - Evidence still present but fingerprint changed (partial fix, body edited) → `Regressed` (the bug evolved but wasn't fixed)
+- **Current fingerprint has NO prior match** → `NEW` (net-new slop since last review)
+
+Fallback: if the fingerprint helper is unavailable (missing node, etc.), degrade to `path#symbol@lens` matching and note "fingerprint unavailable — path-based matching" in the Drift Delta section.
+
+#### 8d. Write the Drift Delta
+
+Write the **Drift Delta** section + scorecard `Resolved R · Regressed Rg · Still-open S · NEW N · Net Δ`. Update frontmatter `drift`. Headline the Regressed and NEW rows — they are the net-new slop the review exists to surface. Note when a Still-open match involves a renamed file (the fingerprint matched but the path didn't).
 
 ### Step 9: Capture Emergent Methodology Principles
 
@@ -435,19 +510,23 @@ The artifact is blueprint-consumable per phase:
 | Context | Agents |
 |---|---|
 | Step 1 auto-pick / Step 2 metrics | `metrics.mjs` helper (no agent) |
-| Step 2 tool probe + coverage | `tool-probe.mjs` (detect tools→lenses, read-only) + `coverage.mjs` (parse coverage→T) + `semantic.mjs` (ts-morph→S/Fe/A when `configured`, read-only, optional — degrades to regex) — helpers, no agent; external tools (depcruise/knip via `npx`, jscpd v5 Rust binary) run with consent. **The orchestrator runs all tools/helpers and passes their PARSED output to the lens subagents — subagents are read-only (Read/Grep/Glob) and never invoke tools themselves.** |
+| Step 2 tool probe + coverage | `tool-probe.mjs` (detect tools→lenses, read-only) + `coverage.mjs` (parse coverage→T) + `semantic.mjs` (ts-morph→S/Fe/A when `configured`, read-only, optional — degrades to regex) — helpers, no agent; external tools (depcruise/knip via `npx`, jscpd v5 Rust binary) run with consent |
 | Step 2 prior-review lookup | `artifacts-locator` (1) |
-| Step 2.7 system model | `entity-mapper` (1) — top-down entity/data-flow map from `co-change-groups` ripple-groups + db/domain type seeds |
+| Step 2.7 system model | `entity-mapper` (1) — style-aware top-down entity/data-flow map from `co-change-groups` ripple-groups + db/domain type seeds. Auto-detects CRUD / CQRS / event-driven / pipeline / hexagonal per entity |
 | Step 3 layer discovery | `codebase-locator` + `codebase-analyzer` in parallel |
-| Step 5 slop-lens wave | `codebase-pattern-finder` (D, C, M), `codebase-analyzer` (G, A, T, L, S, Lc, Fe), `peer-comparator` (D pair), `integration-scanner` (blast radius), `precedent-locator` (history) — single parallel message, context-isolated. **Tc (temporal coupling) has NO agent** — it is the metric-only `---co-change-candidates---` block from `metrics.mjs`. |
-| Step 6 verify gate | `claim-verifier` (1) — verifies all slop candidates |
-| Step 6.5 interaction sweep | `interaction-sweeper` (1) — re-joins isolated lenses over the verified set; emits root-caused `IX` compounds |
+| Step 5b Wave 1 (structural) | `codebase-pattern-finder` (D), `codebase-analyzer` (G, Lc), `peer-comparator` (D pair), `integration-scanner` (blast radius) — single parallel message, context-isolated. **Tc (temporal coupling) has NO agent** — metric-only |
+| Step 5b2 Wave 1 sweeper | `interaction-sweeper` (1) — lightweight, G+Lc+D only. Feeds steering checkpoint + Wave 2 context |
+| Step 5d Wave 2 (cross-cutting) | `codebase-pattern-finder` (C, M), `codebase-analyzer` (A, T, L, S, Fe), `precedent-locator` (history) — single parallel message, receives Wave 1 findings + IX compounds as context |
+| Step 6 verify gate | `claim-verifier` (1) — verifies all Wave 1 + Wave 2 slop candidates |
+| Step 6.5 full interaction sweep | `interaction-sweeper` (1) — re-joins ALL waves; consumes Wave 1 sweeper's IX compounds + Wave 2 findings over the verified set; emits root-caused `IX` compounds |
 | Step 7.1 deep-file analysis | `codebase-analyzer` (per file or batched) |
-| Step 8 drift delta | `claim-verifier` (1) — row-only fingerprint matcher |
+| Step 8 drift delta | `fingerprint.mjs` helper (compute fingerprints for current + prior findings) + `claim-verifier` (1 — verify Resolved claims at HEAD; fallback when fingerprint unavailable). Orchestrator computes the match inline — no agent needed for the matching pass |
 | Step 9.5 cluster discovery | orchestrator set-arithmetic (no agent) |
 | Step 13 follow-up rescan | `codebase-analyzer` (1-2) |
 
-Spawn agents in parallel only when searching for different things. Each runs in isolation — provide complete context in the prompt, including the target path, and (for Step 5) the Slop Map and nothing else. The `interaction-sweeper` (Step 6.5) is the one agent that deliberately receives the full verified finding set — its job is to undo isolation, not preserve it.
+Spawn agents in parallel only when searching for different things. Wave 1 lenses are isolated from each other (context-isolated per lens). Wave 2 lenses receive Wave 1 findings + IX compounds as context — they run cooperatively, not isolated. The `interaction-sweeper` (Step 5b2 for Wave 1, Step 6.5 for full) deliberately receives the full finding set — its job is to undo isolation, not preserve it.
+
+**Wave gating:** when the steering checkpoint (Step 5c) chooses "Skip Wave 2," the Wave 2 lenses, verify gate, and full interaction sweeper are ALL skipped. The review proceeds directly to the per-layer 10-dim sweep (Step 7). Record "Wave 2 skipped by developer" in the artifact.
 
 ## Important Notes
 
@@ -456,13 +535,16 @@ Spawn agents in parallel only when searching for different things. Each runs in 
 - **Edit the artifact progressively in Step 7.5** — never batch all findings into one final write. The artifact is the durable checkpoint between sessions.
 - **Critical ordering:**
   - ALWAYS gather metrics + linter ground-truth (Step 2) BEFORE writing the skeleton (Step 4) — the Health Scorecard is the quantified backbone every finding cites.
-  - ALWAYS build the System Model (Step 2.7) BEFORE planning layers (Step 3) — the layers are a *view* of the model, and findings later carry its `(entity, stage)` coordinates; deriving layers from scratch discards the top-down frame.
-  - ALWAYS run the slop-lens wave (Step 5) context-isolated — each lens gets the Slop Map + its file list, nothing else. Pasting raw agent dumps causes narrativisation and hallucinated findings.
-  - ALWAYS run the verify gate (Step 6) BEFORE the per-layer triage — the developer must never triage a Falsified slop finding. This is the only mechanism that stops agent slop from reaching the artifact.
-  - ALWAYS run the Interaction Sweep (Step 6.5) over the VERIFIED set (after Step 6, before triage), and ALWAYS run cluster discovery (Step 9.5) BEFORE themes (Step 10) — these two are the systemic-synthesis core; skipping either collapses Step 10 back into shallow grouping-by-tag.
+  - ALWAYS build the System Model (Step 2.7) with `style: auto` BEFORE planning layers (Step 3) — the layers are a *view* of the style-aware model; deriving layers from scratch discards the top-down frame.
+  - Wave 1 (Step 5b): ALWAYS run G, Lc, D context-isolated — each lens gets the Slop Map + its file list, nothing else. Pasting raw agent dumps causes narrativisation.
+  - ALWAYS run the Wave 1 sweeper (Step 5b2) when >= 4 findings span >= 2 files — it surfaces G+Lc+D interactions that inform the steering checkpoint.
+  - ALWAYS present the steering checkpoint (Step 5c) BEFORE Wave 2 — the developer decides whether Wave 2 runs, and their choice gates cost.
+  - Wave 2 (Step 5d): C, A, T, L, M, S, Fe receive Wave 1 findings + IX compounds as context. They run cooperatively (not fully isolated) over the full codebase.
+  - ALWAYS run the verify gate (Step 6) BEFORE the per-layer triage — the developer must never triage a Falsified slop finding.
+  - ALWAYS run the full Interaction Sweep (Step 6.5) over the VERIFIED set from BOTH waves (after Step 6, before triage), and ALWAYS run cluster discovery (Step 9.5) BEFORE themes (Step 10) — these two are the systemic-synthesis core.
   - ALWAYS confirm the layer split (Step 3) BEFORE the skeleton (Step 4).
   - ALWAYS read every file in a layer (7.1) BEFORE the dimension sweep (7.2); ALWAYS triage via `ask_user_question` (7.4) — never auto-accept; ALWAYS Edit immediately after each outcome (7.5).
-  - ALWAYS produce the Drift Delta (Step 8) when a prior review exists, and re-verify its `Resolved` rows at HEAD — a falsely-claimed fix must not hide a regression.
+  - ALWAYS produce the Drift Delta (Step 8) when a prior review exists. Use content-hash fingerprints (survive renames). Re-verify `Resolved` rows at HEAD — a falsely-claimed fix must not hide a regression.
   - NEVER skip the per-layer tally (7.6) — it is the visible progress marker.
   - NEVER edit source files during the review — the artifact is the product; implementation is blueprint's job.
 - **Linter ground-truth is portable, not hard-wired** — detect scripts from the manifest; degrade gracefully when absent. Never assume a specific repo's `npm run` names.
