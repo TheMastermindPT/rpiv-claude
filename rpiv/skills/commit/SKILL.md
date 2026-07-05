@@ -43,6 +43,7 @@ git log --pretty=%s -n 20 2>/dev/null || true
 
 2. **Plan your commit(s):**
    - Identify which files belong together
+   - **Pinned change group — the decision ledger**: if the changes include `.rpiv/decisions/**` or an edit inside the `CLAUDE.md` `Standing Decisions` block (between the `<!-- BEGIN standing-decisions ... -->` and `<!-- END standing-decisions -->` sentinels), NEVER classify these as unrelated noise and NEVER drop them. They are a byproduct of the work that recorded a standing decision. Stage them with the commit that produced them; only if the rest of the diff is genuinely unrelated, emit them as their own decision-ledger commit (subject in the repo's observed style, e.g. `docs(decisions): record <key>`). Never leave them uncommitted.
    - Draft clear, descriptive commit messages
    - Use imperative mood in commit messages
    - **Match the subject style observed in `---recent-subjects---`** — same prefix convention (e.g. `feat:` / `fix(scope):` / `docs:` for Conventional Commits, gitmoji, bare sentence-case, ticket-prefixed, etc.), same length budget, same casing. If the sample is empty (initial repo) or mixed, default to imperative sentence-case with no prefix.

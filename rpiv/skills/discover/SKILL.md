@@ -217,6 +217,9 @@ Frontmatter additions for template_version 2: `register:` (`plain` / `mixed` / `
 
 2. **Write the FRD** using the Write tool. Frontmatter `status: complete`. All template sections present and filled. The Write tool creates parent directories automatically — no `mkdir -p` needed in the skill.
 
+   - **Promote standing decisions**: apply the decision-ledger protocol (`${CLAUDE_PLUGIN_ROOT}/skills/_shared/decision-ledger.md`) for any `## Decisions` entry tagged `scope: standing`, then regenerate the CLAUDE.md Standing Decisions block. Skip when nothing is tagged (the common case for early intent capture).
+   - **Finalization lint**: run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <the FRD path> --finalizing --stamp`. If it exits non-zero, FIX the reported errors (Edit the FRD) and re-run — the FRD is not final until the lint passes. On success it stamps `content_hash:` (must be the last body-affecting action).
+
 3. **Present and chain**:
    ```
    Intent captured to:

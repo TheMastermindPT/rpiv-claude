@@ -447,7 +447,10 @@ The 8-column header is retained when only one source returns; only rows from the
 
    **Order and batching**: blockers sequentially (resolution may invalidate later rows). Concerns and suggestions: batch up to 4 independent rows per `ask_user_question` call (Step 4's rule). Independent = different files / different intents AND neither recommendation references the other's location; otherwise sequential.
 
-2. **Flip status to ready**: once every row has a `resolution` (or the table is empty per Step 8's no-findings / failure-fallback path), Edit frontmatter `status: in-review` → `status: ready`. Artifact is now implement-ready.
+2. **Promote standing decisions, lint, then flip status**: once every row has a `resolution` (or the table is empty per Step 8's no-findings / failure-fallback path):
+   - **Standing decisions**: apply the decision-ledger protocol (`${CLAUDE_PLUGIN_ROOT}/skills/_shared/decision-ledger.md`) for any `## Decisions` entry tagged `scope: standing`, then regenerate the CLAUDE.md Standing Decisions block. Skip when nothing is tagged (the standing TDD decision is already in the ledger — do not re-tag it).
+   - **Finalization lint**: run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <the plan artifact path> --finalizing --stamp`. If it exits non-zero, FIX the errors and re-run — never flip on a failing lint. On success it stamps `content_hash:` (last body-affecting action).
+   - **Flip**: Edit frontmatter `status: in-review` → `status: ready`. Artifact is now implement-ready.
 
 3. **Present the plan artifact location** (after triage is complete):
    ```

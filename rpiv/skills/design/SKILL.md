@@ -353,11 +353,15 @@ The artifact was created as a skeleton in Step 5 and filled progressively in Ste
 
 3. **Verify cross-slice file merges**: For files touched by multiple slices, confirm the Architecture entry contains the final merged code, not just the last slice's contribution.
 
-4. **Update frontmatter** via Edit: `status: in-progress` → `status: ready`. Design owns no post-finalization review — `/rpiv:plan` runs the artifact-code-reviewer + artifact-coverage-reviewer pair against the phased plan that inherits this design's `## Slices` boundaries 1:1. Leave `last_updated` / `last_updated_by` as-is.
+4. **Verify template completeness**: Ensure all sections from the template reference in Step 5 are present and filled. Edit to fix any gaps. Do this BEFORE the stamp in step 6 — the stamp pins the finalized body, so no body edits may follow it.
 
-5. **Verify template completeness**: Ensure all sections from the template reference in Step 5 are present and filled. Edit to fix any gaps.
+5. **Promote standing decisions**: apply the decision-ledger protocol (`${CLAUDE_PLUGIN_ROOT}/skills/_shared/decision-ledger.md`) — promote any `## Decisions` entry tagged `scope: standing` to `.rpiv/decisions/<key>.md` and regenerate the CLAUDE.md Standing Decisions block. Skip when nothing is tagged (the standing TDD decision is already in the ledger — do not re-tag it).
 
-6. **Architecture format reminder**:
+6. **Finalization lint, then flip status**: run
+   `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <the design artifact path> --finalizing --stamp`.
+   If it exits non-zero, FIX the reported errors and re-run — never flip on a failing lint. On success it stamps `content_hash:` into the frontmatter (pins the body against post-finalization edits). Then Edit frontmatter `status: in-progress` → `status: ready`. Design owns no post-finalization review — `/rpiv:plan` runs the artifact-code-reviewer + artifact-coverage-reviewer pair against the phased plan that inherits this design's `## Slices` boundaries 1:1. Leave `last_updated` / `last_updated_by` as-is.
+
+7. **Architecture format reminder**:
    - **NEW files**: `### path/to/file.ext — NEW` + one-line purpose + full implementation code block
    - **MODIFY files**: `### path/to/file.ext:line-range — MODIFY` + code block with only the modified/added code (no "Current" block — the original is on disk, implement reads it)
 
