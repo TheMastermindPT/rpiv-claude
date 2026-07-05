@@ -2,7 +2,7 @@
 name: commit
 description: Create structured git commits by analyzing staged and unstaged changes and grouping them logically into one or more commits with clear, descriptive messages. Use when the user asks to commit, says "commit this" or "commit my changes", wants help writing a commit message, or has finished a chunk of work that needs committing.
 argument-hint: [message]
-allowed-tools: Bash(git *), Read, Glob, Grep
+allowed-tools: Bash(git *), Read, Glob, Grep, mcp__codescene__pre_commit_code_health_safeguard
 shell-timeout: 10
 ---
 
@@ -40,6 +40,7 @@ git log --pretty=%s -n 20 2>/dev/null || true
    - The Metadata block gives you the file list and per-file diffstat (insertions/deletions). For files with a small diffstat (≲5 lines), the line counts alone are enough to write the message — skip `git diff`. Run `git diff <path>` only for files where the change is large or the intent isn't obvious from filename + line counts.
    - For untracked directories shown in status (e.g. `?? path/`), assume their contents are the change unless the directory has many files; do NOT `cat`/`head` files to verify obvious purpose.
    - Consider whether changes should be one commit or multiple logical commits.
+   - **Code Health note (tool-gated, advisory)**: if the `mcp__codescene__pre_commit_code_health_safeguard` tool is available to you (CodeScene MCP connected), run it on the repository root. If it reports a Code Health regression on a file being committed, surface it as a one-line advisory in the commit plan you present in Step 3 (`Code Health: {file} degraded — {smell}`). This NEVER blocks the commit and never edits code — the user decides at the Step 3 confirmation. If the tool is unavailable, omit it silently.
 
 2. **Plan your commit(s):**
    - Identify which files belong together

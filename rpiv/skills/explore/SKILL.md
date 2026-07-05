@@ -137,6 +137,7 @@ Wait for ALL agents to complete before proceeding.
 - Apply the fit filter qualitatively per candidate: a candidate "clears" when no kept dimension surfaces a blocking concern (integration-risk that breaks load-bearing seams, migration-cost that exceeds the topic's scope, verification-cost with no path to coverage).
 - **If ≥1 candidate clears the fit filter**: pick the strongest, document rationale with evidence, and explain why alternatives weren't chosen. Identify conditions that would change the recommendation.
 - **If every candidate fails the fit filter**: produce a "no-fit" recommendation — list each candidate's blocking dimension with evidence, recommend re-scoping the question or expanding the candidate pool, and set Step 7 frontmatter `confidence: low` and `status: blocked`.
+- **Code Health ROI (tool-gated, advisory).** When a candidate is a refactor/rework of existing on-disk files and the `mcp__codescene__code_health_refactoring_business_case` tool is available to you (CodeScene MCP connected), run it on the candidate's primary target file(s) and fold the returned optimistic/pessimistic dev-speed & defect-reduction range into that candidate's `migration-cost` and Trade-offs evidence (the `making-the-business-case-for-code-health` framing) — it quantifies "is this rework worth it" beyond a qualitative estimate. If the tool is unavailable, or the candidate is greenfield with no incumbent file to score, omit silently — the qualitative trade-offs stand.
 
 ### Step 6: Determine Metadata and Filename
 

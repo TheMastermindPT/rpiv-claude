@@ -2,7 +2,7 @@
 name: validate
 description: Verify that an implementation plan was correctly executed by auditing phase completion, success criteria, and working-tree changes. Use after the implement skill completes, when the user asks to "validate the plan", wants a post-implementation proof audit, or needs to confirm a feature is fully shipped per its plan.
 argument-hint: "[plan-path]"
-allowed-tools: Read, Write, Edit, Bash(git *), Bash(make *), Bash(npm *), Bash(npx *), Bash(node *), Glob, Grep, Agent
+allowed-tools: Read, Write, Edit, Bash(git *), Bash(make *), Bash(npm *), Bash(npx *), Bash(node *), Glob, Grep, Agent, mcp__codescene__pre_commit_code_health_safeguard, mcp__codescene__code_health_review
 shell-timeout: 10
 contract:
   produces:
@@ -128,11 +128,17 @@ For each phase in the plan:
    - **Skipping is a gap**: when mandatory, running it is required. Record `mutation: skipped ({reason})` ONLY for a genuine blocker (the command errored, or a single scoped file would blow a hard time budget) — an unexplained skip on a non-exempt plan is itself a validation gap.
    - **When not applicable**: record `mutation: not applicable ({no mutation command | wholly TDD-exempt plan})` — no verdict impact. This keeps the skill portable: projects without a mutation command are never blocked.
 
-6. **Assess manual criteria**:
+6. **Code Health safeguard (tool-gated, advisory gate — mirrors the mutation gate)**:
+   - **When it runs**: if the `mcp__codescene__pre_commit_code_health_safeguard` tool is available to you (CodeScene MCP connected), run it on the repository root. It reviews the working tree's modified/staged files and returns `quality_gates` plus per-file `findings`.
+   - **Read the deltas, not just the gate**: note any file whose Code Health DEGRADED on the plan's changed source, and any failed quality gate. For a degraded file, drill in with `mcp__codescene__code_health_review` on that file's absolute path to name the specific smell.
+   - **Altitude (mirrors mutation)**: the Code Health SCORE is advisory; an un-accepted Code Health REGRESSION on the plan's changed source is action-required -> route it into `#### Potential Issues:`. It does NOT silently flip the verdict — Step 3.2 computes the verdict on the final results. A regression the developer explicitly accepts stays advisory (record the acceptance); a low score on code this plan did not change is advisory too.
+   - **When not applicable**: if the tool is unavailable, record `code-health: not applicable (CodeScene MCP absent)` — no verdict impact. This keeps the skill portable: repos without CodeScene are never blocked.
+
+7. **Assess manual criteria**:
    - List what needs manual testing
    - Provide clear steps for user verification
 
-7. **Think deeply about edge cases**:
+8. **Think deeply about edge cases**:
    - Were error conditions handled?
    - Are there missing validations?
    - Could the implementation break existing functionality?
@@ -149,9 +155,9 @@ For each phase in the plan:
    - `topic:` ← `"Validation of <plan topic>"`.
 
 2. **Determine verdict** (`status` is always `ready` — written once):
-   - `verdict: pass` — every phase marked `- [x]` in the plan is verified against the code, every automated command passes, TDD evidence is complete for every contract Behavior (or the plan is pre-TDD), the mutation gate is satisfied (run where mandatory per Step 2.5, with no un-triaged killable survivors on changed source), and no Deviations from Plan and no Potential Issues require action.
-   - `verdict: fail` — any phase fails verification, any automated command fails, TDD evidence is missing or contradicted for any contract Behavior, a mandatory mutation run was skipped without a genuine blocker OR left un-triaged killable survivors on the plan's changed source, or Deviations / Potential Issues list items that require action.
-   - Test-theater lint findings are advisory — they inform the report, never the verdict. The mutation SCORE is advisory too, but the mutation GATE is not: where mutation is mandatory (Step 2.5), an unexplained skip or un-triaged killable survivors on changed source are action-required (route them into `#### Potential Issues:`). Survivors justified as equivalent mutants or Hazard-4-optimistic files stay advisory.
+   - `verdict: pass` — every phase marked `- [x]` in the plan is verified against the code, every automated command passes, TDD evidence is complete for every contract Behavior (or the plan is pre-TDD), the mutation gate is satisfied (run where mandatory per Step 2.5, with no un-triaged killable survivors on changed source), no un-accepted Code Health regression lands on the plan's changed source, and no Deviations from Plan and no Potential Issues require action.
+   - `verdict: fail` — any phase fails verification, any automated command fails, TDD evidence is missing or contradicted for any contract Behavior, a mandatory mutation run was skipped without a genuine blocker OR left un-triaged killable survivors on the plan's changed source, an un-accepted Code Health regression lands on the plan's changed source, or Deviations / Potential Issues list items that require action.
+   - Test-theater lint findings are advisory — they inform the report, never the verdict. The mutation SCORE is advisory too, but the mutation GATE is not: where mutation is mandatory (Step 2.5), an unexplained skip or un-triaged killable survivors on changed source are action-required (route them into `#### Potential Issues:`). Survivors justified as equivalent mutants or Hazard-4-optimistic files stay advisory. Code Health (Step 2.6) is the same shape: the score is advisory, but an un-accepted Code Health regression on the plan's changed source is action-required (route into `#### Potential Issues:`); a degradation the developer accepts, or a low score on code the plan did not change, stays advisory.
 
 3. **Write the artifact** using the Write tool (no Edit — this skill writes once per run). Read `templates/validation.md`, fill every `{placeholder}` with the values determined above and the observations gathered in Step 2, apply the section-omission rules in the template (omit `#### Pattern Conformance:` and `#### Potential Issues:` entirely when empty; keep all other sections and emit `None — …` literals when empty), and Write the result to the target path.
 
@@ -210,6 +216,7 @@ Always verify:
 - [ ] Automated tests pass
 - [ ] Test-theater lint run on changed test files (report-only) — or recorded unavailable
 - [ ] Mutation gate satisfied where mandatory (non-exempt plan + a mutation command exists): run plan-scoped, survivors triaged (killable → action-required, equivalent/Hazard-4 → justified) — or recorded `not applicable`
+- [ ] Code Health safeguard run where available: no un-accepted regression on the plan's changed source (regressions routed to Potential Issues) — or recorded `not applicable`
 - [ ] Code follows existing patterns
 - [ ] No regressions introduced
 - [ ] Error handling is robust

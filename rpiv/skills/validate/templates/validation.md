@@ -1,5 +1,5 @@
 ---
-template_version: 3
+template_version: 4
 date: {Current date and time with timezone in ISO format}
 author: {`author:` from Metadata block}
 commit: {Current commit hash}
@@ -44,6 +44,8 @@ last_updated_by: {`author:` from Metadata block}
 - Mutation gate: {not applicable ({no mutation command | wholly TDD-exempt plan}) | {score}% on the plan's changed source (`{command}`)}
   - {Per surviving mutant on changed source: `{file}:{line}` {mutator} — killable (test-strength gap → action required, listed under Potential Issues) | justified: equivalent mutant / Hazard-4-optimistic file}
   - {When mandatory and clean:} No survivors on changed source — gate passed.
+- Code Health safeguard (advisory — mirrors the mutation gate): {not applicable (CodeScene MCP absent) | passed — no regression on the plan's changed source | regression on changed source, listed below}
+  - {Per degraded file on changed source: `{file}` {before} -> {after} ({smell}) — {accepted by developer, advisory | action required, listed under Potential Issues}}
 
 ### Code Review Findings
 

@@ -3,7 +3,7 @@ name: outline-test-cases
 description: Discover testable features in a project (frontend-first) and create a folder outline under .rpiv/test-cases/ with per-feature metadata. Incremental runs reuse the existing outline for smarter discovery and diff-based checkpoints. Use before write-test-cases to map project scope, when the user wants to plan or inventory test coverage, asks to "outline test cases", or wants a test-case scaffold generated for a project.
 argument-hint: [target-directory]
 shell-timeout: 10
-allowed-tools: Agent, Read, Write, Edit, Glob, Grep
+allowed-tools: Agent, Read, Write, Edit, Glob, Grep, mcp__codescene__analyze_change_set, mcp__codescene__list_technical_debt_hotspots_for_project
 ---
 
 # Outline Test Cases
@@ -128,6 +128,8 @@ In Incremental mode, compare the fresh discovery results against existing `_meta
 **Duplicate check** — Cross-reference against existing TCs (TC Locator):
 - Features with existing TC folders → mark status as "partial" (has outline, TCs may exist)
 - Features with no TCs → mark status as "pending"
+
+**Risk annotation (tool-gated, optional — risk-based-testing signal):** if the `mcp__codescene__analyze_change_set` tool is available to you (CodeScene MCP connected), run it against the branch's base ref to see which files the current branch changed and whether their Code Health degraded; on a paid CodeScene project also `mcp__codescene__list_technical_debt_hotspots_for_project` for churn x health hotspots. Tag features whose routes/controllers map to those files as higher test priority (`recent churn` / `low Code Health`) when you present the list in Step 4 — the branch change set is the primary signal, hotspots are systemic background (per the `risk-based-testing-with-code-health` skill). If neither tool is available, omit the annotation — feature discovery is unaffected.
 
 ### Step 4: Developer checkpoint
 

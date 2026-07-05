@@ -2,7 +2,7 @@
 name: implement
 description: Execute an approved implementation plan from .rpiv/artifacts/plans/ phase by phase, applying changes with TDD where behavior changes are involved, and verifying each phase against automated tests, success criteria, and runtime proof requirements before moving on. Use when the user invokes /implement, asks to "implement this plan", or wants an existing phased plan executed. Pair with revise to update plans mid-flight and validate to confirm completion.
 argument-hint: "[plan-path] [Phase N]"
-allowed-tools: Read, Edit, Write, Bash(*), Glob, Grep
+allowed-tools: Read, Edit, Write, Bash(*), Glob, Grep, mcp__codescene__code_health_review
 disable-model-invocation: true
 ---
 
@@ -83,6 +83,8 @@ Items marked `TDD-exempt` in the contract skip the loop — note the exemption i
 
 **Test-theater lint** (after a phase's tests are written or changed): if the project exposes a test-lint command (e.g. an npm script like `lint:test-theater`) or an ast-grep rule pack (an `sgconfig.yml` under `tools/` or the repo root), run it on the changed test files. Rule-pack **warnings** on newly written tests: fix before marking the phase complete. **Hints**: fix or record a one-line justification in evidence. If no pack/tool exists, record `test-lint: unavailable` and move on — never fail on absence.
 
+**Code Health safeguard (tool-gated, advisory)** (after a phase's implementation files are written or changed): if the `mcp__codescene__code_health_review` tool is available to you (CodeScene MCP connected), run it on each changed source file's absolute path. A drop into Yellow (score < 9.0) or a NEW code smell versus the pre-change file is a refactor prompt — fix in small steps and re-review (the `safeguarding-ai-generated-code` skill, steps 1-2). This is ADVISORY: never block or reopen a phase solely on Code Health, and never install anything. If the tool is unavailable, record `code-health: unavailable` and proceed.
+
 **Evidence** — append a `## TDD Evidence (implement)` section at the end of the plan file (create it on first use; append per phase, never rewrite prior entries). This is the audit trail `/rpiv:validate` checks:
 
 ```markdown
@@ -94,6 +96,7 @@ Items marked `TDD-exempt` in the contract skip the loop — note the exemption i
   - Green: `{command}` -> pass
 - TDD-exempt: `{item}` — {reason from the contract}
 - Test-lint: {clean | {K} warnings fixed, {J} hints justified | unavailable}
+- Code Health: {clean | `{file}`: {score} ({smell}) refactored | unavailable}
 ```
 
 ## Verification Approach

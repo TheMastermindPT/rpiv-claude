@@ -137,6 +137,7 @@ Compile all agent results into a feature analysis:
    - **high**: Core happy path, payment/money flows, data integrity, security-critical
    - **medium**: Alternative paths, common edge cases, permission boundaries
    - **low**: Rare edge cases, cosmetic validation, error message wording
+   - **Risk-based augmentation (tool-gated — `risk-based-testing-with-code-health`):** if the `mcp__codescene__analyze_change_set` tool is available to you (CodeScene MCP connected), run it against the branch's base ref; a flow implemented by a file whose Code Health DEGRADED on this branch is raised one priority band (the change set is the primary risk signal). On a paid CodeScene project, also fold `mcp__codescene__list_technical_debt_hotspots_for_project` (a flow over a churn x health hotspot outranks an equally-important flow over healthy code) and note likely reviewers via `mcp__codescene__code_ownership_for_path` in the flow's notes. If neither tool is available, the code-importance heuristic above stands unchanged.
 
 5. **Determine test case IDs**:
    - Module abbreviation: from _meta.md `module` field, or derive from feature name (e.g., Order Management -> ORD)

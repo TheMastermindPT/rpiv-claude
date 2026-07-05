@@ -454,11 +454,11 @@ Plan ready for the implementation phase.
 
 ## Tool Coverage
 
-<!-- From the Step-2 capability probe (`tool-probe.mjs`). Records which external tools backed which lens — explicit about what ran vs ran unaided. Tools are SUGGESTED, never installed. OMIT only when no manifest/ecosystem was recognized. -->
+<!-- From the Step-2 capability probe (`tool-probe.mjs`), plus the CodeScene MCP availability check (gated by tool visibility, not the probe). Records which external tools backed which lens — explicit about what ran vs ran unaided. Tools are SUGGESTED, never installed. OMIT only when no manifest/ecosystem was recognized. -->
 
 | Tool | Lens | Status | Ran? | Notes |
 |---|---|---|---|---|
-| dependency-cruiser | L | {configured / installed-unconfigured / absent} | {yes/no} | {N forbidden rules — "meaningful" OR "weak: no-violations not trustworthy, suggested `depcruise --init`"} |
+| dependency-cruiser | L (+ A dead-module, blast-radius) | {configured / installed-unconfigured / absent} | {yes/no} | {N forbidden rules — "meaningful" OR "weak: no-violations not trustworthy, suggested `depcruise --init`"; note if reachability/`--focus` were used} |
 | knip | A | {status} | {yes/no} | {dead-export summary} |
 | jscpd | D | {configured / installed / absent} | {yes/no} | {N clones, M% duplicated lines (Rust v5), or "absent — D on metrics dup-candidates"} |
 | coverage ({vitest/jest/…}) | T | {status} | {yes/no} | {report path, or "no report — gathered via checkpoint" / "running unaided"} |
@@ -466,6 +466,7 @@ Plan ready for the implementation phase.
 | ast-grep | D/M (+C/S/Fe confirm) | {configured / installed / absent} | {yes/no} | {structural confirmation of NAMED candidate shapes via `structural.mjs`; curated arch pattern pack deferred} |
 | opengrep | L/M (deep-review Security) | {status} | {yes/no} | {arch rule pack deferred — registered; runs live only in deep-review's Security lens} |
 | rg | search | {installed / absent} | {n/a} | {orchestrator / claim-verifier prefer rg over literal grep} |
+| CodeScene Code Health | maintainability x-check / hotspots / ROI | {available / unavailable (MCP absent)} | {yes/no} | {per-file scores on outliers; + hotspots & business-case on a paid project; corroboration — metrics/linters own the structural lenses} |
 | {other} | {lens} | {status} | {no} | {suggested: `{install hint}`} |
 
 **Lenses running unaided (no backing tool):** {M, C, …; + S/Fe/A when ts-morph absent} — inherently agent-only.
