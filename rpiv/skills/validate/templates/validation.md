@@ -11,6 +11,7 @@ verdict: {pass | fail}
 parent: "{plan path}"
 tags: [validation, {inherit relevant tags from the plan's frontmatter}]
 last_updated: {Same ISO timestamp as date: above}
+last_updated_by: {`author:` from Metadata block}
 ---
 
 ## Validation Report: {Plan topic}

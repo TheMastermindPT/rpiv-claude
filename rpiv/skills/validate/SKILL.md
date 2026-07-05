@@ -142,8 +142,8 @@ For each phase in the plan:
 1. **Determine metadata** (from the Metadata block at the top of this skill):
    - Filename: `.rpiv/artifacts/validation/<slug>_<plan-topic-kebab>.md` — `<slug>` is the second tab-separated field on line 1 of the Metadata block above; `<plan-topic-kebab>` is the plan's `topic:` frontmatter value lowercased and hyphen-joined.
    - `repository:` ← `repo:` label; `branch:` / `commit:` ← matching labels.
-   - `date:` ← `<iso>` (first tab-separated field on line 1 of the Metadata block above, offset verbatim).
-   - `author:` ← matching label (fallback: `unknown`).
+   - `date:` / `last_updated:` ← `<iso>` (first tab-separated field on line 1 of the Metadata block above, offset verbatim).
+   - `author:` / `last_updated_by:` ← matching label (fallback: `unknown`).
    - `parent:` ← the plan path resolved in Step 1.
    - `tags:` ← `[validation, ...]` plus any tags carried from the plan's frontmatter.
    - `topic:` ← `"Validation of <plan topic>"`.

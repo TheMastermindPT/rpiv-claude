@@ -22,6 +22,12 @@ assert.deepEqual(
 	`parses all quoting styles and strips the plugin prefix: ${parsed}`,
 );
 
+// referencedAgents: an illustrative mention opted out with `validate-skills:ignore` is skipped.
+const withIgnore = referencedAgents(
+	"subagent_type: `real-agent`\nsubagent_type: `doc-example` <!-- validate-skills:ignore -->",
+);
+assert.deepEqual(withIgnore, ["real-agent"], `ignore marker drops that line's reference: ${withIgnore}`);
+
 function makePluginRoot() {
 	const root = mkdtempSync(join(tmpdir(), "vskills-"));
 	mkdirSync(join(root, "agents"), { recursive: true });

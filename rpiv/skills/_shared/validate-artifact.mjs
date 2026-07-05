@@ -4,9 +4,11 @@
 //
 // Runs the cheap, deterministic checks that LLM reviewers are worst at and a script is best at,
 // so a skill can gate a `status: in-progress -> ready` flip on them. Any finding fails (exit 1).
-// Every check here is zero-false-positive on real artifacts by design: a lint that cries wolf
-// gets disabled. (A body file-reference check was prototyped and dropped — artifacts legitimately
-// use context-relative paths, globs, and illustrative placeholders, so it was ~all false alarms.)
+// The checks here aim to be zero-false-positive on real artifacts: a lint that cries wolf gets
+// disabled. (A body file-reference check was prototyped and dropped — artifacts legitimately use
+// context-relative paths, globs, and illustrative placeholders, so it was ~all false alarms.) The
+// lone heuristic is the unfilled-token scan (check 2), which flags any `{...}` left in prose — put
+// genuine brace prose (e.g. `{a, b}`) inside a code span/fence, both of which are stripped first.
 //
 // Checks (all ERRORS):
 //   - missing a required frontmatter field

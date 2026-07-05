@@ -9,6 +9,14 @@
 //
 // This is a logical-consistency check, not a port/deployment check — it holds regardless of the
 // harness the skills run on.
+//
+// WHEN TO RUN: a standalone plugin-maintenance check, deliberately NOT wired into any skill's
+// runtime flow — the scope is the plugin tree itself, not a single artifact, so a per-artifact
+// finalization gate would be the wrong home. Run it manually (or in CI) after adding, renaming, or
+// removing an agent or a `subagent_type:` reference.
+//
+// An illustrative `subagent_type:` written in prose (a doc example, not a real dispatch) is
+// excluded by putting `validate-skills:ignore` anywhere on the same line, so examples never trip it.
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -33,12 +41,16 @@ export function availableAgents(root) {
 	return new Set(readdirSync(dir).filter((f) => f.endsWith(".md")).map((f) => f.replace(/\.md$/, "")));
 }
 
-/** Extract dispatched agent names from one skill file. Strips quotes/backticks + `plugin:` prefix. */
+/** Extract dispatched agent names from one skill file. Strips quotes/backticks + `plugin:` prefix;
+ *  skips any match on a line carrying `validate-skills:ignore` (illustrative prose opt-out). */
 export function referencedAgents(text) {
 	const refs = [];
 	const re = /subagent_type:\s*["`']?([A-Za-z][\w:-]*)/g;
 	let m;
 	while ((m = re.exec(text)) !== null) {
+		const lineStart = text.lastIndexOf("\n", m.index) + 1;
+		const lineEnd = text.indexOf("\n", m.index) === -1 ? text.length : text.indexOf("\n", m.index);
+		if (text.slice(lineStart, lineEnd).includes("validate-skills:ignore")) continue;
 		const raw = m[1];
 		refs.push(raw.includes(":") ? raw.slice(raw.lastIndexOf(":") + 1) : raw);
 	}
