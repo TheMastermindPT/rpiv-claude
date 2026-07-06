@@ -163,6 +163,22 @@ const inventoryConstWrite = [
 	`}`,
 ].join("\n");
 
+// Indented declarations: the declRe regex at metrics.mjs:288 allows leading
+// whitespace (`^\s*`) so indented `export default function*` and tabs-indented
+// classes are matched as top-level symbols. These two fixtures must be counted
+// as behavioral symbols — a pre-`^\s*` regex (anchored `^`) would miss them
+// entirely, producing 0 symbols and hiding the file from every lens.
+// Need >= LCOM_MIN_SYMBOLS (6) behavioral symbols for low-cohesion eligibility.
+const indentedCombo = [
+	`  export default function* gen1() { yield 1; }`,
+	`  export default function* gen2() { yield 2; }`,
+	`  export default function* gen3() { yield 3; }`,
+	`\tclass A { f() { return 1; } }`,
+	`\tclass B { f() { return 2; } }`,
+	`\tclass C { f() { return 3; } }`,
+	`export function regular(x) { return x; }`,
+].join("\n");
+
 // Two files sharing a large identical body -> a content-based duplication PAIR.
 const dupBody = [
 	`function processRecord(record) {`,
@@ -302,6 +318,8 @@ try {
 	write("src/fe-behavior-envy.ts", feBehaviorEnvy);
 	// S write-site const-table resolution.
 	write("src/inventory-write.ts", inventoryConstWrite);
+	// Indented declarations: must be counted as top-level symbols by the `^\s*` regex.
+	write("src/indented-combo.ts", indentedCombo);
 
 	git(repo, ["init", "-q"]);
 	git(repo, ["add", "-A"]);
@@ -420,8 +438,14 @@ try {
 		!writeSites.some((r) => r.includes("INVENTORY_TABLE")),
 		`const table identifier must be resolved, not keyed as table:INVENTORY_TABLE\n--- output ---\n${out}`,
 	);
+	// 9c. Indented declarations: `^\s*` regex must match 2-space-indented function*
+	//     and tab-indented class as top-level symbols (pre-`^\s*` would miss both).
+	assert.ok(
+		has(lowCohesion, "indented-combo.ts"),
+		`indented-combo.ts (2-space + tab indented declarations) must be a low-cohesion candidate\n--- output ---\n${out}`,
+	);
 
-	console.log(`OK — ${candidates.length} god-file, ${lowCohesion.length} low-cohesion, ${envy.length} feature-envy, ${dup.length} dup-pair; structural + contiguous-run dup flagged, scattered/name-coincidence ignored.`);
+	console.log(`OK — ${candidates.length} god-file, ${lowCohesion.length} low-cohesion, ${envy.length} feature-envy, ${dup.length} dup-pair; structural + contiguous-run dup flagged, scattered/name-coincidence ignored; indented declarations detected.`);
 } finally {
 	rmSync(repo, { recursive: true, force: true });
 }

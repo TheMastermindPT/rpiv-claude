@@ -47,6 +47,22 @@ The final artifact feeds design or blueprint.
    - Carry the FRD's Open Questions forward verbatim into the research artifact's Open Questions section in Step 4.
    - If the input is plain free-text or includes a non-discover path, skip this sub-step and proceed directly to scope-tracer dispatch with the input as the topic.
 
+2b. **Pre-index the codebase area (ctx_index).** Before scope-tracer dispatch, index the codebase area relevant to the research topic into the FTS5 knowledge base. This makes the indexed content available to all downstream agents via `ctx_search` — scope-tracer, codebase-analyzer, integration-scanner, and codebase-locator can all query the same index instead of re-reading files from disk. The content hash auto-flags staleness if files change during the session.
+   - Derive the target directory from the topic: if the topic mentions a specific module/area (e.g., "auth system", "plugin loader"), index that directory. If the topic is broad, index the top-level `src/` (or equivalent) with a depth cap of 3.
+   - Exclude `node_modules`, `.git`, `dist`, `build`, `coverage`, `.next` — they carry no research signal.
+   - Use the topic slug as the source label for easy retrieval:
+     ```
+     ctx_index(
+       path: "<target-directory>",
+       source: "research-<topic-slug>",
+       extensions: [".ts", ".tsx", ".js", ".jsx", ".py", ".rs", ".go", ".md"],
+       maxDepth: 4
+     )
+     ```
+   - If the indexing returns >200 files, narrow the scope — index only the most relevant subdirectories based on the topic's anchor terms.
+   - **Guard: if the indexing returns 0 files** (wrong directory, no matching extensions, empty target), record `indexed: 0 files — scope-tracer and downstream agents will use grep fallback`. Set a flag so downstream agents skip the `ctx_search` preference and fall back to grep immediately — the "exists but empty" FTS5 index is a distinct state from "hasn't been pre-indexed" that neither `stale` nor `hasn't been pre-indexed` checks can detect.
+   - **This step is optional — skip if**: the topic is purely conceptual (no codebase target), the codebase is tiny (<50 source files), or the user explicitly asks to skip indexing. If skipped, agents fall back to grep/read as before — no degradation.
+
 3. **Structural pre-sweep (tool-gated), then dispatch the scope-tracer agent.** Seed scope-tracer with DIGESTED structural anchors when the tools are present:
    - Probe once: `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/tool-probe.mjs" "."` — read the `ast-grep` / `rg` rows. If BOTH are `absent`, SKIP the pre-sweep (scope-tracer's own grep/find/ls sweep is the fallback — no degradation prompt; research is discovery, not a gated review).
    - For the topic's anchor terms, run the orchestrator-side sweep READ-ONLY (scan-root-then-filter): `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/structural.mjs" --tool ast-grep --pattern '<anchor-shape>' --lang <l> .` (definition/usage shapes) and/or `--tool rg --pattern '<anchor>' .` (reference counts).

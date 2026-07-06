@@ -83,7 +83,45 @@ Items marked `TDD-exempt` in the contract skip the loop — note the exemption i
 
 **Test-theater lint** (after a phase's tests are written or changed): if the project exposes a test-lint command (e.g. an npm script like `lint:test-theater`) or an ast-grep rule pack (an `sgconfig.yml` under `tools/` or the repo root), run it on the changed test files. Rule-pack **warnings** on newly written tests: fix before marking the phase complete. **Hints**: fix or record a one-line justification in evidence. If no pack/tool exists, record `test-lint: unavailable` and move on — never fail on absence.
 
-**Code Health safeguard (tool-gated, advisory)** (after a phase's implementation files are written or changed): if the `mcp__codescene__code_health_review` tool is available to you (CodeScene MCP connected), run it on each changed source file's absolute path. A drop into Yellow (score < 9.0) or a NEW code smell versus the pre-change file is a refactor prompt — fix in small steps and re-review (the `safeguarding-ai-generated-code` skill, steps 1-2). This is ADVISORY: never block or reopen a phase solely on Code Health, and never install anything. If the tool is unavailable, record `code-health: unavailable` and proceed.
+**Code Health safeguard (tool-gated, advisory — runs EVERY phase after implementation files are written).** This runs per-phase, immediately after the phase's source files are written or changed and before mutation testing. The tools are `codescene_code_health_score` (numeric baseline) and `codescene_code_health_review` (detailed smell breakdown). Both require CodeScene MCP to be connected — probe once with `codescene_verify_installation` at phase start; if absent, record `code-health: unavailable` in every phase's evidence and skip. When present:
+
+  1. **Baseline each changed file.** Run `codescene_code_health_score` on each changed source file BEFORE the phase's code is written (immediately after the previous phase completes or HEAD is the baseline). Record the pre-change score.
+
+  2. **After writing, review each file.** Run `codescene_code_health_review` on each file the phase modified. If ALL files score ≥ 9.0 with no new smells vs baseline, record `clean` and proceed to mutation testing.
+
+  3. **For each degraded file** (score < 9.0 OR new smell vs baseline):
+
+     a. **Read the review.** The output names the specific smell (Complex Method, Bumpy Road, Complex Conditional, etc.) and cites the function + line. That IS the diagnosis — you don't need to guess what's wrong.
+
+     b. **Refactor in small steps targeting THAT smell.** One extraction, one guard-clause conversion, one compound-conditional decomposition at a time. Do NOT rewrite the file. The goal is to eliminate the named smell, not to restructure everything. Follow the pattern:
+        - Extract one concern into a 3-arg pure function (CodeScene penalizes many tiny functions, rewards a few well-named ones)
+        - Replace nested conditionals with early-return guard clauses
+        - Break compound conditionals (`a && b && c`) into named predicates
+        - Merge redundant checks into a single switch or lookup table
+
+     c. **Re-verify after EACH step.** Run the phase's tests (they must still pass — refactoring preserves behavior). Run `codescene_code_health_score` to confirm the score moved up. Run `codescene_code_health_review` to confirm the named smell shrank or disappeared. If the score dropped further, revert the last step and try a different extraction — you introduced a new problem.
+
+     d. **Stop when the score is ≥ 9.0 AND the named smell is gone.** Partial improvement is acceptable if you reached the score threshold. Record the final score, the smell eliminated, and the steps taken (e.g. "extracted `parseAgentResults` → CC 12→5, score 8.8→9.3").
+
+     e. **Record in evidence.** Under the `### Phase {N}` entry, the `Code Health:` line traces baseline → steps → final score. This is the audit trail `/rpiv:validate` can cross-check against the plan's changed files.
+
+**Mutation testing** (after all in-phase tests are written or changed and test-lint is clean): if the project exposes a plan-scoped mutation command (e.g. an npm script like `mutate:plan`), run it on the plan's changed source — `npm run mutate:plan -- <plan-path>`. Triage each survivor as either **killable** (a real test-strength gap — the code is fresh and you understood it moments ago) or **justified** (an equivalent mutant, e.g. the file was flagged as source-text/Hazard-4 optimistic by the runner). Skip justified survivors — the mutation runner is not grading your tests. For killable survivors, it is telling you what you forgot.
+
+For each survivor, go to the mutated line. The mutator name IS the diagnosis:
+  - ConditionalExpression → you only tested one branch. Which input
+    reaches the other side?
+  - EqualityOperator → you're off by one at a boundary. What's the
+    edge value?
+  - OptionalChaining → you never tested the null case. What input
+    makes this property undefined?
+  - BlockStatement → the removed block had a side effect you never
+    asserted. What observable state did it write?
+
+Strengthen the assertion, re-run, confirm killed. **The re-run uses the plan-scoped command's default mode** — if the project's `mutate:plan` script defaults to full-scope, the re-run is full-scope (which is correct: you changed the assertions, not the source, so the entire suite regates). If the project script supports incremental mode, it will only re-test against surviving mutants — faster but with no correctness difference. Record the kill in TDD Evidence. Then mark the phase
+complete. A test that tolerated a mutant you understood is a test that
+will tolerate a regression you didn't. If the project has no mutation
+command, record `mutation: unavailable` and move on — never fail on
+absence.
 
 **Evidence** — append a `## TDD Evidence (implement)` section at the end of the plan file (create it on first use; append per phase, never rewrite prior entries). This is the audit trail `/rpiv:validate` checks:
 
@@ -96,7 +134,8 @@ Items marked `TDD-exempt` in the contract skip the loop — note the exemption i
   - Green: `{command}` -> pass
 - TDD-exempt: `{item}` — {reason from the contract}
 - Test-lint: {clean | {K} warnings fixed, {J} hints justified | unavailable}
-- Code Health: {clean | `{file}`: {score} ({smell}) refactored | unavailable}
+- Mutation: {clean | {N} survivors killed, re-run clean | unavailable}
+- Code Health: {clean | `{file}`: baseline {score} → {steps} → {final score} ({eliminated smell}) | unavailable}
 ```
 
 ## Verification Approach

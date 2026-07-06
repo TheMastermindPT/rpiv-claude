@@ -285,7 +285,7 @@ const concernCategoryCount = (text) => {
 // symbols that carry responsibility, vs value/type declarations (a const/type bag
 // is legitimately low-cohesion and must NOT be an Lc finding).
 const topLevelSymbols = (text) => {
-	const declRe = /^(?:export\s+)?(?:default\s+)?(?:async\s+)?(function\*?|class|const|let|var|interface|type|enum)\s+([A-Za-z_$][\w$]*)/gm;
+	const declRe = /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?(function\*?|class|const|let|var|interface|type|enum)\s+([A-Za-z_$][\w$]*)/gm;
 	const syms = [];
 	let m;
 	while ((m = declRe.exec(text)) !== null) {

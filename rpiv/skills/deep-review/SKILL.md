@@ -108,6 +108,67 @@ Every Wave-2 agent prompt contains EXACTLY: (a) `Known Context:` followed by the
 
 ### Step 2: Dispatch Wave-1 — Integration + Precedents + Deps/CVE + Peer-Mirror
 
+**Pre-Wave-1 deterministic gate (NEW — runs BEFORE any agent dispatch).** If ChangedFiles is non-empty, run these tools on the changed files FIRST. Their output is authoritative ground truth — Wave-1/2/3 lens agents MUST NOT re-report what these tools already found.
+
+**Architecture boundary gate (depcruiser).** When the repo has `.dependency-cruiser.js`:
+```bash
+npx depcruise src --output-type json 2>/dev/null || echo '{"error":"TOOL_FAILED"}'
+```
+Filter violations to those whose `from` or `to` path intersects ChangedFiles. If the command failed (output starts with `{"error":"TOOL_FAILED"}`), record `Architecture gate: depcruise unavailable — lens fallback active` in the Discovery Map and DROP the downstream `MUST NOT re-report` prohibition — the Quality lens resumes full boundary checks. When it succeeds, any `severity: error` violation on a changed file is a 🔴 Pre-Wave-1 finding — the review blocks on it. `severity: warn` → 🟡 advisory. Fold these into the Discovery Map under `Architecture gate: {N} violations (E errors, W warnings)` with `file:line` citations. The Quality lens (diff-auditor) MUST NOT re-report these — it focuses on what the rules DON'T cover.
+
+**Dead code audit (knip).** Run:
+```bash
+npx knip --reporter json 2>/dev/null || echo '{"error":"TOOL_FAILED"}'
+```
+If the command failed, record `Knip audit: knip unavailable — lens fallback active` in the Discovery Map and DROP the downstream `MUST NOT re-report` prohibition. When it succeeds, run TWO cross-references:
+  - **Dead code touched by this diff**: any ChangedFile that knip reports as unused is a 🔴 finding (modifying dead code is itself a review concern). Any ChangedFile that knip reports as having unused exports → fold under `Knip audit: {N} dead exports, {M} dead files touched by this diff`. These inform severity weighting in Step 5 — a diff that modifies an already-orphaned file gets bumped one tier.
+  - **Dangling import chain (NEW):** run `npx knip --dependencies 2>/dev/null` and cross-reference against ChangedFiles. Any file OUTSIDE ChangedFiles that imports a symbol REMOVED by this diff has a broken import chain the Quality lens can't see from the diff alone. Fold under `Knip audit: {K} dangling imports` — each is a 🟡 finding. This catches the "changed the export in file A, forgot to update the import in file B" class of errors at gate time instead of compile time. The Quality lens MUST NOT re-report knip findings.
+
+**SQL migration gate (SQLFluff, NEW).** When ChangedFiles includes `supabase/migrations/`:
+```bash
+sqlfluff lint supabase/migrations/ --format json 2>/dev/null || echo '{"error":"TOOL_FAILED"}'
+```
+If the command failed, record `SQLFluff gate: sqlfluff unavailable — lens fallback active` in the Discovery Map and DROP the downstream `MUST NOT re-report` prohibition. When it succeeds, filter violations to the changed migration files. Fold under `SQLFluff gate: {N} lint violations` in the Discovery Map. `CP01`/`RF02`/`ST06` violations on changed migration files are 🟡 findings — migrations with anti-patterns are pre-existing bugs in waiting. The Quality lens MUST NOT re-report SQLFluff violations; it focuses on semantic correctness the linter can't see.
+
+**Security sink detection (ast-grep, NEW).** Run on ChangedFiles for precise structural sink matching:
+```bash
+sg scan --inline-rules '
+id: security-sinks
+language: typescript
+severity: error
+rule:
+  any:
+    - pattern: dangerouslySetInnerHTML
+    - pattern: eval($$$)
+    - pattern: Function($$$)
+    - pattern: $_.innerHTML = $$$
+    - pattern: document.write($$$)
+' --json=stream 2>/dev/null || echo '{"error":"TOOL_FAILED"}'
+```
+If the command failed, record `Security gate: ast-grep unavailable — lens fallback active` in the Discovery Map and DROP the downstream `Do NOT re-grep` directive — the Security lens resumes its own grep-based sink detection. When it succeeds, matches become 🟡 Pre-Wave-1 findings (promoted to 🔴 if reached from an auth-boundary file per the Discovery Map). These REPLACE the Security lens's own `grep`-based sink detection — ast-grep is structurally precise, zero false positives vs grep matching comments and strings. The Security lens keeps: traced source→sink reachability analysis, path traversal, SSRF, secrets-in-diff, and missing trust-boundary checks — the judgment-level concerns ast-grep can't automate.
+
+**Architectural smell detection (ast-grep, NEW).** Run on ChangedFiles for structural smell patterns that regex grep would miss (comments, string literals, false positives):
+```bash
+sg scan --inline-rules '
+id: arch-smells
+language: typescript
+severity: warning
+rule:
+  any:
+    - pattern: "try { $$$ } finally {  }"
+    - pattern: "catch ($_) { /* empty */ }"
+    - pattern: "catch ($_) { }"
+    - pattern: "console.log($$$)"
+    - pattern: "console.error($$$)"
+    - pattern: "debugger"
+' --json=stream 2>/dev/null || echo '{"error":"TOOL_FAILED"}'
+```
+If the command failed, the gate degrades silently — architectural smells are advisory, not blockers. When it succeeds, matches become the `Architectural smells: {N} matches` Discovery Map row. `console.log`/`debugger` left in production code are 🟡 findings (observability leak); empty catch blocks are 🟡 (swallowed errors). The Quality and Security lenses START from these pre-tagged sites rather than discovering them via grep. When the diff includes non-TypeScript files, add `--lang <l>` blocks for each language present.
+
+**Gate-failure recovery contract.** After running all gate commands, the orchestrator checks each output. Any command whose first line is `{"error":"TOOL_FAILED"}` signals the tool was absent or crashed. For each such tool, the Discovery Map records `<gate-name>: unavailable — lens fallback active` and the corresponding `MUST NOT re-report` / `Do NOT re-grep` prohibition is dropped. This is load-bearing: a silently-failed gate combined with an unconditional downstream prohibition creates a false-promise cascade where violations are invisible to both gate and lens. The `2>/dev/null || echo '{"error":"TOOL_FAILED"}'` pattern on every gate command is the mechanism that prevents this — never use bare `2>&1` without the fallback guard.
+
+---
+
 Spawn ALL of the following in parallel at T=0 in a **single message with multiple Agent tool calls**. Do NOT wait for integration-scanner before dispatching precedents / dependencies / CVE — they do not consume Discovery-Map output, only `ChangedFiles` and the manifest diff (both orchestrator-produced in Step 1).
 
 **Agent — Integration map:**
@@ -153,6 +214,19 @@ While these agents run, the orchestrator produces the rest of the Discovery Map 
 
 **Wait for `integration-scanner` AND the peer-mirror agent (when dispatched)** before dispatching Wave-2. Wave-2 agents consume both via the Discovery Map (auth-boundary crossings, inbound refs, peer-mirror Missing/Diverged rows). Precedents / Dependencies / CVE continue running in the background; **Precedents MUST be awaited before Step 5 begins** (Reconciliation reads its follow-up-within-30-days counts to weight severity; see Step 5). Dependencies / CVE also merge in at Step 5 but may arrive later in the wait barrier.
 
+**Pre-index the dependency neighborhood (ctx_index, NEW — runs AFTER integration-scanner returns, BEFORE Wave-2 dispatch).** The Quality lens's Surface 3 (blast radius) and Surface 8 (cross-layer drift) depend on reading files outside ChangedFiles — inbound consumers, peer aggregates, upstream guards. Pre-index the outbound dependency files of ChangedFiles so lens agents query `ctx_search` instead of issuing Read calls:
+  - Collect the union of files referenced by integration-scanner's `Outbound deps` and `Inbound refs` rows
+  - Run:
+    ```
+    ctx_index(
+      path: "<repo-root>",
+      source: "deep-review-deps",
+      include: [<outbound-dependency-paths>],
+      maxDepth: 1
+    )
+    ```
+  - Lens agents receive `Known Context: pre-indexed dependency files available via ctx_search(source: "deep-review-deps")` in their Wave-2 prompt. They query instead of reading — cheaper on token budget. If the dependency set is empty (< 3 files to index), skip — direct reads are cheaper than index overhead.
+
 **Synthesize the Discovery Map** — a compact block that Wave-2 agents receive verbatim as `Known Context`. Each file line carries a *role tag* and a *symbols-touched hint*; files are clustered by shared directory prefix so agents orient without re-reading the patch.
 
 ```
@@ -175,9 +249,16 @@ Inbound refs (files with ≥3 consumers): {integration-scanner}
 Outbound deps: {integration-scanner}
 Wiring/config: {integration-scanner}
 Peer mirrors: {peer-mirror agent output verbatim — Missing/Diverged rows only; Mirrored and Intentionally-absent rows are summarised as counts}
+**Deterministic gates (Pre-Wave-1, authoritative):**
+Architecture gate (depcruiser): {depcruise violations intersecting ChangedFiles — E errors, W warnings, file:line}
+Knip audit: {N dead exports, M dead files touched by this diff, K dangling imports — knip report}
+Architectural smells (ast-grep): {N smell matches — sg output} | omitted when no matches
+SQLFluff gate (migration changes): {N lint violations on changed migrations — sqlfluff output} | omitted when no migration changes
+Security sink detection (ast-grep): {N structural sink matches — sg output} | omitted when no matches
 Static-analysis sinks (opengrep, when present): {check_id  severity  file:line — CANDIDATE sinks; orchestrator-run, digested — NOT findings}
 Dispatch/registration shapes (ast-grep, when present): {file:line — fire*/emit*/publish*/dispatch*/raise*/notify* calls + switch/match/when registration tables; orchestrator-run, digested}
-Code Health delta (CodeScene, when present + base ref resolvable): {file — improved | degraded | stable, + any failed quality gate; branch-vs-base; orchestrator-run, digested — NOT findings}
+Risk keywords (rg): {file:line — keyword — TODO|FIXME|HACK|XXX|debugger|console.log|...} | omitted when no hits
+Code Health (CodeScene, when present): {per-file scores — `file`: score (smell); scope-aware dispatch: analyze_change_set (branch) | pre_commit_code_health_safeguard (working-tree) | per-file review (fallback); orchestrator-run, digested — NOT findings}
 Boundary/cycle violations (dependency-cruiser, when configured): {file — rule-name (forbidden boundary | circular) intersecting ChangedFiles; orchestrator-run, digested — NOT findings}
 ```
 
@@ -196,7 +277,14 @@ Boundary/cycle violations (dependency-cruiser, when configured): {file — rule-
 **Structural enrichment of the Discovery Map (tool-gated, read-only).** When ast-grep / opengrep are present (probe `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/tool-probe.mjs" "."`), the orchestrator runs them over the on-disk `ChangedFiles` (from review-range.mjs's `---changed-files---`) — NOT `<patch_path>` (a unified diff is not parseable by an AST/rule engine) — and folds the DIGESTED results into the two Discovery-Map rows above:
 - Opengrep -> `Static-analysis sinks`: `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/structural.mjs" --tool opengrep --config auto <target>` (network stock security rules; if opengrep absent OR offline/no-JSON, OMIT the row — diff-auditor's own sink grep is the fallback).
 - ast-grep -> `Dispatch/registration shapes`: `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/structural.mjs" --tool ast-grep --pattern '<dispatch/registration shape>' --lang <l> <target>`, intersected to ChangedFiles.
-- CodeScene -> `Code Health delta`: only when the review scope resolves a base ref (branch/PR review) and the `mcp__codescene__analyze_change_set` tool is available to you (CodeScene MCP connected). Run it once over the whole change set (`base_ref` = the review's base from Step 1, `git_repository_path` = repo root) and fold the DIGESTED per-file verdict (`improved` | `degraded` | `stable`) plus any failed `quality_gates` into the row — it is branch-level, so it does NOT run per file. If the tool is absent, offline, or the scope has no base ref (`staged`/`working`/`commit`), OMIT the row — the Quality lens (diff-auditor) is the fallback.
+- rg -> `Risk keywords` (always — rg is installed everywhere via tool-probe): `rg -n "TODO|FIXME|HACK|XXX|debugger|console\.(log|error|warn)" <ChangedFiles>` — one sweep over the on-disk files. Digest to `file:line — keyword` rows in the Discovery Map. A `TODO`/`FIXME` on a changed line is a 🟡 by itself (author intended to come back). A `console.log`/`debugger` left in changed production code is a 🟡 (observability leak — already caught by the architectural-smell ast-grep gate; this is the regex fallback for files ast-grep skips). Omit only if rg is absent (tool-probe shows absent — rare).
+- CodeScene -> `Code Health` (per-file + scope-aware): when the `codescene_code_health_*` tools are available (CodeScene MCP connected), run TWO passes:
+  - **Per-file baseline on EVERY changed file.** Run `codescene_code_health_score` on each file in ChangedFiles with delta ≥ 5. Digest to `file: score` in the Discovery Map. For files scoring < 9.0, also run `codescene_code_health_review` to name the specific smell (Complex Method, Bumpy Road, etc.) — include the smell name and function/line. This is the strongest quantitative signal in the Discovery Map: a file at 6.2 with a risky diff carries more weight than one at 10. The Quality lens uses these scores to prioritize its file-order strategy and weight findings; the Security lens uses them to deprioritize healthy files.
+  - **Scope-aware dispatch** for the delta/verdict row:
+    - **Branch/PR review** (scope resolves a base ref): run `analyze_change_set` once (`base_ref` = review base, `git_repository_path` = repo root). Digest to `file — improved | degraded | stable` + any failed `quality_gates`.
+    - **Working-tree review** (`staged` / `working` / `modified`): run `pre_commit_code_health_safeguard` on the repo root. Catches files `git diff HEAD` may miss. Digest to `file — improved | degraded | stable` + failed `quality_gates`.
+    - **Fallback** (MCP tools absent or scope is bare `commit` hash): run `code_health_review` on each changed file with delta ≥ 5. Slower but works anywhere.
+  - If NO CodeScene tool is available, omit the row entirely — the Quality lens (diff-auditor) is the fallback.
 - dependency-cruiser -> `Boundary/cycle violations`: when the `dependency-cruiser` row from the probe is `configured` (the repo has a `.dependency-cruiser.*` config), run it ONCE root-scoped — the repo's own deps script if present (e.g. `npm run deps`), else `npx depcruise <root-scope> --config <config> --output-type json` — then keep ONLY violations whose `from`/`to` module intersects ChangedFiles. Surfaces a PR that introduces a cycle or crosses a forbidden architectural boundary (the boundary-erosion signal diff-auditor can't see from the diff alone). Digest to `file — rule-name` rows. Run from the repo ROOT (a scoped scan under-counts cross-boundary imports). If depcruise is `absent`/`installed-unconfigured`, or the change set is docs/trivial-only, OMIT the row — CI's own `deps` gate + the Quality lens are the fallback.
 Digested rows ONLY — NEVER paste raw tool output into a Wave-2 prompt (the Wave-2 isolation rule below: raw dumps cause silent quality collapse). Both are read-only; never pass a mutate flag.
 
@@ -243,12 +331,14 @@ Spawn Quality + Security in parallel using the Agent tool. Each receives the Dis
   12. **Multi-step commitment** (file issues ≥2 writes that must all succeed or all be undone — DB transaction, cross-table mutation, multi-file write, filesystem+network pair, multi-API orchestration, compensating-action chain) — trace the commit boundary; flag missing undo/compensation on partial failure, retry paths that re-apply non-idempotent steps, and divergence between two stores that must agree without a coordinating primitive.
   13. **Error handling & idempotency** (file adds a failure-response construct — retry loop, catch/except block, error boundary, fallback branch, circuit breaker, timeout, resumable step) — trace the error-propagation path; flag swallowed errors, retry without an idempotency key, fallback that silently degrades observable behavior, unjustified timeout values.
 
-  **Economising Reads**: issue a `Read` only when (a) you need a file NOT in ChangedFiles (hub, peer, test), or (b) the changed function is longer than the `-U30` window can show. Never re-Read a file just to re-orient — that's what the symbols-touched hint is for.
+  **Economising Reads**: issue a `Read` only when (a) you need a file NOT in ChangedFiles (hub, peer, test), or (b) the changed function is longer than the `-U30` window can show. Never re-Read a file just to re-orient — that's what the symbols-touched hint is for. **When the orchestrator has pre-indexed dependency files (known via `ctx_search` availability), prefer `ctx_search(source: "deep-review-deps", queries: [...])` over `Read` for cross-file traces — it is cheaper on token budget.**
   ```
 
 **Security lens** (`diff-auditor`) — **file-oriented**:
   ```
-  Analyse each changed file as a whole, looking for sinks in the classes below. For each file, grep the file's diff region in `<patch_path>` (patch has `-U30` — sink context is inline) for the sink patterns, and for each hit provide the verbatim line (citation contract) plus 2 surrounding lines and `confidence: N/10` that user-controlled input can reach the sink under current deployment. Drop hits with confidence < 8. Cross-reference Discovery Map auth-boundary crossings and inbound refs — a sink in a file reached from an auth-boundary file is in scope even if the sink file itself doesn't cross the boundary. Also cross-reference the `Static-analysis sinks` Discovery-Map row (Opengrep candidates): each is a CANDIDATE to TRACE, not a finding — promote to a verified Security finding only with a concrete user-reachable source→sink trace (the `confidence: N/10 < 8` drop and the untraced-rejection at the severity-reconciliation step still gate). Opengrep supplies recall (breadth across the sink classes); you supply the trace + reachability. This stays complementary to your own diff grep — never emit an Opengrep candidate that your trace did not confirm.
+  Analyse each changed file as a whole, looking for sinks in the classes below. **Prefer ast-grep over grep for sink detection (NEW):** the Pre-Wave-1 gate already ran `sg scan` for structural sinks — its findings are AUTHORITATIVE for `dangerouslySetInnerHTML`, `eval()`, `Function()`, `.innerHTML =`, and `document.write()` (zero false positives). Do NOT re-grep these patterns; start from the ast-grep matches and ADD your traced source→sink reachability analysis. For sink classes ast-grep didn't cover (command execution, path traversal, SSRF), fall back to grep on `<patch_path>` (patch has `-U30` — sink context is inline). For each hit provide the verbatim line (citation contract) plus 2 surrounding lines and `confidence: N/10` that user-controlled input can reach the sink under current deployment. Drop hits with confidence < 8. Cross-reference Discovery Map auth-boundary crossings and inbound refs — a sink in a file reached from an auth-boundary file is in scope even if the sink file itself doesn't cross the boundary. Also cross-reference the `Static-analysis sinks` Discovery-Map row (Opengrep candidates): each is a CANDIDATE to TRACE, not a finding — promote to a verified Security finding only with a concrete user-reachable source→sink trace (the `confidence: N/10 < 8` drop and the untraced-rejection at the severity-reconciliation step still gate). Opengrep supplies recall (breadth across the sink classes); you supply the trace + reachability. This stays complementary — never emit an Opengrep candidate that your trace did not confirm.
+
+  **Sink detection hierarchy (NEW):** ast-grep (structural precision, no FPs) ▶ Opengrep (recall) ▶ grep (fallback). For every sink class, use the best available tool. ast-grep coverable sinks (`dangerouslySetInnerHTML`, `eval`, `Function()`, `innerHTML`, `document.write`) are already in the Discovery Map from Pre-Wave-1 — start there and add reachability.
 
   **File order strategy**: `[boundary]` files first (direct source→sink exposure); then `[persistence]` (query injection, unsafe deserialization); then `[code]` (command exec, SSRF, explicit-trust rendering); then `[hub]` / `[config]`; skip `[test]` unless a test helper touches a sink.
 
@@ -269,7 +359,20 @@ Spawn Quality + Security in parallel using the Agent tool. Each receives the Dis
   Name the sink class and the matched idiom. Evidence only. No CVE lookups.
   ```
 
-**Dependencies lens** (`codebase-analyzer`, only when `ManifestChanged`; otherwise SKIP and omit `### Dependencies` in artifact):
+**Dependencies lens** (`codebase-analyzer`, only when `ManifestChanged`; otherwise SKIP and omit `### Dependencies` in artifact). **Prefer Knip for dependency audit (NEW):** When Knip ran at the Pre-Wave-1 gate AND `ManifestChanged`, use its output as the primary dependency signal:
+  ```
+  Knip dependency audit (Pre-Wave-1, authoritative):
+  {paste knip --dependencies output: unused deps, unlisted deps, with file:line citations}
+
+  Supplement with codebase-analyzer only for:
+  1. License field changes in manifest or lockfile (Knip doesn't cover license changes).
+  2. Lockstep=yes: flag intra-monorepo drift where a sibling pin diverges (Knip reports dep presence, not version drift).
+  3. Ecosystem-specific concerns Knip doesn't parse (Cargo feature flags, Poetry extras, Maven scopes).
+
+  Evidence only. No CVE lookups.
+  ```
+
+  When Knip did NOT run (absent at Pre-Wave-1), fall back to the full codebase-analyzer Dependencies lens:
   ```
   Lockstep self-review: {yes|no}
 
@@ -391,6 +494,7 @@ No agent dispatch. Compute inline while 4a / 4b run:
    - **Gap-finder** — 🟡 uncovered risk-bearing region in a changed file with no lens coverage; 🔵 low-impact gap (style-only or defensive-only region missed). No 🔴 (gap findings are uncertain by nature).
    - **Peer-mirror** — treat every Missing/Diverged row as a finding. Base severity 🔵. **Bump to 🟡** when the missing invariant is a domain-event emission, a precondition guard on a state-mutating method, or a persisted-field invariant. **Bump to 🔴** when the missing invariant intersects a dispatch site the diff touches (switch/map/table/registry enumerating the peer's type alongside the new type — detectable from integration-scanner's `Wiring/config` output and the Discovery Map's `[config]`/`[hub]` files). Rationale: a missing mirror on a dispatched invariant is a silent-stranded-state cascade constituent; on a non-dispatched invariant it is a style issue. Record every peer-mirror bump in `## Reconciliation Notes`.
    - **Precedents** → compile into `## Precedents` (table: `hash | subject | 30d-follow-ups | note`), composite lessons below. **Severity weighting**: for each current finding, count precedent commits touching the same symbol/file that had ≥1 follow-up fix within 30 days. If count ≥ 2, bump the finding one severity tier (🔵→🟡, 🟡→🔴); cap at 🔴. Record the bump by annotating the finding's title line `[precedent-weighted]` — do NOT emit a separate reconciliation section.
+   - **CodeScene business case** (tool-gated, when the `codescene_code_health_refactoring_business_case` tool is available AND the Discovery Map has per-file CodeScene scores): for each 🔴 finding whose cited file has a Discovery Map score < 9.0, run `codescene_code_health_refactoring_business_case` on that file. The tool returns optimistic/pessimistic ROI estimates (% development speed improvement, % defect reduction). Annotate the finding's title line `[roi: +{X}% velocity, −{Y}% defects]` and cite the estimates in the artifact's `## Recommendation` table. This does NOT bump severity — ROI is corroboration, not a tier change — but it transforms "fix before merge" from a hand-wavy opinion into a data-driven argument. If the tool is unavailable, skip silently — no degradation.
 
 2. **Probe advisor availability** — attempt a probe by checking whether `advisor` is in the active tool set (main-thread visibility). If yes, proceed to advisor path; otherwise take the inline path.
 
