@@ -462,6 +462,7 @@ Plan ready for the implementation phase.
 | knip | A | {status} | {yes/no} | {dead-export summary} |
 | jscpd | D | {configured / installed / absent} | {yes/no} | {N clones, M% duplicated lines (Rust v5), or "absent — D on metrics dup-candidates"} |
 | coverage ({vitest/jest/…}) | T | {status} | {yes/no} | {report path, or "no report — gathered via checkpoint" / "running unaided"} |
+| stryker | T | {configured / installed-unconfigured / absent} | {yes/no} | {report path, or "no report — mutation testing skipped" / "N files, overall score R%"} |
 | ts-morph | S / Fe / A / C | {configured / installed-unconfigured / absent} | {yes/no} | {type-resolved write-sites / feature-envy / dead-exports / type-fragmentation via `semantic.mjs`, or "unavailable: {reason} — S/Fe/A/C on regex+agent signals"} |
 | ast-grep | D/M (+C/S/Fe confirm) | {configured / installed / absent} | {yes/no} | {structural confirmation of NAMED candidate shapes via `structural.mjs`; curated arch pattern pack deferred} |
 | opengrep | L/M (deep-review Security) | {status} | {yes/no} | {arch rule pack deferred — registered; runs live only in deep-review's Security lens} |
@@ -482,4 +483,5 @@ Ingested verbatim from the repo's own tooling — the findings above intentional
 - **jscpd** ({command}): {N clones, M% duplicated lines (Rust v5) | clean | absent — D ran on metrics dup}.
   {- `fileA` <-> `fileB` (N lines) (capped)}
 - **coverage** ({command}): overall {stmt% / branch% / fn%}; {N} files with branch-gaps fed to the T lens.
+- **mutation** ({command}): overall {killed}/{survived} = {score%}; {N} files with low mutation score (<40%) fed to the T lens | unavailable: {reason}.
 - **ts-morph / semantic.mjs** ({command}): {N type-resolved write-sites (writers>=2: …), N feature-envy candidates (behavioral split), dead-exports: N | "delegated to knip", type-fragmentation: N drift + N same-shape | unavailable: {reason}}.

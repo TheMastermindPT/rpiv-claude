@@ -67,7 +67,42 @@ Before any codebase probe, ask the foundational intent question. This is purely 
 
 2. **Capture the answer in the developer's own words.** This text feeds into the FRD's Problem & Intent section verbatim — do not paraphrase into agent prose.
 
-3. **Probe-readiness check**: does the stated intent support a *narrow* probe slice (one component, one seam)? If yes → proceed to Step 3. If no (answer is too vague, e.g., "I dunno, feels slow"), ask **one more `intent` question** to sharpen scope, then re-check. Step 2 ends on probe-readiness, not at fixed N=1. Cap: 3 `intent` questions before falling through to Step 3 with whatever scope you have.
+3. **Follow-up intent questions** — ask only when the developer's answer to the first question leaves one of these gaps:
+
+   - **Missing constraints.** They said what should happen, not what
+     must stay untouched or what approaches are off-limits. Constraints
+     define the solution space — they rule out wrong answers before you
+     design anything. A requirement says "do X." A constraint says
+     "do X without touching Y and within Z." The second is worth ten
+     of the first. Ask whichever the answer left open:
+
+     *What must stay untouched?* Existing behavior, data, workflows
+     the feature lives alongside. "What existing behavior or data must
+     this leave alone?"
+
+     *What approaches are off-limits?* Patterns, conventions, layer
+     boundaries. "Any rules or patterns I must follow — or must not
+     break?"
+
+   - **Missing premise.** A term they used could mean two different
+     things in this system, or their stated goal contradicts their
+     described behavior. Ask: "When you said X, did you mean Y or Z?"
+     — two concrete interpretations, not an open "what did you mean?"
+
+     **Record every disambiguated term for the Glossary (Step 6).** The
+     resolved meaning (e.g., "'session' = workout session, not browser
+     session") is a shared-language entry — add it to the running glossary
+     list immediately so Step 6 enumerates it without re-deriving from
+     the question log.
+
+   - **Missing urgency.** They described a problem but not what it
+     blocks. Ask only when the feature connects to other work — a
+     module being refactored, a future feature it enables, a deadline.
+     Standalone features with no sequencing context need no urgency
+     question.
+
+   No gap → no follow-up. Move to Step 3. No cap on follow-ups — ask
+   until the gaps are filled or the developer signals they're done.
 
 ### Step 2.5: Register Read (adaptive, silent)
 
@@ -200,7 +235,7 @@ Compile interview output into the FRD. The interview's logical order (problem �
 - **Decisions** — full Q/A log per decision: `### [title]` + `**Question**:` (text as asked, or "Pre-resolved from codebase evidence — confirmed in Step 4") + `**Recommended**:` (or "n/a — `intent` question") + `**Chosen**:` (developer's pick or evidence-derived answer) + `**Rationale**:` (1 line — why, or `evidence: path/to/file.ext:line + confirmed` for codebase-derived). This block is the inheritance hook into research's Developer Context.
 - **Open Questions** — only items the developer explicitly deferred.
 - **Suggested Follow-ups** — related-but-out-of-scope items surfaced during the probe or interview that the developer did NOT add to scope (per the Step 5 scope-creep guardrail). One line per item: what was observed and where (`file:line` when applicable). Omit the section entirely if empty.
-- **Glossary** — every term of art you introduced, paired with the one-line plain-language meaning in the developer's register (from the Step 5 gloss-and-record behavior). This is the shared-language record; it lets the developer re-read the FRD without re-learning your vocabulary. Omit only if no term was ever introduced (rare).
+- **Glossary** — every term of art you introduced, paired with the one-line plain-language meaning in the developer's register (from the Step 5 gloss-and-record behavior). Also includes any developer term disambiguated during Step 2 (e.g., "'session' = workout session, not browser session"). This is the shared-language record; it lets the developer re-read the FRD without re-learning your vocabulary. Omit only if no term was ever introduced (rare).
 - **Shared Understanding** — the teach-back outcome from Step 5.5: a short restatement of the agreed model in the developer's words, the points they corrected during teach-back (what changed), and any residual uncertainty they confirmed as acceptable. This section is the consensus proof — it shows both sides agreed, not just that the developer answered questions.
 - **Visual Artifacts** — when the visual companion was used, a one-line reference to each saved mockup/diagram (path under `.superpowers/brainstorm/`). Omit if the session was text-only.
 - **References** — input files, mentioned tickets, related artifacts.

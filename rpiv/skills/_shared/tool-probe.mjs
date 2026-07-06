@@ -79,6 +79,11 @@ const ecosystem = pkg
 				? "python"
 				: "unknown";
 
+// Report-status variables (populated in the ecosystem block below, defaulted here
+// so the ---report-status--- footer always has values regardless of ecosystem).
+let covReport = "";
+let strykerReport = "";
+
 const out = [];
 const row = (tool, lens, status, extras = []) =>
 	out.push([tool, `lens=${lens}`, `status=${status}`, ...extras].join("\t"));
@@ -107,23 +112,56 @@ if (ecosystem === "js-ts") {
 			: knipInst ? ["hint=add a knip config/script"]
 			: ["hint=npm i -D knip"]);
 
-	// coverage -> T (test theater). Report presence drives the Step-3 checkpoint.
+	// coverage -> T (test theater). Report presence drives the checkpoint.
+	// Framework-aware detection: captures the specific binary + its coverage invocation
+	// so the skill can generate coverage without relying on an npm script.
 	const covTool = installed("vitest") ? "vitest"
 		: installed("jest") ? "jest"
 		: installed("c8") ? "c8"
 		: installed("nyc") ? "nyc"
 		: "";
 	const covScript = scriptMatching(/coverage/);
-	const covReport = firstFile([
+	covReport = firstFile([
 		"coverage/coverage-final.json", "coverage/coverage-summary.json", "coverage/lcov.info",
 	]);
 	const covStatus = !covTool ? "absent" : covScript ? "configured" : "installed-unconfigured";
+	// Derive the framework-specific coverage command (used by the skill checkpoint when
+	// a report is absent but the framework is detected).
+	let covCmd = "";
+	if (covTool === "vitest") covCmd = "npx vitest run --coverage";
+	else if (covTool === "jest") covCmd = "npx jest --coverage";
+	else if (covTool === "c8") covCmd = "npx c8 node --test";
+	else if (covTool === "nyc") covCmd = "npx nyc --reporter=lcov node --test";
 	row("coverage", "T", covStatus, [
 		`tool=${covTool || "none"}`,
 		`report=${covReport || "none"}`,
+		...(covCmd ? [`cmd=${covCmd}`] : []),
 		...(covStatus === "absent" ? ["hint=npm i -D vitest (or jest) + add a coverage script"]
-			: covStatus === "installed-unconfigured" ? ["hint=add a `test:coverage` script"]
+			: covStatus === "installed-unconfigured" ? ["hint=add a `test:coverage` script or run `${covCmd}`"]
 			: covScript ? [`script:${covScript}`] : []),
+	]);
+
+	// stryker -> T (mutation testing). Detects @stryker-mutator/core in deps or
+	// stryker.config.* file. Mutation score distinguishes genuine test coverage
+	// from test theater: high coverage + low mutation score = THEATER.
+	const strykerInst = installed("@stryker-mutator/core", "stryker");
+	const strykerCfg = firstFile([
+		"stryker.config.mjs", "stryker.config.js", "stryker.config.json",
+		"stryker.config.cjs", ".stryker.conf.json",
+	]);
+	strykerReport = firstFile([
+		"reports/mutation/mutation.json", "reports/mutation.json",
+		"stryker-output/mutation.json",
+	]);
+	const strykerStatus = !strykerInst ? "absent"
+		: strykerCfg ? "configured"
+		: "installed-unconfigured";
+	row("stryker", "T", strykerStatus, [
+		`report=${strykerReport || "none"}`,
+		...(strykerCfg ? [`config=${strykerCfg}`] : []),
+		...(strykerStatus === "absent" ? ["hint=npm i -D @stryker-mutator/core (mutation testing — catches covered-but-unverified code)"]
+			: strykerStatus === "installed-unconfigured" ? ["hint=run `npx stryker init` to create a config"]
+			: []),
 	]);
 
 	// ts-morph -> S/Fe/A. Resolved relative to THIS helper (it may be installed off the
@@ -209,5 +247,9 @@ const rgBin = binAvailable(["rg"]);
 row("rg", "search", rgBin ? "installed" : "absent",
 	rgBin ? [`bin=${rgBin}`] : ["hint=install ripgrep (rg)"]);
 
-process.stdout.write(`root:      ${root}\necosystem: ${ecosystem}\n---tool-coverage---\n${out.join("\n")}\n`);
+// --- Report status summary (drives the checkpoint) -------------------------
+const covRpt = covReport ? "present" : "absent";
+const mutRpt = strykerReport ? "present" : "absent";
+
+process.stdout.write(`root:      ${root}\necosystem: ${ecosystem}\n---tool-coverage---\n${out.join("\n")}\n---report-status---\ncoverage: ${covRpt}\nmutation: ${mutRpt}\n`);
 process.exit(0);

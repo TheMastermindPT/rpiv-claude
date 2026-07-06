@@ -97,7 +97,12 @@ Walk Step 2 findings, inherited research Q/As, and carried Open Questions throug
 - **API surface** — signatures, exports, routes
 - **Integration wiring** — mount points, DI, events, config
 - **Scope** — in / explicitly deferred
-- **Verification** — tests, assertions, risk-bearing behaviors
+- **Verification** — for each risk-bearing behavior:
+  1. List boundaries (thresholds, ranges, null/empty states)
+  2. List invariants (what must always be true)
+  3. List error surfaces (what can go wrong)
+  4. Flag as high test-risk if 3+ boundaries or 2+ invariants → queue
+     as testing-strategy question for Step 4
 - **Performance** — load paths, caching, N+1 risks
 
 For each dimension, classify findings as **simple decisions** (one valid option, obvious from codebase — record in Decisions with `file:line` evidence, do not ask) or **genuine ambiguities** (multiple valid options, conflicting patterns, scope questions, novel choices — queue for Step 4). Inherited research Q/As land as simple; Open Questions filter by dimension — architectural survives, implementation-detail defers.
@@ -118,6 +123,23 @@ Use the grounded-questions-one-at-a-time pattern. Use a **❓ Question:** prefix
 - **Scope boundary**: "The {research/description} mentions both {feature A} and {feature B}. Should this design cover both, or just {feature A} with {feature B} deferred?"
 - **Integration choice**: "{Feature} can wire into {point A} at `file:line` or {point B} at `file:line`. {Point A} matches the {existing pattern} pattern. Agree, or prefer {point B}?"
 - **Novel approach**: "No existing {X} in the project. Options: (A) {library/pattern} — {evidence/rationale}, (B) {library/pattern} — {evidence/rationale}. Which fits?"
+
+- **Testing strategy** (when the Verification sweep flagged high
+  test-risk behaviors). The agent writes the contract from the code.
+  Only you know whether the contract describes the right thing. A
+  contract that is structurally sound but behaviorally wrong produces
+  tests that pass green and ship bugs — mutation can't catch
+  correctness errors.
+
+  1. Describe what you understand the code should do, in plain
+     English. No Oracle, no syntax — just "when X happens, Y should
+     result." If you're wrong about the behavior, the developer
+     corrects you before a single line of contract is written.
+  2. Ask: "Is this understanding correct, and which of these should
+     the Test Contract prove first?" The selections determine which
+     behaviors anchor foundation slices vs. build on them later.
+  3. Corrections become the canonical behavior list. Approvals become
+     the contract's starting point.
 
 **Critical rules:**
 - Ask ONE question at a time. Wait for the answer before asking the next.
@@ -250,7 +272,31 @@ Generate complete, copy-pasteable code AND the phase's `### Test Contract:` AND 
 
 - **New files**: complete code — imports, types, implementation, exports. Follow the pattern template from Step 2.
 - **Modified files**: read current file FULLY, generate only the modified/added code scoped to changed sections (no full "Current" block — the original is on disk)
-- **Test Contract** (replaces authoring test-file code at blueprint time — implement writes the actual tests at red time, transcribing this contract): for every behavior this phase introduces or changes, emit one Behavior entry. Pre-written test code tends to mirror the planned implementation (theater at the source); the contract pins the oracle instead so the test author has no freedom to weaken it. Format:
+- **Test Contract** (replaces authoring test-file code at blueprint time — implement writes the actual tests at red time, transcribing this contract): for every behavior this phase introduces or changes, emit one Behavior entry. Pre-written test code tends to mirror the planned implementation (theater at the source); the contract pins the oracle instead so the test author has no freedom to weaken it.
+
+  **Before writing, think like a tester.** A Test Contract that only
+  asserts the happy path with a single fixture value will produce
+  survivors at mutation time — the same gaps you'd catch now at design
+  time, where they cost one sentence instead of a test rewrite plus a
+  3-minute mutation re-run. You are not listing tests. You are proving
+  to yourself that the code actually does what the contract claims.
+
+  1. Boundaries. Every conditional and range check has edges. If
+     `if (remaining > 0)` has three values that matter (-1, 0, 5)
+     but the Oracle only tests 5, you haven't proven the function
+     handles the boundary. The Oracle should pin the edge.
+  2. Invariants. What must always be true? If remainingSets can never
+     go negative but the Oracle never asserts non-negative, a sign
+     flip at mutation time survives undetected. Assert the invariant.
+  3. Error paths. A function that validates and throws on bad input
+     needs an Oracle that asserts the throw. If you only test valid
+     input, every error-path mutant survives. Cover each error surface.
+  4. Branch exhaustiveness. Count the decision points the slice's code
+     makes. Count the Behaviors in the contract. If code has more
+     branches than the contract has Behaviors, some path is untested.
+     Either add a Behavior or tag it TDD-exempt with a reason.
+
+  Format:
 
   ```markdown
   ### Test Contract:
@@ -295,7 +341,15 @@ Present a **condensed review** of the slice — NOT the full generated code. The
 3. **Key code blocks**: factory calls, wiring, non-obvious logic — the interesting parts that show the design decision in action
 
 **Omit**: boilerplate, import lists, full function bodies, obvious implementations.
-**MODIFY files**: focused diff (`- old` / `+ new`) with ~3 lines context. **Test Contract**: shown IN FULL — behaviors, oracles, expected-red reasons, exemptions. The contract is the developer's main test-review surface (there is no test code to review at blueprint time); never condense it.
+**MODIFY files**: focused diff (`- old` / `+ new`) with ~3 lines context. **Test Contract**: shown IN FULL. The agent wrote this contract from the code, not from your domain knowledge. It knows what the code does; you know what it SHOULD do. Those are not the same thing. A contract that is precise but wrong passes green and ships a bug — the mutation runner won't catch it because the test was precise about the wrong behavior. Scrutinize it:
+  1. Intent. Read the plain-English description, not the Oracle. Does it
+     describe what you actually want? "Returns age in days" when it
+     should be years — catch this here, not at ship time.
+  2. Boundaries. A single-input Oracle proves the function works for
+     that input. It doesn't prove the function is correct. Look for the
+     edge the Oracle didn't test.
+  3. Invariants. What must always hold but isn't asserted?
+  4. Error paths. Count what can go wrong vs. what the contract covers.
 
 **If the developer asks to see full code**, show it inline — exception, not default.
 
