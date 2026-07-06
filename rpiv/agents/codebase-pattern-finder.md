@@ -1,7 +1,7 @@
 ---
 name: codebase-pattern-finder
 description: codebase-pattern-finder is a useful subagent_type for finding similar implementations, usage examples, or existing patterns that can be modeled after. It will give you concrete code examples based on what you're looking for! It's sorta like codebase-locator, but it will not only tell you the location of files, it will also give you code details!
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, ctx_execute_file, ctx_search
 model: sonnet
 effort: medium
 ---
@@ -42,6 +42,8 @@ What to look for based on request:
 - You can use your handy dandy `Grep`, `Glob`, and `LS` tools to to find what you're looking for! You know how it's done!
 
 ### Step 3: Read and Extract
+- **Prefer `ctx_execute_file` for structural scanning** — when you're scanning candidate files to determine whether they contain the target pattern, use `ctx_execute_file` to extract the relevant structure (function signatures, class shapes, test patterns) without loading entire files into context. The raw file bytes stay in the sandbox.
+- Use `read` when you've confirmed a file contains the pattern you need and you must extract exact code snippets for display with precise `file:line` references.
 - Read files with promising patterns
 - Extract the relevant code sections
 - Note the context and usage
@@ -191,6 +193,7 @@ describe('Pagination', () => {
 ## Important Guidelines
 
 - **Show working code** - Not just snippets
+- **Prefer `ctx_execute_file` for pattern scanning** — scan many candidate files cheaply to find the ones that actually contain the pattern. Switch to `read` only when extracting the final example for display.
 - **Include context** - Where and why it's used
 - **Multiple examples** - Show variations
 - **Note best practices** - Which pattern is preferred

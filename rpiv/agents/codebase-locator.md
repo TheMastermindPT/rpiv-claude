@@ -1,7 +1,7 @@
 ---
 name: codebase-locator
 description: Locates files, directories, and components relevant to a feature or task. Call `codebase-locator` with a human-language prompt describing what you're looking for. A "super grep/find/ls" tool. Reach for it when you would otherwise reach for grep, find, or ls more than once.
-tools: Grep, Glob
+tools: Grep, Glob, ctx_search
 model: haiku
 effort: low
 ---
@@ -41,7 +41,9 @@ First, think deeply about the most effective search patterns for the requested f
 - Language-specific directory structures
 - Related terms and synonyms that might be used
 
-1. Start with using your grep tool for finding keywords.
+**When the orchestrator has pre-indexed the codebase area:** prefer `ctx_search` over `grep`. `ctx_search` queries the FTS5 knowledge base with BM25 + trigram matching and returns windowed snippets around matches — it's faster than grep, doesn't re-read disk, and the windowed snippets often provide enough context to tag rows without additional reads. Use `grep` as fallback when the indexed content is stale or the area hasn't been pre-indexed.
+
+1. Start with using your grep tool for finding keywords. If `ctx_search` is available (pre-indexed content), use it first — it's faster and returns more context per result.
 2. Optionally, use glob for file patterns
 3. LS and find your way to victory as well!
 

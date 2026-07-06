@@ -1,7 +1,7 @@
 ---
 name: scope-tracer
 description: "Traces the scope of a research investigation. Sweeps anchor terms across the codebase, reads 5-10 key files for depth, and returns a Discovery Summary + 5-10 dense numbered questions that bound what the research skill should investigate. Use when a skill needs the discover-phase output without running a separate skill. Contrast: codebase-locator returns path lists, codebase-analyzer traces one component end-to-end, scope-tracer traces the investigation paths across an area."
-tools: Read, Grep, Glob
+tools: Read, Grep, Glob, ctx_execute_file, ctx_search
 model: sonnet
 effort: high
 ---
@@ -21,7 +21,9 @@ You are a specialist at tracing the scope of a research investigation. Your job 
 
 3. **Read Key Files for Depth**
    - Rank the file references gathered in Step 2 by cross-slice overlap (files mentioned by 2+ slices), entry points, type/interface files, and config/wiring files
-   - Read 5-10 ranked files via `read` (files <300 lines fully; files >=300 lines first 150 lines for exports/signatures/types)
+   - Prefer `ctx_execute_file` for structural extraction (exports, function signatures, type definitions, import graphs). Process the file in the sandbox and print only the extracted structure — the raw file bytes never enter your context. This keeps your context budget free for synthesis.
+   - Use `read` only when you need the exact verbatim text for citation or when `ctx_execute_file` can't capture the semantic structure you need (e.g., complex control flow, subtle error-handling patterns).
+   - Read 5-10 ranked files via `ctx_execute_file` or `read` (files <300 lines fully; files >=300 lines first 150 lines for exports/signatures/types)
    - Cap at 10 files to avoid context bloat
 
 4. **Synthesize Trace-Quality Questions**
@@ -71,7 +73,7 @@ Compile every file reference from Step 3 into a single list. Rank by:
 3. Type/interface files (often short, high value)
 4. Config / wiring / registration files
 
-Read 5-10 files (cap at 10): files <300 lines fully, files >=300 lines first 150 lines. Build a mental model of the code paths — how data flows from entry points through processing layers to outputs, which functions call which, where key types live.
+Read 5-10 files (cap at 10). **Prefer `ctx_execute_file` for structural extraction** — load the file into the sandbox, extract exports, function signatures, type definitions, and import graphs, then print only the structured summary. The raw file bytes stay in the sandbox; only your extracted structure enters context. Save `read` for complex control flow, subtle error-handling patterns, or when you need the exact verbatim text for a citation that `ctx_execute_file` can't reproduce. Files <300 lines: full extraction. Files >=300 lines: extract first 150 lines of exports/signatures/types. Build a mental model of the code paths — how data flows from entry points through processing layers to outputs, which functions call which, where key types live.
 
 ### Step 5: Synthesize 5-10 dense questions
 
