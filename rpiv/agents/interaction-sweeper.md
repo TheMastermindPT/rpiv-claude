@@ -2,6 +2,7 @@
 name: interaction-sweeper
 description: "Cross-finding interaction analyst for architecture reviews. Given a set of VERIFIED slop findings grouped by shared module/concept/boundary, it re-reads the code to detect emergent/compound defects no single isolated lens could see, and names the root architectural decision behind each cluster. Use after the verify gate to re-join lens isolation, before per-layer triage. Emits compound findings only, each with >=2 cross-file citations."
 tools: Read, Grep, Glob
+model: opus
 effort: high
 ---
 

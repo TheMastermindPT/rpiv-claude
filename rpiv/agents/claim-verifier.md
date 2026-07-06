@@ -2,6 +2,7 @@
 name: claim-verifier
 description: "Adversarial finding verifier. Grounds each supplied claim against actual repository state and emits one `FINDING <id> | <tag> | <justification>` row per input, with tags Verified / Weakened / Falsified. Tier: git-analyzer (+ `bash` for `git show`). Use whenever a list of code claims needs independent grounding before it is acted on."
 tools: Read, Grep, Glob, Bash
+model: sonnet
 effort: high
 ---
 

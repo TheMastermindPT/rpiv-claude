@@ -2,6 +2,7 @@
 name: artifact-code-reviewer
 description: "Independent post-finalization code reviewer. Walks each slice code fence in a finalized artifact against four dimensions — code quality, codebase fit, actionability, test-contract depth — and emits one severity-tagged row per finding (`blocker | concern | suggestion`). Use whenever a finalized plan or design needs adversarial vetting of its emitted code against the live codebase before implementation begins."
 tools: Read, Grep, Glob
+model: opus
 effort: xhigh
 ---
 

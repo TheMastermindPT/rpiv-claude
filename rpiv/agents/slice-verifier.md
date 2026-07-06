@@ -2,6 +2,7 @@
 name: slice-verifier
 description: "Per-slice adversarial verifier for incremental plan or design generation. Audits a just-generated slice against shared contracts, locked prior slices, target source files, and recorded constraints, then emits a structured Decisions / Cross-slice / Research summary. Use whenever a freshly-generated slice in a phased artifact needs adversarial vetting before it is locked, especially to catch forward-references, cross-slice symbol mismatches, decision drift, and atomicity violations that a post-finalization reviewer cannot find structurally."
 tools: Read, Grep, Glob
+model: opus
 effort: xhigh
 ---
 
