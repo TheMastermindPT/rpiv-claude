@@ -16,18 +16,30 @@ import { readAgentFrontmatter } from "./_shared.mjs";
 const STRUCTURED_AGENTS = {
   "claim-verifier": { pattern: /FINDING\s+\S+\s+\|\s+(Verified|Weakened|Falsified)/, label: "FINDING rows" },
   "diff-auditor":   { pattern: /\S+:\d+\s+\|/, label: "pipe-delimited rows (file:line | ...)" },
+  "diff-analyst":   { pattern: /\S+:\d+\s+\|/, label: "pipe-delimited rows (file:line | ...)" },
+  "slice-verifier": { pattern: /-\s*Decisions:[\s\S]*-\s*Cross-slice:[\s\S]*-\s*Research:/, label: "Decisions / Cross-slice / Research rows" },
   "peer-comparator": { pattern: /(Mirrored|Missing|Diverged|Intentionally-absent)/, label: "peer invariant tags" },
   "test-case-locator": { pattern: /(test|spec|coverage)/i, label: "test case references" },
   "artifacts-locator": { pattern: /\.rpiv\//, label: "artifact paths" },
 };
 
+// Apology/refusal shapes are meaningful anywhere in the output.
 const ERROR_PATTERNS = [
   /\bI('m| am) sorry\b/i,
   /\bI (cannot|can't|am unable to)\b/i,
-  /\bno (results|findings|matches) (were |)found\b/i,
   /\bunable to (complete|process|analyze|find)\b/i,
+];
+
+// Generic failure vocabulary is meaningful only at the START of output: an agent that
+// OPENS with "Error: ..." failed; one whose 40th row cites an error-handling path did
+// not. Scanning the whole body warned on every legitimate error-path analysis (review
+// agents discuss errors constantly), which made the advisory permanent noise — a dead
+// guardrail.
+const HEAD_FAILURE_PATTERNS = [
+  /\bno (results|findings|matches) (were |)found\b/i,
   /\b(error|exception|failed|timeout)\b/i,
 ];
+const HEAD_WINDOW = 200;
 
 /** Read hook JSON from stdin. Returns null on empty/invalid. */
 function readStdin() {
@@ -39,11 +51,16 @@ function readStdin() {
   }
 }
 
-/** Check if result text contains error/fallback language. Warns on stderr. */
+/** Check if result text contains error/fallback language. Warns on stderr.
+    Apology shapes scan the full text; generic failure words scan only the head. */
 function checkErrorLanguage(agentType, result) {
-  for (const pat of ERROR_PATTERNS) {
-    if (pat.test(result)) {
-      const match = result.match(pat)?.[0] || pat.source;
+  const head = result.slice(0, HEAD_WINDOW);
+  for (const { pat, text } of [
+    ...ERROR_PATTERNS.map((pat) => ({ pat, text: result })),
+    ...HEAD_FAILURE_PATTERNS.map((pat) => ({ pat, text: head })),
+  ]) {
+    if (pat.test(text)) {
+      const match = text.match(pat)?.[0] || pat.source;
       process.stderr.write(
         `[rpiv-hook] WARNING: agent "${agentType}" output contains ` +
         `possible error/fallback: "${match}"\n`

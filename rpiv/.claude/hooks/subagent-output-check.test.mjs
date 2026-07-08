@@ -151,6 +151,77 @@ const mkAgent = (repo, name, effort) => {
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
 
+// --- Test 11: error word deep in output body — silent (head-only scan) -------
+{
+  const repo = mkdtempSync(join(tmpdir(), "soc-errdeep-"));
+  try {
+    mkAgent(repo, "codebase-analyzer", "high");
+    const padding = "### Analysis\n" + "- src/app.ts:42 traces the retry loop through the queue consumer\n".repeat(5);
+    const { stderr } = runHook(repo, {
+      agent_type: "codebase-analyzer",
+      result: padding + "Validation errors return 401; the error handling at src/handlers/webhook.js:28 rethrows with cause.",
+    });
+    assert.equal(stderr.trim(), "", `error vocabulary deep in body must be silent, got: ${stderr}`);
+    console.log("OK — error word deep in body: silent (head-only scan).");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}
+
+// --- Test 12: output OPENS with failure vocabulary — warns --------------------
+{
+  const repo = mkdtempSync(join(tmpdir(), "soc-errhead-"));
+  try {
+    mkAgent(repo, "codebase-analyzer", "high");
+    const { stderr } = runHook(repo, {
+      agent_type: "codebase-analyzer",
+      result: "Error: timeout while reading the target directory. Partial results follow.\n" + "x".repeat(40),
+    });
+    assert.match(stderr, /output contains.*error\/fallback/);
+    console.log("OK — failure vocabulary at head: warns.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}
+
+// --- Test 13: slice-verifier three-row schema present — silent ----------------
+{
+  const repo = mkdtempSync(join(tmpdir(), "soc-sv-ok-"));
+  try {
+    mkAgent(repo, "slice-verifier", "xhigh");
+    const { stderr } = runHook(repo, {
+      agent_type: "slice-verifier",
+      result: "working notes: commitment C1 satisfied at slice 2 §1\n- Decisions: OK\n- Cross-slice: OK\n- Research: OK",
+    });
+    assert.equal(stderr.trim(), "", `three-row schema present: silent, got: ${stderr}`);
+    console.log("OK — slice-verifier schema present: silent.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}
+
+// --- Test 14: slice-verifier missing rows — warns -----------------------------
+{
+  const repo = mkdtempSync(join(tmpdir(), "soc-sv-miss-"));
+  try {
+    mkAgent(repo, "slice-verifier", "xhigh");
+    const { stderr } = runHook(repo, {
+      agent_type: "slice-verifier",
+      result: "The slice looks consistent with prior slices and all commitments are satisfied.",
+    });
+    assert.match(stderr, /missing expected format: Decisions \/ Cross-slice \/ Research rows/);
+    console.log("OK — slice-verifier missing rows: warns.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}
+
+// --- Test 15: diff-analyst pipe rows present — silent --------------------------
+{
+  const repo = mkdtempSync(join(tmpdir(), "soc-da-ok-"));
+  try {
+    mkAgent(repo, "diff-analyst", "high");
+    const { stderr } = runHook(repo, {
+      agent_type: "diff-analyst",
+      result: "### src/app.ts\n| src/app.ts:42 | `if (x > 0) {` | 5 | predicate without consumer update |",
+    });
+    assert.equal(stderr.trim(), "", `diff-analyst rows present: silent, got: ${stderr}`);
+    console.log("OK — diff-analyst rows present: silent.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}
+
 // --- Test 10: non-rpiv agent — silent ---------------------------------------
 
 {

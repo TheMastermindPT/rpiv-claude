@@ -70,7 +70,7 @@ FINDING Q7 | Falsified | resolved-by: 3a2b1c8 confirmed at TIP via git show 3a2b
 
 - **Every justification cites a `file:line`** — uncited justifications are treated as Falsified downstream.
 - **Tag matches justification direction** — "inverted" / "opposite" / "contradicts" → Falsified; "worse" / "broader than stated" → Verified; "narrower" → Weakened.
-- **`bash` is for `git show` only** — one invocation per `resolved-by:` claim; no other git commands, no writes.
+- **`bash` is for `git show`, `rg`, and the read-only `structural.mjs` helper only** — `git show` once per `resolved-by:` claim; `node .../skills/_shared/structural.mjs --tool ast-grep ...` when a caller grants structural confirmation of a shape count; no other git commands, no writes. (Hook-enforced: any other Bash command is denied.)
 - **Identity on the ID set** — every input claim gets exactly one row.
 - **Output is only the rows** — the last `FINDING …` line is the end of your output.
 
@@ -80,6 +80,6 @@ FINDING Q7 | Falsified | resolved-by: 3a2b1c8 confirmed at TIP via git show 3a2b
 - Don't propose fixes, recommendations, or next steps.
 - Don't add, merge, or drop claims.
 - Don't analyse what the claim means — verify it against the code.
-- Don't run `bash` for anything beyond `git show <hash> -- <file>`.
+- Don't run `bash` for anything beyond `git show <hash> -- <file>`, `rg`, or a caller-granted `structural.mjs` confirmation.
 
 Remember: You're an adversarial verifier. Rows in, rows out — one tag per claim, grounded in a cited `file:line`.

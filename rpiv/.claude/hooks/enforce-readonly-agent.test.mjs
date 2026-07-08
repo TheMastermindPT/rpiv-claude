@@ -166,6 +166,87 @@ const mkAgent = (repo, name, tools) => {
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
 
+// --- Test 12: allowlisted agent, allowed command — silent --------------------
+{
+  const repo = mkdtempSync(join(tmpdir(), "era-al-ok-"));
+  try {
+    mkAgent(repo, "claim-verifier", "Read, Grep, Glob, Bash");
+    const { decision, stderr } = runHook(repo, {
+      agent_type: "claim-verifier", tool_name: "Bash",
+      tool_input: { command: "git show 3a2b1c8 -- src/services/OrderService.ts" },
+    });
+    assert.equal(decision, null, "allowed git show: no deny");
+    assert.equal(stderr.trim(), "", `allowed git show: silent, got: ${stderr}`);
+    console.log("OK — allowlisted agent, allowed command: silent.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}
+
+// --- Test 13: allowlisted agent, out-of-contract command — denied -------------
+{
+  const repo = mkdtempSync(join(tmpdir(), "era-al-deny-"));
+  try {
+    mkAgent(repo, "claim-verifier", "Read, Grep, Glob, Bash");
+    const { decision } = runHook(repo, {
+      agent_type: "claim-verifier", tool_name: "Bash",
+      tool_input: { command: "git log --oneline --all" },
+    });
+    assert.ok(decision, "out-of-contract command: must deny");
+    assert.equal(decision.hookSpecificOutput.permissionDecision, "deny");
+    assert.match(decision.hookSpecificOutput.permissionDecisionReason, /contract allows/);
+    console.log("OK — allowlisted agent, out-of-contract command: denied.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}
+
+// --- Test 14: allowlisted agent, chained smuggle — denied ---------------------
+{
+  const repo = mkdtempSync(join(tmpdir(), "era-al-chain-"));
+  try {
+    mkAgent(repo, "claim-verifier", "Read, Grep, Glob, Bash");
+    const { decision } = runHook(repo, {
+      agent_type: "claim-verifier", tool_name: "Bash",
+      tool_input: { command: "git show abc123 && rm -rf /tmp/x" },
+    });
+    assert.ok(decision, "chained smuggle: must deny");
+    assert.equal(decision.hookSpecificOutput.permissionDecision, "deny");
+    console.log("OK — allowlisted agent, chained smuggle: denied (per-segment check).");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}
+
+// --- Test 15: precedent-locator — read-only git allowed, fetch denied ---------
+{
+  const repo = mkdtempSync(join(tmpdir(), "era-pl-"));
+  try {
+    mkAgent(repo, "precedent-locator", "Read, Grep, Glob, Bash");
+    const ok = runHook(repo, {
+      agent_type: "precedent-locator", tool_name: "Bash",
+      tool_input: { command: 'git log --oneline --all --grep="rate limit"' },
+    });
+    assert.equal(ok.decision, null, "git log: no deny");
+    const denied = runHook(repo, {
+      agent_type: "precedent-locator", tool_name: "Bash",
+      tool_input: { command: "git fetch origin" },
+    });
+    assert.ok(denied.decision, "git fetch: must deny");
+    assert.equal(denied.decision.hookSpecificOutput.permissionDecision, "deny");
+    console.log("OK — precedent-locator: read-only git allowed, fetch denied.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}
+
+// --- Test 16: non-allowlisted agent, newly-covered destructive git — warns only
+{
+  const repo = mkdtempSync(join(tmpdir(), "era-gitgap-"));
+  try {
+    mkAgent(repo, "test-agent", "Read, Bash");
+    const { decision, stderr } = runHook(repo, {
+      agent_type: "test-agent", tool_name: "Bash",
+      tool_input: { command: "git reset --hard HEAD~1" },
+    });
+    assert.equal(decision, null, "non-allowlisted destructive git: no deny");
+    assert.match(stderr, /WARNING: agent "test-agent" running potentially destructive Bash/);
+    console.log("OK — git reset now covered by destructive scan: warns.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}
+
 // --- Test 11: traversal agent_type — no fs probe, defers (no deny) -----------
 {
   const repo = mkdtempSync(join(tmpdir(), "era-traversal-"));
