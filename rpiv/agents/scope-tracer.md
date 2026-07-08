@@ -1,7 +1,7 @@
 ---
 name: scope-tracer
 description: "Traces the scope of a research investigation. Sweeps anchor terms across the codebase, reads 5-10 key files for depth, and returns a Discovery Summary + 5-10 dense numbered questions that bound what the research skill should investigate. Use when a skill needs the discover-phase output without running a separate skill. Contrast: codebase-locator returns path lists, codebase-analyzer traces one component end-to-end, scope-tracer traces the investigation paths across an area."
-tools: Read, Grep, Glob, ctx_execute_file, ctx_search
+tools: Read, Grep, Glob, mcp__plugin_context-mode_context-mode__ctx_execute_file, mcp__plugin_context-mode_context-mode__ctx_search, mcp__context-mode__ctx_execute_file, mcp__context-mode__ctx_search
 model: sonnet
 effort: high
 ---

@@ -46,7 +46,12 @@ Scope resolution (default branch, range, ChangedFiles) is LLM-invoked at Step 1.
 
 **File-orientation contract**: agents reason about *files* as coherent units. Hunks are evidence *within* a file's analysis, never the unit of analysis. The `-U30` patch (Step 1) inlines function-level context so agents rarely need extra `Read` calls.
 
-Every Wave-2 agent prompt contains EXACTLY: (a) `Known Context:` followed by the Discovery Map verbatim, and (b) the resolved `<patch_path>` value (the helper's `patch_path:` field) as the patch path. Nothing else from Wave-1 outputs — NOT the raw integration-scanner dump, NOT precedent-locator output, NOT Dependencies/CVE output. See "Wave-2 context isolation" in Step 3 for the failure mode when this is violated. Wave-1 agents that do not consume the Discovery Map (precedents, dependencies, CVE) get `ChangedFiles` / manifest-diff only.
+Every Wave-2 agent prompt contains EXACTLY `Known Context:` + the Discovery Map verbatim, and the resolved `<patch_path>` — nothing else from Wave-1 (see "Wave-2 context isolation" in Step 3 for why). Wave-1 agents that don't consume the Discovery Map (precedents, dependencies, CVE) get `ChangedFiles` / manifest-diff only.
+
+## Conventions
+
+- **Citation contract** (every Wave-2+ agent, every step): every `file:line` citation MUST carry the literal line text in backticks — `file:line — \`<verbatim line>\` — <note>`. Omit any finding whose line you cannot quote verbatim.
+- **Severity**: 🔴 fix before merge · 🟡 fix soon · 🔵 nice-to-have · 💭 discuss.
 
 ## Steps
 
@@ -87,9 +92,9 @@ Every Wave-2 agent prompt contains EXACTLY: (a) `Known Context:` followed by the
    - **Working-tree branch** (`strategy: working-tree`, no `<range>`): for `staged` use `git diff --cached --stat` + `git diff --cached -U30 > <patch_path>`; for `working` use `git diff --stat` + `git diff -U30 > <patch_path>` (unstaged only); for `modified` use `git diff HEAD --stat` + `git diff HEAD -U30 > <patch_path>` (every tracked change vs HEAD — staged + unstaged, no untracked); for `commit` use `git show HEAD --stat` + `git show HEAD -U30 > <patch_path>`. Commit-message context is N/A for `staged` / `working` / `modified`; for `commit` use `git show HEAD --format="%H %s%n%n%b%n---" --no-patch`. ChangedFiles still comes from the helper.
    - **Patch-size fallback**: `-U30` produces ~2–3× the size of `-U0`. If the resulting patch exceeds ~1MB, drop to `-U10` for this run; never use `-U0` — it defeats the skill's design.
 
-3. **Bail-out**: if `ChangedFiles` is empty, print `No changes in scope {scope}. Exiting.` and STOP. Do not write an artifact.
+4. **Bail-out**: if `ChangedFiles` is empty, print `No changes in scope {scope}. Exiting.` and STOP. Do not write an artifact.
 
-4. **Derive scope + flags** (orchestrator-side, used in later steps):
+5. **Derive scope + flags** (orchestrator-side, used in later steps):
    - `InScopeFiles` — used by the Step 6 pre-filter. `ChangedFiles` reflects *tree-reachability* (inflated on branches that back-merged the default branch — each post-merge first-parent commit inherits the merge's tree, so `--name-only` includes every file the merge resolved); `InScopeFiles` reflects *commits' own diffs* and is what the developer actually authored. Derivation:
      - strategy=`first-parent` (`auto` / PR branch / commit-list inputs) → `InScopeFiles = ⋃ git diff-tree --no-commit-id --name-only -r <h>` over `git log "<range>" --first-parent --no-merges --pretty=%H` (each feature commit's own file delta; back-merge sidecars drop out even when the merge is on the first-parent line). For commit-list input, iterate over the user-named hashes instead of the first-parent walk to preserve non-contiguous-list intent.
      - strategy=`explicit-range` → `InScopeFiles = ChangedFiles` (user explicitly asked for range semantics; merges in the range are part of the intent).
@@ -108,29 +113,31 @@ Every Wave-2 agent prompt contains EXACTLY: (a) `Known Context:` followed by the
 
 ### Step 2: Dispatch Wave-1 — Integration + Precedents + Deps/CVE + Peer-Mirror
 
-**Pre-Wave-1 deterministic gate (NEW — runs BEFORE any agent dispatch).** If ChangedFiles is non-empty, run these tools on the changed files FIRST. Their output is authoritative ground truth — Wave-1/2/3 lens agents MUST NOT re-report what these tools already found.
+**Pre-Wave-1 deterministic gate** (runs BEFORE any agent dispatch). If ChangedFiles is non-empty, run these tools on the changed files FIRST; their output is authoritative ground truth — lens agents MUST NOT re-report what they found.
+
+**Gate protocol (applies to every gate below).** Each command ends with `2>/dev/null || echo '{"error":"TOOL_FAILED"}'` — never a bare `2>&1`. If a gate's output starts with `{"error":"TOOL_FAILED"}`, the tool is absent/crashed: record `<gate>: unavailable — lens fallback active` in the Discovery Map and DROP that gate's downstream `MUST NOT re-report` / `Do NOT re-grep` prohibition so the lens resumes full coverage. This is load-bearing — a silently-failed gate plus a live prohibition makes violations invisible to both gate and lens. Each gate below states only its command and what a SUCCESSFUL result means.
 
 **Architecture boundary gate (depcruiser).** When the repo has `.dependency-cruiser.js`:
 ```bash
 npx depcruise src --output-type json 2>/dev/null || echo '{"error":"TOOL_FAILED"}'
 ```
-Filter violations to those whose `from` or `to` path intersects ChangedFiles. If the command failed (output starts with `{"error":"TOOL_FAILED"}`), record `Architecture gate: depcruise unavailable — lens fallback active` in the Discovery Map and DROP the downstream `MUST NOT re-report` prohibition — the Quality lens resumes full boundary checks. When it succeeds, any `severity: error` violation on a changed file is a 🔴 Pre-Wave-1 finding — the review blocks on it. `severity: warn` → 🟡 advisory. Fold these into the Discovery Map under `Architecture gate: {N} violations (E errors, W warnings)` with `file:line` citations. The Quality lens (diff-auditor) MUST NOT re-report these — it focuses on what the rules DON'T cover.
+Filter violations to those whose `from`/`to` path intersects ChangedFiles. A `severity: error` violation on a changed file is a 🔴 Pre-Wave-1 finding (review blocks); `severity: warn` → 🟡. Fold into the Discovery Map as `Architecture gate: {N} violations (E errors, W warnings)` with `file:line`. The Quality lens MUST NOT re-report these — it focuses on what the rules DON'T cover.
 
 **Dead code audit (knip).** Run:
 ```bash
 npx knip --reporter json 2>/dev/null || echo '{"error":"TOOL_FAILED"}'
 ```
-If the command failed, record `Knip audit: knip unavailable — lens fallback active` in the Discovery Map and DROP the downstream `MUST NOT re-report` prohibition. When it succeeds, run TWO cross-references:
+Run TWO cross-references:
   - **Dead code touched by this diff**: any ChangedFile that knip reports as unused is a 🔴 finding (modifying dead code is itself a review concern). Any ChangedFile that knip reports as having unused exports → fold under `Knip audit: {N} dead exports, {M} dead files touched by this diff`. These inform severity weighting in Step 5 — a diff that modifies an already-orphaned file gets bumped one tier.
-  - **Dangling import chain (NEW):** run `npx knip --dependencies 2>/dev/null` and cross-reference against ChangedFiles. Any file OUTSIDE ChangedFiles that imports a symbol REMOVED by this diff has a broken import chain the Quality lens can't see from the diff alone. Fold under `Knip audit: {K} dangling imports` — each is a 🟡 finding. This catches the "changed the export in file A, forgot to update the import in file B" class of errors at gate time instead of compile time. The Quality lens MUST NOT re-report knip findings.
+  - **Dangling import chain:** run `npx knip --dependencies 2>/dev/null` and cross-reference against ChangedFiles. Any file OUTSIDE ChangedFiles that imports a symbol REMOVED by this diff has a broken import chain the Quality lens can't see from the diff alone. Fold under `Knip audit: {K} dangling imports` — each is a 🟡 finding. This catches the "changed the export in file A, forgot to update the import in file B" class of errors at gate time instead of compile time. The Quality lens MUST NOT re-report knip findings.
 
-**SQL migration gate (SQLFluff, NEW).** When ChangedFiles includes `supabase/migrations/`:
+**SQL migration gate (SQLFluff).** When ChangedFiles includes `supabase/migrations/`:
 ```bash
 sqlfluff lint supabase/migrations/ --format json 2>/dev/null || echo '{"error":"TOOL_FAILED"}'
 ```
-If the command failed, record `SQLFluff gate: sqlfluff unavailable — lens fallback active` in the Discovery Map and DROP the downstream `MUST NOT re-report` prohibition. When it succeeds, filter violations to the changed migration files. Fold under `SQLFluff gate: {N} lint violations` in the Discovery Map. `CP01`/`RF02`/`ST06` violations on changed migration files are 🟡 findings — migrations with anti-patterns are pre-existing bugs in waiting. The Quality lens MUST NOT re-report SQLFluff violations; it focuses on semantic correctness the linter can't see.
+Filter to the changed migration files; fold under `SQLFluff gate: {N} lint violations`. `CP01`/`RF02`/`ST06` violations are 🟡 (anti-patterns are pre-existing bugs in waiting). The Quality lens MUST NOT re-report these — it focuses on semantic correctness the linter can't see.
 
-**Security sink detection (ast-grep, NEW).** Run on ChangedFiles for precise structural sink matching:
+**Security sink detection (ast-grep).** Run on ChangedFiles for precise structural sink matching:
 ```bash
 sg scan --inline-rules '
 id: security-sinks
@@ -145,9 +152,9 @@ rule:
     - pattern: document.write($$$)
 ' --json=stream 2>/dev/null || echo '{"error":"TOOL_FAILED"}'
 ```
-If the command failed, record `Security gate: ast-grep unavailable — lens fallback active` in the Discovery Map and DROP the downstream `Do NOT re-grep` directive — the Security lens resumes its own grep-based sink detection. When it succeeds, matches become 🟡 Pre-Wave-1 findings (promoted to 🔴 if reached from an auth-boundary file per the Discovery Map). These REPLACE the Security lens's own `grep`-based sink detection — ast-grep is structurally precise, zero false positives vs grep matching comments and strings. The Security lens keeps: traced source→sink reachability analysis, path traversal, SSRF, secrets-in-diff, and missing trust-boundary checks — the judgment-level concerns ast-grep can't automate.
+Matches become 🟡 Pre-Wave-1 findings (promoted to 🔴 if reached from an auth-boundary file per the Discovery Map). These REPLACE the Security lens's own `grep`-based sink detection — ast-grep is structurally precise, zero false positives vs grep matching comments and strings. The Security lens keeps the judgment-level concerns ast-grep can't automate: traced source→sink reachability, path traversal, SSRF, secrets-in-diff, missing trust-boundary checks.
 
-**Architectural smell detection (ast-grep, NEW).** Run on ChangedFiles for structural smell patterns that regex grep would miss (comments, string literals, false positives):
+**Architectural smell detection (ast-grep).** Run on ChangedFiles for structural smell patterns that regex grep would miss (comments, string literals, false positives):
 ```bash
 sg scan --inline-rules '
 id: arch-smells
@@ -163,9 +170,7 @@ rule:
     - pattern: "debugger"
 ' --json=stream 2>/dev/null || echo '{"error":"TOOL_FAILED"}'
 ```
-If the command failed, the gate degrades silently — architectural smells are advisory, not blockers. When it succeeds, matches become the `Architectural smells: {N} matches` Discovery Map row. `console.log`/`debugger` left in production code are 🟡 findings (observability leak); empty catch blocks are 🟡 (swallowed errors). The Quality and Security lenses START from these pre-tagged sites rather than discovering them via grep. When the diff includes non-TypeScript files, add `--lang <l>` blocks for each language present.
-
-**Gate-failure recovery contract.** After running all gate commands, the orchestrator checks each output. Any command whose first line is `{"error":"TOOL_FAILED"}` signals the tool was absent or crashed. For each such tool, the Discovery Map records `<gate-name>: unavailable — lens fallback active` and the corresponding `MUST NOT re-report` / `Do NOT re-grep` prohibition is dropped. This is load-bearing: a silently-failed gate combined with an unconditional downstream prohibition creates a false-promise cascade where violations are invisible to both gate and lens. The `2>/dev/null || echo '{"error":"TOOL_FAILED"}'` pattern on every gate command is the mechanism that prevents this — never use bare `2>&1` without the fallback guard.
+Matches become the `Architectural smells: {N} matches` Discovery Map row. `console.log`/`debugger` in production code → 🟡 (observability leak); empty catch blocks → 🟡 (swallowed errors). Lenses START from these pre-tagged sites rather than grepping. For non-TypeScript files, add `--lang <l>` blocks per language present. (Smells are advisory, so on TOOL_FAILED this gate just degrades silently.)
 
 ---
 
@@ -214,7 +219,7 @@ While these agents run, the orchestrator produces the rest of the Discovery Map 
 
 **Wait for `integration-scanner` AND the peer-mirror agent (when dispatched)** before dispatching Wave-2. Wave-2 agents consume both via the Discovery Map (auth-boundary crossings, inbound refs, peer-mirror Missing/Diverged rows). Precedents / Dependencies / CVE continue running in the background; **Precedents MUST be awaited before Step 5 begins** (Reconciliation reads its follow-up-within-30-days counts to weight severity; see Step 5). Dependencies / CVE also merge in at Step 5 but may arrive later in the wait barrier.
 
-**Pre-index the dependency neighborhood (ctx_index, NEW — runs AFTER integration-scanner returns, BEFORE Wave-2 dispatch).** The Quality lens's Surface 3 (blast radius) and Surface 8 (cross-layer drift) depend on reading files outside ChangedFiles — inbound consumers, peer aggregates, upstream guards. Pre-index the outbound dependency files of ChangedFiles so lens agents query `ctx_search` instead of issuing Read calls:
+**Pre-index the dependency neighborhood (ctx_index)** — runs AFTER integration-scanner returns, BEFORE Wave-2 dispatch. The Quality lens's Surface 3 (blast radius) and Surface 8 (cross-layer drift) depend on reading files outside ChangedFiles — inbound consumers, peer aggregates, upstream guards. Pre-index the outbound dependency files of ChangedFiles so lens agents query `ctx_search` instead of issuing Read calls:
   - Collect the union of files referenced by integration-scanner's `Outbound deps` and `Inbound refs` rows
   - Run:
     ```
@@ -305,8 +310,6 @@ Spawn Quality + Security in parallel using the Agent tool. Each receives the Dis
 
 **Self-check before dispatching Wave-2**: read your outgoing Agent prompt. If it contains any content from Wave-1 agent RESULTS beyond the Discovery Map you synthesised, strip it. The Discovery Map is the contract; raw outputs are reconciliation-only.
 
-**Citation contract** (applies to every Wave-2+ agent, every step): every `file:line` citation MUST be accompanied by the literal line text in backticks — format `file:line — \`<verbatim line>\` — <note>`. Omit findings whose lines you cannot quote verbatim.
-
 **Quality lens** (`diff-auditor`) — **file-oriented**:
   ```
   Analyse changes file by file. For each file in ChangedFiles, read its diff region in `<patch_path>` (patch has `-U30` — full function context is already inline; rarely need an extra Read call), form a mental model of what the file does and what the diff changes about it, then apply the 13 surfaces below to the file as a whole. Cite `file:line` with verbatim line text (citation contract) for every finding. Omit findings not traceable to a diff-touched change. No severity.
@@ -336,9 +339,9 @@ Spawn Quality + Security in parallel using the Agent tool. Each receives the Dis
 
 **Security lens** (`diff-auditor`) — **file-oriented**:
   ```
-  Analyse each changed file as a whole, looking for sinks in the classes below. **Prefer ast-grep over grep for sink detection (NEW):** the Pre-Wave-1 gate already ran `sg scan` for structural sinks — its findings are AUTHORITATIVE for `dangerouslySetInnerHTML`, `eval()`, `Function()`, `.innerHTML =`, and `document.write()` (zero false positives). Do NOT re-grep these patterns; start from the ast-grep matches and ADD your traced source→sink reachability analysis. For sink classes ast-grep didn't cover (command execution, path traversal, SSRF), fall back to grep on `<patch_path>` (patch has `-U30` — sink context is inline). For each hit provide the verbatim line (citation contract) plus 2 surrounding lines and `confidence: N/10` that user-controlled input can reach the sink under current deployment. Drop hits with confidence < 8. Cross-reference Discovery Map auth-boundary crossings and inbound refs — a sink in a file reached from an auth-boundary file is in scope even if the sink file itself doesn't cross the boundary. Also cross-reference the `Static-analysis sinks` Discovery-Map row (Opengrep candidates): each is a CANDIDATE to TRACE, not a finding — promote to a verified Security finding only with a concrete user-reachable source→sink trace (the `confidence: N/10 < 8` drop and the untraced-rejection at the severity-reconciliation step still gate). Opengrep supplies recall (breadth across the sink classes); you supply the trace + reachability. This stays complementary — never emit an Opengrep candidate that your trace did not confirm.
+  Analyse each changed file as a whole, looking for sinks in the classes below. **Prefer ast-grep over grep for sink detection:** the Pre-Wave-1 gate already ran `sg scan` for structural sinks — its findings are AUTHORITATIVE for `dangerouslySetInnerHTML`, `eval()`, `Function()`, `.innerHTML =`, and `document.write()` (zero false positives). Do NOT re-grep these patterns; start from the ast-grep matches and ADD your traced source→sink reachability analysis. For sink classes ast-grep didn't cover (command execution, path traversal, SSRF), fall back to grep on `<patch_path>` (patch has `-U30` — sink context is inline). For each hit provide the verbatim line (citation contract) plus 2 surrounding lines and `confidence: N/10` that user-controlled input can reach the sink under current deployment. Drop hits with confidence < 8. Cross-reference Discovery Map auth-boundary crossings and inbound refs — a sink in a file reached from an auth-boundary file is in scope even if the sink file itself doesn't cross the boundary. Also cross-reference the `Static-analysis sinks` Discovery-Map row (Opengrep candidates): each is a CANDIDATE to TRACE, not a finding — promote to a verified Security finding only with a concrete user-reachable source→sink trace (the `confidence: N/10 < 8` drop and the untraced-rejection at the severity-reconciliation step still gate). Opengrep supplies recall (breadth across the sink classes); you supply the trace + reachability. This stays complementary — never emit an Opengrep candidate that your trace did not confirm.
 
-  **Sink detection hierarchy (NEW):** ast-grep (structural precision, no FPs) ▶ Opengrep (recall) ▶ grep (fallback). For every sink class, use the best available tool. ast-grep coverable sinks (`dangerouslySetInnerHTML`, `eval`, `Function()`, `innerHTML`, `document.write`) are already in the Discovery Map from Pre-Wave-1 — start there and add reachability.
+  **Sink detection hierarchy:** ast-grep (structural precision, no FPs) ▶ Opengrep (recall) ▶ grep (fallback). For every sink class, use the best available tool. ast-grep coverable sinks (`dangerouslySetInnerHTML`, `eval`, `Function()`, `innerHTML`, `document.write`) are already in the Discovery Map from Pre-Wave-1 — start there and add reachability.
 
   **File order strategy**: `[boundary]` files first (direct source→sink exposure); then `[persistence]` (query injection, unsafe deserialization); then `[code]` (command exec, SSRF, explicit-trust rendering); then `[hub]` / `[config]`; skip `[test]` unless a test helper touches a sink.
 
@@ -359,7 +362,7 @@ Spawn Quality + Security in parallel using the Agent tool. Each receives the Dis
   Name the sink class and the matched idiom. Evidence only. No CVE lookups.
   ```
 
-**Dependencies lens** (`codebase-analyzer`, only when `ManifestChanged`; otherwise SKIP and omit `### Dependencies` in artifact). **Prefer Knip for dependency audit (NEW):** When Knip ran at the Pre-Wave-1 gate AND `ManifestChanged`, use its output as the primary dependency signal:
+**Dependencies lens** (`codebase-analyzer`, only when `ManifestChanged`; otherwise SKIP and omit `### Dependencies` in artifact). **Prefer Knip for dependency audit:** When Knip ran at the Pre-Wave-1 gate AND `ManifestChanged`, use its output as the primary dependency signal:
   ```
   Knip dependency audit (Pre-Wave-1, authoritative):
   {paste knip --dependencies output: unused deps, unlisted deps, with file:line citations}
@@ -629,21 +632,15 @@ Ask follow-ups, or chain forward.
 
 - **Frontmatter**: `allowed-tools` is intentionally omitted — the skill inherits `Agent`, `ask_user_question`, `advisor`, `Write`, `web_search`, `todo`. Do NOT re-add the line.
 - **Security-lens precision stance**: prefer false negatives. Evidence must carry `confidence ≥ 8`; 🔴 requires an explicit source→sink trace. Missing hardening without a traced sink is NOT a finding.
-- **Load-bearing ordering**:
-  - Wave-1 fans out at T=0 — integration-scanner, Precedents, (when `ManifestChanged`) Dependencies + CVE, and (when `len(PeerPairs) > 0`) the peer-mirror agent dispatch in a single multi-Agent message. integration-scanner AND peer-mirror gate Wave-2 (both feed the Discovery Map Wave-2 consumes); **Precedents is a hard gate on Step 5** (its follow-up-within-30-days counts drive severity weighting; reconciling without them produces mis-weighted severities the verification pass cannot correct); Dependencies + CVE soft-gate Step 5.
-  - Step 4a (Predicate-Trace) and 4b (Interaction Sweep) dispatch in parallel once Wave-2 completes; 4c (Gap-Finder) is orchestrator-side coverage arithmetic — no agent. Interaction Sweep (4b) receives Quality's `Predicate-set coherence` table as its predicate-row source, not 4a's output.
-  - When Quality's `Predicate-set coherence` surface returns ≥2 rows with mismatched values on the same enum/type, the 4b sweep MUST evaluate categories 7–9 against those rows.
-  - **File orientation is load-bearing**: patches MUST use `-U30` (or `-U10` fallback for >1MB patches), never `-U0`. The Discovery Map's semantic file map (clusters + role tags + symbols-touched hint) is the orientation primitive, not per-hunk line ranges. Lens prompts organise findings per file (`### file/path.ext`), not per hunk. Agents SHOULD NOT issue extra `Read` calls for files already represented in the patch unless specifically needed for a cross-file trace.
-  - **Wave-2 context isolation**: Quality and Security prompts MUST NOT include Wave-1 background-agent output (precedent-locator, Dependencies, CVE) even when those agents have finished before Wave-2 dispatches. Summary context from those agents causes the lens agents to narrativise instead of independently analyse the diff — the observed failure mode is a ~5× speedup coupled with hallucinated findings and mis-cited line numbers. Pass only Discovery Map + patch file path.
-  - ALWAYS emit `## Pre-Adjudication Findings` to the main branch BEFORE calling `advisor()` — advisor reads `getBranch()` (main-thread-only, `packages/rpiv-advisor/advisor.ts:336`).
-  - ALWAYS probe advisor availability before calling it (strip-when-unconfigured at `packages/rpiv-advisor/advisor.ts:463-472`).
-  - NEVER call `advisor()` from a sub-agent (branch invisible to advisor).
-  - NEVER parse advisor prose — paste verbatim as a blockquote at the top of `## Recommendation`.
-  - ALWAYS wait for 4a / 4b AND the Precedents agent to complete before Step 5 — Wave-3's hard barrier. 4c is synchronous (orchestrator). Dependencies + CVE wait here too when running, but are not individually hard-gated.
-  - ALWAYS run Step 6 (verification pass) between reconciliation and artifact write. It is the only mechanism that catches lens agents asserting claims they never opened a file to confirm, and the only mechanism that validates `resolved-by` annotations against the actual branch via `git merge-base --is-ancestor`. Skipping Step 6 silently re-admits the failure mode this skill was designed to prevent.
-  - PRESERVE severity emoji/naming and frontmatter keys verbatim — `artifacts-locator` / `artifacts-analyzer` grep these.
-  - Bundled row-only specialists at narrativisation-prone sites: `diff-auditor` (Wave-2 Q+S), `peer-comparator` (Wave-1 PM), `claim-verifier` (Step 6). See `.rpiv/guidance/agents/architecture.md`.
-  - **Scope strategy is load-bearing at both ends**: Step 1 sets `strategy` and `FP_FLAG`; Step 6 pre-filters the reconciled severity map against `InScopeFiles` before `claim-verifier` dispatch. `--first-parent` is orthogonal to `--no-merges` / `-U30` — additive, not a replacement. Agent contracts (`claim-verifier.md:11-30` in particular) stay scope-blind by design; orchestrator owns scope.
+- **Load-bearing invariants** (each is enforced in the cited step; this is the do-not-break checklist):
+  - Wave-1 fans out at T=0; integration-scanner + peer-mirror gate Wave-2; Precedents is a **hard gate on Step 5** (drives severity weighting); Dependencies + CVE soft-gate Step 5 (Steps 2, 5).
+  - Wave-3: 4a + 4b dispatch in parallel after Wave-2, 4c is inline arithmetic; wait for 4a/4b + Precedents before Step 5. 4b evaluates categories 7–9 whenever Quality returns ≥2 mismatched predicate rows (Step 4).
+  - Patches use `-U30` (never `-U0`; `-U10` fallback >1MB); findings organise per file, not per hunk (Step 1, lenses).
+  - **Wave-2 isolation**: lens prompts carry Discovery Map + patch path ONLY — no Wave-1 raw output. Violation → narrativisation (~5× speedup, hallucinated/mis-cited findings) (Step 3).
+  - Step 6 verification runs between reconcile and write — never skip it; it also validates `resolved-by` via `git merge-base --is-ancestor` (Step 6).
+  - Advisor: emit `## Pre-Adjudication Findings` to the main branch before `advisor()` (reads `getBranch()`, main-thread-only, `advisor.ts:336`); probe availability first (`advisor.ts:463-472`); NEVER call from a sub-agent or parse its prose (paste verbatim).
+  - PRESERVE severity emoji + frontmatter keys verbatim — `artifacts-locator`/`artifacts-analyzer` grep these. Scope is orchestrator-owned; agent contracts (`claim-verifier.md:11-30`) stay scope-blind.
+- **Row-only specialists** at narrativisation-prone sites: `diff-auditor` (Wave-2 Q+S), `peer-comparator` (Wave-1 PM), `claim-verifier` (Step 6). See `.rpiv/guidance/agents/architecture.md`.
 - **Agent roles**:
   - `integration-scanner` (Wave-1) — inbound/outbound refs, auth-boundary crossings.
   - `precedent-locator` (Wave-1) — git history + `.rpiv/artifacts/`.
