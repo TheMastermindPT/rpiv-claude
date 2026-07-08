@@ -55,15 +55,39 @@ const hasBin = (bin) => has(`node_modules/.bin/${bin}`) || has(`node_modules/.bi
 const installed = (dep, bin = dep) => Boolean(deps[dep]) || hasBin(bin);
 const scriptMatching = (re) =>
 	Object.keys(scripts).find((k) => re.test(k) || re.test(String(scripts[k]))) ?? "";
-// Detect a CLI binary on PATH (for tools shipped as a self-contained binary, e.g. jscpd v5
-// — a Rust binary, NOT a node module). A `--version` probe is instant + read-only.
-const binAvailable = (names) => {
-	for (const n of names) {
+// Detect a Python package via pip (for tools like sqlfluff that aren't on PATH
+// but are installed as pip packages). Checks pip show <pkg> via python/pip binary.
+const pipAvailable = (pkg) => {
+	for (const py of ["python", "python3"]) {
 		try {
-			execFileSync(n, ["--version"], { stdio: "ignore", timeout: 8000, shell: process.platform === "win32" });
+			execFileSync(py, ["-m", "pip", "show", pkg], { stdio: "pipe", timeout: 8000, shell: process.platform === "win32" });
+			return py;
+		} catch {
+			/* not installed */
+		}
+	}
+	try {
+		execFileSync("pip", ["show", pkg], { stdio: "pipe", timeout: 8000, shell: process.platform === "win32" });
+		return "pip";
+	} catch {
+		/* not installed */
+	}
+	return "";
+};
+
+// Detect a self-contained binary. Checks PATH first, then project-local directories.
+// Accepts: binAvailable(["name"]) or binAvailable(["name"], { args: ["version"], local: ["bin/name"] }).
+// For tools with non-standard version flags (e.g. atlas uses "version" not "--version").
+const binAvailable = (names, opts = {}) => {
+	const args = opts.args || ["--version"];
+	const local = opts.local || [];
+	const candidates = [...names.map((n) => ({ n, abs: n })), ...local.map((p) => ({ n: p, abs: join(root, p) }))];
+	for (const { n, abs } of candidates) {
+		try {
+			execFileSync(abs, args, { stdio: "pipe", timeout: 8000, shell: process.platform === "win32" });
 			return n;
 		} catch {
-			/* not on PATH */
+			/* not found at this location */
 		}
 	}
 	return "";
@@ -241,6 +265,47 @@ row("opengrep", "L/M",
 		...(opengrepBin ? [] : ["hint=install opengrep (sharpens deep-review Security via stock rules)"]),
 	]);
 
+// ast-grep arch-lint pack -> G/Lc/D/C/M/S/Fe/A. Scans the target with curated
+// architectural rules (missing abstractions, duplicate shapes, code smells).
+// Config: tools/arch-lint/sgconfig.yml
+const astgrepArchCfg = firstFile(["tools/arch-lint/sgconfig.yml"]);
+const astgrepArch = astgrepBin && astgrepArchCfg ? "configured" : "absent";
+row("ast-grep/arch-lint", "G/Lc/D/C/M/S/Fe/A", astgrepArch,
+	astgrepArch === "configured"
+		? [`config=${astgrepArchCfg}`]
+		: ["hint=create tools/arch-lint/sgconfig.yml with curated arch rules"]);
+
+// opengrep arch-lint pack -> Sec/M. Taint-aware security and missing-abstraction
+// rules. Config: tools/arch-lint/opengrep/ directory with .yml rules.
+const opengrepArchDir = firstFile(["tools/arch-lint/opengrep"]);
+const opengrepArch = opengrepBin && opengrepArchDir ? "configured" : "absent";
+row("opengrep/arch-lint", "Sec/M", opengrepArch,
+	opengrepArch === "configured"
+		? [`dir=${opengrepArchDir}`]
+		: ["hint=create tools/arch-lint/opengrep/ with taint and security rules"]);
+
+// SQLFluff → Db/P (SQL migration linting). Detects pip-installed sqlfluff + migration
+// directory or ORM config. Project-agnostic: works for Supabase, Prisma, Drizzle, Knex.
+const sqlfluffBin = binAvailable(["sqlfluff"]) || pipAvailable("sqlfluff");
+const migrationDir = firstFile(["supabase/migrations/", "prisma/", "migrations/"]);
+const ormConfig = firstFile(["prisma/schema.prisma", "drizzle.config.ts", "drizzle.config.js", "knexfile.ts", "knexfile.js"]);
+const hasDbSurface = Boolean(migrationDir || ormConfig);
+const sqlfluffStatus = sqlfluffBin && hasDbSurface ? "configured" : (sqlfluffBin ? "installed" : "absent");
+row("sqlfluff", "Db/P", sqlfluffStatus,
+	sqlfluffStatus === "configured" ? [`bin=${sqlfluffBin}`, `migrations=${migrationDir || ormConfig}`] :
+	sqlfluffStatus === "installed" ? [`bin=${sqlfluffBin}`, "hint=add migrations/ directory or ORM config"] :
+	["hint=pip install sqlfluff (SQL linting for migration files)"]);
+
+// Atlas → Db/P (schema management). Detects standalone binary + DB surface.
+// Atlas uses `atlas version` (subcommand), not `--version` (flag). Also checks
+// project-local install (common for standalone binaries downloaded manually).
+const atlasBin = binAvailable(["atlas"], { args: ["version"], local: ["bin/atlas", "bin/atlas.exe"] });
+const atlasStatus = atlasBin && hasDbSurface ? "configured" : (atlasBin ? "installed" : "absent");
+row("atlas", "Db/P", atlasStatus,
+	atlasStatus === "configured" ? [`bin=${atlasBin}`] :
+	atlasStatus === "installed" ? [`bin=${atlasBin}`, "hint=add migrations/ directory or ORM config"] :
+	["hint=install atlas (atlasgo.io — schema migration management)"]);
+
 // rg (ripgrep) -> search. No project config by convention (config is the RIPGREP_CONFIG_PATH
 // env var, not a tracked file) -> installed | absent only. Orchestrator prefers rg over literal grep/find.
 const rgBin = binAvailable(["rg"]);
@@ -250,6 +315,9 @@ row("rg", "search", rgBin ? "installed" : "absent",
 // --- Report status summary (drives the checkpoint) -------------------------
 const covRpt = covReport ? "present" : "absent";
 const mutRpt = strykerReport ? "present" : "absent";
+const archAstRpt = astgrepArch === "configured" ? "present" : "absent";
+const archOgRpt = opengrepArch === "configured" ? "present" : "absent";
+const dbRpt = hasDbSurface ? "present" : "absent";
 
-process.stdout.write(`root:      ${root}\necosystem: ${ecosystem}\n---tool-coverage---\n${out.join("\n")}\n---report-status---\ncoverage: ${covRpt}\nmutation: ${mutRpt}\n`);
+process.stdout.write(`root:      ${root}\necosystem: ${ecosystem}\n---tool-coverage---\n${out.join("\n")}\n---report-status---\ncoverage: ${covRpt}\nmutation: ${mutRpt}\narch-lint-ast: ${archAstRpt}\narch-lint-og: ${archOgRpt}\ndb-tools: ${dbRpt}\n`);
 process.exit(0);

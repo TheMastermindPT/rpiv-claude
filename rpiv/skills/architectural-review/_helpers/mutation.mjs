@@ -24,8 +24,8 @@
 // signal rather than evidence of clean code.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 const safe = (args, fb = "") => {
 	try {
@@ -53,29 +53,21 @@ const SRC_EXT = new Set([
 const isSrc = (p) => SRC_EXT.has(p.slice(p.lastIndexOf(".") + 1).toLowerCase());
 const isTest = (p) => /\.(test|spec)\.[a-z]+$/i.test(p) || /(^|\/)__tests__\//.test(p);
 
-// Walk the target directory to collect source files (exclude tests, declarations, generated).
+// Enumerate tracked source files under the target (exclude tests, declarations).
 /** Returns true if a file is an eligible mutation target (source code, not test/declaration). */
 const isEligible = (p, rp) => isSrc(p) && !isTest(rp) && !rp.endsWith(".d.ts");
 
+// Tracked files only, via git — same idiom as metrics.mjs. Bounds the enumeration
+// to the repository: an arbitrary argv target can never walk outside the root,
+// and node_modules/.git never appear because they are not tracked.
 const collectSrc = (dir) => {
-	const src = [];
-	const abs = join(root, dir);
-	if (!existsSync(abs)) return src;
-	try {
-		for (const entry of readdirSync(abs, { withFileTypes: true })) {
-			const p = join(abs, entry.name);
-			const rp = toPosix(relative(root, p));
-			if (entry.isDirectory()) {
-				if (entry.name === "node_modules" || entry.name === ".git") continue;
-				src.push(...collectSrc(rp));
-			} else if (entry.isFile() && isEligible(p, rp)) {
-				src.push(rp);
-			}
-		}
-	} catch {
-		/* permission error — return what we have */
-	}
-	return src;
+	const raw = safe(["-C", root, "ls-files", "-z", "--", dir]);
+	if (!raw) return [];
+	return raw
+		.split("\0")
+		.filter(Boolean)
+		.map(toPosix)
+		.filter((rp) => isEligible(rp, rp));
 };
 
 // Find a StrykerJS mutation report (ordered by preference: scoped → full → fallback).

@@ -23,10 +23,15 @@ const safe = (args, fb) => {
 	}
 };
 
+// Strip control characters (newlines/tabs/etc.) from a git value before it is emitted.
+// This output reaches Claude's context via the bootstrap-session SessionStart hook, and a
+// branch name is the one field here influenced by repository state, so keep it single-line.
+const clean = (s) => Array.from(String(s), (ch) => (ch.codePointAt(0) < 0x20 || ch.codePointAt(0) === 0x7f ? " " : ch)).join("").trim();
+
 const root = safe(["rev-parse", "--show-toplevel"], "");
 process.stdout.write(
 	[
-		`branch: ${safe(["branch", "--show-current"], "no-branch")}`,
+		`branch: ${clean(safe(["branch", "--show-current"], "no-branch"))}`,
 		`commit: ${safe(["rev-parse", "--short", "HEAD"], "no-commit")}`,
 		`repo: ${root ? basename(root) : "unknown"}`,
 		`root: ${root}`,

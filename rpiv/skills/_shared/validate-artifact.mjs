@@ -34,19 +34,29 @@ import { fileURLToPath } from "node:url";
 
 import { splitFrontmatter } from "./regen-decisions-index.mjs";
 
-// Present in every artifact template's frontmatter. `tags`, `type`, `parent` vary by type and are
-// NOT required here (the chain is design->plan->validate, not pipeline-wide — see the critique).
-const REQUIRED_FRONTMATTER = [
-	"date",
-	"author",
-	"commit",
-	"branch",
-	"repository",
-	"topic",
-	"status",
-	"last_updated",
-	"last_updated_by",
-];
+// Universal core — every artifact template's frontmatter carries these.
+const CORE_REQUIRED = ["date", "author", "commit", "branch", "repository", "status"];
+
+// Extra required fields per artifact kind, keyed by the directory segment under
+// `artifacts/` (or "test-cases"). A kind absent here requires only CORE. Derived from
+// each kind's actual template — do NOT list a field a kind's template does not emit.
+// (The old flat list required `topic`/`last_updated`/`last_updated_by` of everything,
+// but review/design/research/plan/annotate templates emit none of them — so every such
+// artifact failed with false-positive "missing frontmatter field" errors. This surfaced
+// only once validate-on-write actually began firing at save time.)
+const KIND_EXTRA_REQUIRED = {
+	discover: ["topic", "last_updated", "last_updated_by"],
+	validation: ["topic", "last_updated", "last_updated_by"],
+	"architecture-reviews": ["last_updated", "last_updated_by"],
+};
+
+/** Artifact kind = the path segment under `artifacts/`, or "test-cases", else "". */
+function artifactKind(artifactPath) {
+	const p = artifactPath.replaceAll("\\", "/");
+	const m = p.match(/\/artifacts\/([^/]+)\//);
+	if (m) return m[1];
+	return /(?:^|\/)test-cases\//.test(p) ? "test-cases" : "";
+}
 
 /** Remove fenced ```blocks``` and `inline code` so prose scans don't false-positive on code. */
 function stripCode(body) {
@@ -72,8 +82,9 @@ export function validateArtifact(artifactPath, root, { verifyHash = true, finali
 	const text = readFileSync(artifactPath, "utf-8");
 	const { fm, body } = splitFrontmatter(text);
 
-	// 1. Required frontmatter fields.
-	for (const key of REQUIRED_FRONTMATTER) {
+	// 1. Required frontmatter fields — universal core plus any extras for this artifact kind.
+	const required = [...CORE_REQUIRED, ...(KIND_EXTRA_REQUIRED[artifactKind(artifactPath)] ?? [])];
+	for (const key of required) {
 		if (!fm[key] || fm[key].trim() === "") errors.push(`missing frontmatter field: ${key}`);
 	}
 
