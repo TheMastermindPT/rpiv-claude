@@ -13,28 +13,11 @@
 //
 // Missing model: always warns (falls back to parent model, unpredictable).
 
-import { readFileSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
+
+import { readAgentFrontmatter } from "./_shared.mjs";
 
 // ---- helpers -------------------------------------------------------------------
-
-/** Parse YAML-like frontmatter between --- markers. Returns { fm: Record, body: string }. */
-function splitFrontmatter(text) {
-  if (!text.startsWith("---")) return { fm: {}, body: text };
-  const end = text.indexOf("\n---", 3);
-  if (end === -1) return { fm: {}, body: text };
-  const fmBlock = text.slice(4, end);
-  const fm = {};
-  for (const line of fmBlock.split("\n")) {
-    const colon = line.indexOf(":");
-    if (colon === -1) continue;
-    const key = line.slice(0, colon).trim();
-    const val = line.slice(colon + 1).trim();
-    if (key) fm[key] = val;
-  }
-  return { fm, body: text.slice(end + 4) };
-}
 
 /** Resolve numeric tier from a model name string. */
 const MODEL_TIER = { haiku: 1, sonnet: 2, opus: 3, fable: 4 };
@@ -56,13 +39,6 @@ function readStdin() {
   } catch {
     return {};
   }
-}
-
-/** Read an rpiv agent's frontmatter, or null if the agent doesn't exist. */
-function readAgentFm(agentType, agentsDir) {
-  const agentFile = join(agentsDir, `${agentType}.md`);
-  if (!existsSync(agentFile)) return null;
-  return splitFrontmatter(readFileSync(agentFile, "utf-8")).fm;
 }
 
 // ---- policy checks (side-effect: write warnings/notes to stderr) ----------------
@@ -107,9 +83,7 @@ function main() {
   const agentType = input.agent_type;
   if (!agentType) return;
 
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  const agentsDir = process.env.RPIV_AGENTS_DIR || join(__dirname, "..", "..", "agents");
-  const fm = readAgentFm(agentType, agentsDir);
+  const fm = readAgentFrontmatter(agentType);
   if (!fm) return;
 
   const model = fm.model || null;

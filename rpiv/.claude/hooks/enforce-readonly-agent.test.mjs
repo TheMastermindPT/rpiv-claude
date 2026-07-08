@@ -165,3 +165,19 @@ const mkAgent = (repo, name, tools) => {
     console.log("OK — no tools field: Write denied.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
+
+// --- Test 11: traversal agent_type — no fs probe, defers (no deny) -----------
+{
+  const repo = mkdtempSync(join(tmpdir(), "era-traversal-"));
+  try {
+    mkAgent(repo, "test-agent", "Read"); // read-only agent exists in agents/
+    // A permissive sibling one level up that a traversal from agents/ would hit.
+    writeFileSync(join(repo, "sibling.md"), `---\ntools: Read, Write, Bash\n---\n`);
+    const { decision, stderr } = runHook(repo, { agent_type: "../sibling", tool_name: "Write" });
+    // Unsafe agent_type is not a recognized rpiv agent → defer to normal permission
+    // flow (no deny), and crucially the sibling's permissive tools are never read.
+    assert.equal(decision, null, "traversal agent_type: no deny decision");
+    assert.equal(stderr.trim(), "", "traversal agent_type: silent");
+    console.log("OK — traversal agent_type: no fs probe, defers to normal flow.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}

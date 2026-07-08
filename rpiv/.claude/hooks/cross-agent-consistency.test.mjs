@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -124,6 +124,33 @@ const runInRepo = (repo, stdin) =>
     const tss = state.batches.map((b) => new Date(b.ts).getTime());
     assert.ok(tss.every((t, i) => i === 0 || t >= tss[i - 1]), "batches are chronological");
     console.log("OK — state file pruned to last 10 batches.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}
+
+// --- Test 6b: stale batches (older than the TTL) are dropped on load ----------
+
+{
+  const repo = mkdtempSync(join(tmpdir(), "cac-ttl-"));
+  try {
+    const stateDir = join(repo, ".rpiv", ".claude");
+    mkdirSync(stateDir, { recursive: true });
+    // Seed one batch from two days ago (past the 24h TTL) plus one fresh.
+    const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+    writeFileSync(join(stateDir, "agent-batch-state.json"), JSON.stringify({
+      batches: [
+        { ts: twoDaysAgo, agentCount: 9, filesTouched: ["lib/old.ts"], conflictCount: 0 },
+      ],
+    }));
+    runInRepo(repo, {
+      tool_calls: [
+        { tool_name: "Agent", agent_type: "diff-auditor", result: "lib/new.ts is clean" },
+        { tool_name: "Agent", agent_type: "codebase-analyzer", result: "lib/new.ts is clean" },
+      ],
+    });
+    const state = JSON.parse(readFileSync(join(stateDir, "agent-batch-state.json"), "utf-8"));
+    assert.equal(state.batches.length, 1, "stale batch dropped, only the fresh one remains");
+    assert.equal(state.batches[0].agentCount, 2, "surviving batch is the fresh run");
+    console.log("OK — stale batches (older than 24h) dropped on load.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
 

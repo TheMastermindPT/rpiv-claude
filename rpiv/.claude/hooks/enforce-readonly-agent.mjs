@@ -15,27 +15,11 @@
 //
 // Reads PreToolUse JSON from stdin. Returns deny decisions as JSON on stdout.
 
-import { readFileSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
+
+import { readAgentFrontmatter } from "./_shared.mjs";
 
 // ---- helpers -------------------------------------------------------------------
-
-function splitFrontmatter(text) {
-  if (!text.startsWith("---")) return { fm: {}, body: text };
-  const end = text.indexOf("\n---", 3);
-  if (end === -1) return { fm: {}, body: text };
-  const fmBlock = text.slice(4, end);
-  const fm = {};
-  for (const line of fmBlock.split("\n")) {
-    const colon = line.indexOf(":");
-    if (colon === -1) continue;
-    const key = line.slice(0, colon).trim();
-    const val = line.slice(colon + 1).trim();
-    if (key) fm[key] = val;
-  }
-  return { fm };
-}
 
 function parseTools(toolsStr) {
   if (!toolsStr) return [];
@@ -125,12 +109,13 @@ function main() {
   const agentType = input.agent_type;
   if (!agentType) return; // main session — allow everything
 
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  const agentsDir = process.env.RPIV_AGENTS_DIR || join(__dirname, "..", "..", "agents");
-  const agentFile = join(agentsDir, `${agentType}.md`);
-  if (!existsSync(agentFile)) return; // not an rpiv agent — allow
+  // Not a recognized rpiv agent (unknown name or an unsafe/traversal agent_type):
+  // this hook only governs known rpiv subagents, so defer to the normal permission
+  // flow rather than deny. agent_type is validated inside readAgentFrontmatter before
+  // any filesystem access.
+  const fm = readAgentFrontmatter(agentType);
+  if (!fm) return;
 
-  const { fm } = splitFrontmatter(readFileSync(agentFile, "utf-8"));
   const allowedTools = parseTools(fm.tools);
   const toolName = input.tool_name;
   if (!toolName) return;

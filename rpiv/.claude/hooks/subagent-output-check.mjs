@@ -6,27 +6,11 @@
 //
 // Reads SubagentStop JSON from stdin.
 
-import { readFileSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
+
+import { readAgentFrontmatter } from "./_shared.mjs";
 
 // ---- helpers -------------------------------------------------------------------
-
-function splitFrontmatter(text) {
-  if (!text.startsWith("---")) return { fm: {} };
-  const end = text.indexOf("\n---", 3);
-  if (end === -1) return { fm: {} };
-  const fmBlock = text.slice(4, end);
-  const fm = {};
-  for (const line of fmBlock.split("\n")) {
-    const colon = line.indexOf(":");
-    if (colon === -1) continue;
-    const key = line.slice(0, colon).trim();
-    const val = line.slice(colon + 1).trim();
-    if (key) fm[key] = val;
-  }
-  return { fm };
-}
 
 // Agents that always produce structured output.
 const STRUCTURED_AGENTS = {
@@ -99,12 +83,8 @@ function main() {
   const agentType = input.agent_type;
   if (!agentType) return;
 
-  const __dirname = dirname(fileURLToPath(import.meta.url));
-  const agentsDir = process.env.RPIV_AGENTS_DIR || join(__dirname, "..", "..", "agents");
-  const agentFile = join(agentsDir, `${agentType}.md`);
-  if (!existsSync(agentFile)) return;
-
-  const { fm } = splitFrontmatter(readFileSync(agentFile, "utf-8"));
+  const fm = readAgentFrontmatter(agentType);
+  if (!fm) return;
   const effort = fm.effort || "medium";
   const result = input.result || "";
 

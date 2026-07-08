@@ -8,17 +8,28 @@
 // State file: <project>/.rpiv/.claude/agent-batch-state.json
 // Advisory only — warns on stderr, never blocks.
 
-import { readFileSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 // ---- state management ----------------------------------------------------------
 
 const STATE_DIR = join(process.env.CLAUDE_PROJECT_DIR || process.cwd(), ".rpiv", ".claude");
 
+// Batches older than this are dropped on load — the file persists across sessions, so
+// without a TTL a batch from days ago could linger until the 10-entry cap evicts it.
+const MAX_BATCH_AGE_MS = 24 * 60 * 60 * 1000;
+
 function loadState() {
   const f = join(STATE_DIR, "agent-batch-state.json");
-  try { return JSON.parse(readFileSync(f, "utf-8")); } catch { return { batches: [] }; }
+  let state;
+  try { state = JSON.parse(readFileSync(f, "utf-8")); } catch { return { batches: [] }; }
+  if (!state || !Array.isArray(state.batches)) return { batches: [] };
+  const cutoff = Date.now() - MAX_BATCH_AGE_MS;
+  state.batches = state.batches.filter((b) => {
+    const t = Date.parse(b?.ts);
+    return Number.isFinite(t) && t >= cutoff;
+  });
+  return state;
 }
 
 function saveState(state) {
