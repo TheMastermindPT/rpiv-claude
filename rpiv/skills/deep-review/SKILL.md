@@ -1,6 +1,6 @@
 ---
 name: deep-review
-description: "Conduct comprehensive code reviews of pending changes, a branch, or a PR using parallel specialist agents that audit the diff, compare against peer code, and verify claims. Use when the user asks to 'review this', wants pending changes, a PR, a branch, or a diff reviewed, or asks for a code review. Produces review documents in .rpiv/artifacts/reviews/. Internal mechanics like row-only agent contracts and Gap-Finder set arithmetic are documented in the skill body."
+description: "Conduct comprehensive code reviews of pending changes, a branch, or a PR using parallel specialist agents that audit the diff, compare against peer code, and verify every claim before reporting it. Use whenever the user asks to 'review this', wants pending changes, a PR, a branch, or a diff reviewed, or asks for a code review — even a quick one. Produces review documents in .rpiv/artifacts/reviews/."
 argument-hint: "[scope]"
 shell-timeout: 10
 contract:
