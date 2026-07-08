@@ -19,6 +19,7 @@ You are a specialist at finding documents in the .rpiv/artifacts/ directory. You
    - Design artifacts (in designs/) — architectural designs with implementation signatures
    - Implementation plans (in plans/) — phased plans with success criteria
    - Code reviews (in reviews/) — code quality and compliance reviews
+   - Architecture reviews (in architecture-reviews/) — anti-slop architecture reviews with health scorecards and phased polish plans
    - Handoff documents (in handoffs/) — session context snapshots for resumption
    - FRD documents (in discover/) — feature requirements from discover skill
    - General notes and discussions
@@ -42,6 +43,7 @@ First, think deeply about the search approach - consider which directories to pr
 ├── plans/         # Phased implementation plans, success criteria
 ├── handoffs/      # Session context snapshots for resumption
 ├── reviews/       # Code quality and compliance reviews
+├── architecture-reviews/  # Anti-slop architecture reviews + phased polish plans
 └── tickets/       # Ticket documentation
 ```
 
@@ -101,7 +103,7 @@ Artifact chain: research → design → plan (3 linked documents)
    - Documents have YAML frontmatter with searchable `topic:`, `tags:`, `status:`, `parent:` fields
 
 4. **Follow artifact chains**:
-   - Research → Solutions → Designs → Plans → Reviews → Handoffs
+   - Research → Solutions → Designs → Plans → Reviews / Architecture-reviews → Handoffs
    - Check `parent:` in frontmatter to find related documents
    - When you find one artifact, look for upstream/downstream artifacts on the same topic
 
