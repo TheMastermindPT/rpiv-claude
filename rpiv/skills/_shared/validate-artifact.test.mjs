@@ -50,6 +50,11 @@ try {
 	assert.ok(r.errors.some((e) => e.includes("{plan path}")), `prose token is an error: ${r.errors}`);
 	r = validateArtifact(write("tokfence.md", artifact({}, "\n```ts\nconst x = {plan: 1};\n```\n")), root);
 	assert.ok(!r.errors.some((e) => e.includes("template token")), `token in a code fence is ignored: ${r.errors}`);
+	// a quoted JS template literal whose nested backtick breaks the inline-span stripper
+	// (real case: an arch-review artifact quoting `appliedRules.add(`limitation:${region}`)`)
+	// must NOT read as an unfilled artifact token — artifact placeholders are never $-prefixed
+	r = validateArtifact(write("tokjs.md", artifact({}, "\nsee `appliedRules.add(`limitation:${region}:${severity}`)`) in the loop\n")), root);
+	assert.ok(!r.errors.some((e) => e.includes("template token")), `quoted \${...} template literal is not an artifact token: ${r.errors}`);
 
 	// tokens are only enforced once status: ready (a draft may still hold them) ...
 	const draftPath = write("draft.md", artifact({ status: "in-progress" }, "\nfill {plan path}\n"));

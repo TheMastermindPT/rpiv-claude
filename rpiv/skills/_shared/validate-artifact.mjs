@@ -95,9 +95,12 @@ export function validateArtifact(artifactPath, root, { verifyHash = true, finali
 	const finalizingOrReady = fm.status === "ready" || finalizing;
 	const prose = stripCode(body);
 
-	// 2. Unfilled template tokens in prose.
+	// 2. Unfilled template tokens in prose. `$`-prefixed braces are JS template-literal
+	// syntax quoted from source code (a nested backtick inside an inline code span breaks
+	// stripCode's span regex and leaks e.g. `${region}` into "prose") — artifact
+	// placeholders are never $-prefixed, so exclude them.
 	if (finalizingOrReady) {
-		const tokens = prose.match(/\{[a-zA-Z][^{}\n]{0,50}\}/g) ?? [];
+		const tokens = prose.match(/(?<!\$)\{[a-zA-Z][^{}\n]{0,50}\}/g) ?? [];
 		for (const t of new Set(tokens)) errors.push(`unfilled template token in prose: ${t}`);
 	}
 
