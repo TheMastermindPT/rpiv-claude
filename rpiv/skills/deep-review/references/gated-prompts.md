@@ -29,6 +29,19 @@
   Output format: markdown table per pair, heading `### Peer pair: <new_file> ↔ <peer_file>`. No prose outside the tables. No severity. No recommendations. Citation contract applies to every cell.
   ```
 
+## Sink-candidate sweep (Wave-1 — gate: opengrep unavailable; agent: `diff-auditor`)
+
+  ```
+  Mechanical sink-candidate sweep. Patch: <patch_path> (unified diff, -U30).
+
+  Match these pattern classes on added/modified lines only. Emit one row per hit in your standard format; pattern-id = the class name. Candidates only — no reachability, no confidence, no severity.
+
+  - command-exec — process/shell spawn with a variable or interpolation in the command: `exec(`, `execSync(`, `spawn(` with `shell:`, `subprocess.run(`/`Popen(` with `shell=True`, `os.system(`, `Runtime.exec`, backtick or `$()` shell interpolation containing a variable.
+  - path-traversal — filesystem API whose path argument concatenates or interpolates a variable: `readFile`/`writeFile`/`createReadStream`/`sendFile`/`open(` with `+` or `${...}` in the path argument, `path.join(` with a request/user/param-named variable.
+  - ssrf — outbound request with a variable or interpolated URL/host: `fetch(`, `axios`, `http.get(`/`https.get(`, `request(`, `urllib`, `HttpClient` where the URL argument is not a plain string literal.
+  - secrets-in-diff — literal credential material: assignment of a name containing KEY/SECRET/TOKEN/PASSWORD/PASSWD to a quoted literal of 12+ chars, `-----BEGIN ... PRIVATE KEY-----` blocks, connection strings carrying `://user:pass@`.
+  ```
+
 ## Dependencies (Wave-1 — gate: `ManifestChanged`; agent: `codebase-analyzer`)
 
 **Dependencies lens** (`codebase-analyzer`, only when `ManifestChanged`; otherwise SKIP and omit `### Dependencies` in artifact). **Prefer Knip for dependency audit:** When Knip ran at the Pre-Wave-1 gate AND `ManifestChanged`, use its output as the primary dependency signal:
