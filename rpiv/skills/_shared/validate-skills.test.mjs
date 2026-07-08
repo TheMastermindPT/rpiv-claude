@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { danglingReferences, referencedAgents } from "./validate-skills.mjs";
+import { danglingReferences, referencedAgents, referenceIntegrity } from "./validate-skills.mjs";
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "validate-skills.mjs");
 
@@ -54,7 +54,57 @@ try {
 		"CLI exits nonzero on a dangling reference",
 	);
 
-	console.log("OK (validate-skills) — parsing, resolution, dangling detection, CLI gate.");
+	// reference-integrity: clean skill (mentioned reference exists, placeholder paired) -> no problems
+	mkdirSync(join(root, "skills", "demo", "references"), { recursive: true });
+	writeFileSync(join(root, "skills", "demo", "references", "surfaces.md"), "content\n");
+	writeFileSync(
+		join(root, "skills", "demo", "SKILL.md"),
+		'Dispatch subagent_type: "scope-tracer".\nRead `references/surfaces.md` and substitute it for the `{{SURFACES}}` line.\n  {{SURFACES}}\n',
+	);
+	assert.deepEqual(referenceIntegrity(root), [], "existing reference + paired placeholder are clean");
+
+	// dangling reference-file mention -> flagged + CLI exit 1
+	writeFileSync(
+		join(root, "skills", "demo", "SKILL.md"),
+		'Dispatch subagent_type: "scope-tracer".\nRead `references/surfaces.md` and `references/ghost.md`, substitute for `{{SURFACES}}`.\n  {{SURFACES}}\n',
+	);
+	let problems = referenceIntegrity(root);
+	assert.equal(problems.length, 1, `one dangling reference file: ${JSON.stringify(problems)}`);
+	assert.equal(problems[0].kind, "dangling-reference");
+	assert.throws(
+		() => execFileSync("node", [SCRIPT, "--root", root], { stdio: "pipe" }),
+		/reference-integrity/,
+		"CLI exits nonzero on a dangling reference file",
+	);
+
+	// orphan reference file (exists, never mentioned) -> flagged
+	writeFileSync(join(root, "skills", "demo", "SKILL.md"), 'Dispatch subagent_type: "scope-tracer". No references here.\n');
+	problems = referenceIntegrity(root);
+	assert.equal(problems.length, 1, `one orphan: ${JSON.stringify(problems)}`);
+	assert.equal(problems[0].kind, "orphan-reference");
+
+	// unpaired placeholder (appears once — instruction or substitution site was lost) -> flagged
+	writeFileSync(
+		join(root, "skills", "demo", "SKILL.md"),
+		'Dispatch subagent_type: "scope-tracer".\nRead `references/surfaces.md`.\n  {{SURFACES}}\n',
+	);
+	problems = referenceIntegrity(root);
+	assert.equal(problems.length, 1, `one unpaired placeholder: ${JSON.stringify(problems)}`);
+	assert.equal(problems[0].kind, "unpaired-placeholder");
+
+	// cross-skill mention resolves against the OTHER skill's directory
+	mkdirSync(join(root, "skills", "other"), { recursive: true });
+	writeFileSync(
+		join(root, "skills", "other", "SKILL.md"),
+		"See skills/demo/references/surfaces.md for the shared block.\n",
+	);
+	writeFileSync(
+		join(root, "skills", "demo", "SKILL.md"),
+		'Dispatch subagent_type: "scope-tracer".\nRead `references/surfaces.md`, substitute for `{{SURFACES}}`.\n  {{SURFACES}}\n',
+	);
+	assert.deepEqual(referenceIntegrity(root), [], "cross-skill prefixed mention resolves against its owner");
+
+	console.log("OK (validate-skills) — parsing, resolution, dangling detection, reference integrity, CLI gate.");
 } finally {
 	rmSync(root, { recursive: true, force: true });
 }

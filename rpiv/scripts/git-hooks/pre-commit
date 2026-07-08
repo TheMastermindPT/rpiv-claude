@@ -1,0 +1,19 @@
+#!/bin/sh
+# rpiv pre-commit — deterministic plugin-consistency gate (the db91472 class wants
+# lifecycle enforcement, not prose). Runs only when plugin source is staged.
+#
+# Checks: validate-skills.mjs — dangling subagent_type references AND reference-file
+# integrity (dangling references/*.md pointers, orphan reference files, unpaired
+# {{PLACEHOLDER}} tokens). Fast (<1s); blocks the commit on failure.
+#
+# Install once per clone (cwd = repo root):
+#   git config core.hooksPath rpiv/scripts/git-hooks
+
+if git diff --cached --name-only | grep -qE '^rpiv/(skills|agents)/'; then
+  echo "[pre-commit] plugin source staged — running validate-skills"
+  node rpiv/skills/_shared/validate-skills.mjs || {
+    echo "[pre-commit] validate-skills FAILED — commit blocked" >&2
+    exit 1
+  }
+fi
+exit 0

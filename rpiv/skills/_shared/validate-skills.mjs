@@ -70,6 +70,46 @@ export function danglingReferences(root) {
 	return dangling;
 }
 
+/** Reference-file integrity for progressive-disclosure skills (deep-review, architectural-review).
+ *  Returns [{ skill, kind, detail }] where kind is:
+ *  - `dangling-reference`  — SKILL.md mentions references/<f>.md but the file does not exist
+ *  - `orphan-reference`    — skills/<s>/references/<f>.md exists but its SKILL.md never points to it
+ *  - `unpaired-placeholder`— a `{{TOKEN}}` appears once (a substitution site needs its inline
+ *                            instruction, and vice versa — one occurrence means one of them was lost)
+ *  A mention prefixed `skills/<other>/references/...` resolves against THAT skill's directory. */
+export function referenceIntegrity(root) {
+	const problems = [];
+	const skillsDir = join(root, "skills");
+	if (!existsSync(skillsDir)) return problems;
+	for (const entry of readdirSync(skillsDir)) {
+		const dir = join(skillsDir, entry);
+		if (!statSync(dir).isDirectory()) continue;
+		const skillMd = join(dir, "SKILL.md");
+		if (!existsSync(skillMd)) continue;
+		const text = readFileSync(skillMd, "utf-8");
+		const ownMentions = new Set();
+		for (const m of text.matchAll(/(?:skills\/([\w-]+)\/)?references\/([\w.-]+\.md)/g)) {
+			const owner = m[1] ?? entry;
+			if (owner === entry) ownMentions.add(m[2]);
+			if (!existsSync(join(skillsDir, owner, "references", m[2]))) {
+				problems.push({ skill: entry, kind: "dangling-reference", detail: `${m[0]} mentioned but the file does not exist` });
+			}
+		}
+		const refDir = join(dir, "references");
+		if (existsSync(refDir)) {
+			for (const f of readdirSync(refDir).filter((f) => f.endsWith(".md"))) {
+				if (!ownMentions.has(f)) problems.push({ skill: entry, kind: "orphan-reference", detail: `references/${f} exists but SKILL.md never points to it` });
+			}
+		}
+		const phCounts = new Map();
+		for (const m of text.matchAll(/\{\{([A-Z][A-Z0-9_]*)\}\}/g)) phCounts.set(m[1], (phCounts.get(m[1]) ?? 0) + 1);
+		for (const [ph, n] of phCounts) {
+			if (n < 2) problems.push({ skill: entry, kind: "unpaired-placeholder", detail: `{{${ph}}} appears ${n}x — substitution site and its instruction must both be present` });
+		}
+	}
+	return problems;
+}
+
 // ---- CLI ---------------------------------------------------------------------------------------
 const isMain = (() => {
 	try {
@@ -91,6 +131,14 @@ if (isMain) {
 		process.stderr.write(`\nvalidate-skills: ${dangling.length} dangling agent reference(s)\n`);
 		process.exit(1);
 	}
-	process.stdout.write("validate-skills: OK — every subagent_type resolves to an agent\n");
+	const refProblems = referenceIntegrity(root);
+	if (refProblems.length > 0) {
+		for (const { skill, kind, detail } of refProblems) {
+			process.stderr.write(`ERROR skills/${skill}: ${kind} — ${detail}\n`);
+		}
+		process.stderr.write(`\nvalidate-skills: ${refProblems.length} reference-integrity problem(s)\n`);
+		process.exit(1);
+	}
+	process.stdout.write("validate-skills: OK — every subagent_type resolves to an agent; reference files + placeholders consistent\n");
 	process.exit(0);
 }
