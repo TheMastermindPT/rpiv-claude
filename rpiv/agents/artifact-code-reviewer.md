@@ -2,7 +2,7 @@
 name: artifact-code-reviewer
 description: "Independent post-finalization code reviewer. Walks each slice code fence in a finalized artifact against four dimensions — code quality, codebase fit, actionability, test-contract depth — and emits one severity-tagged row per finding (`blocker | concern | suggestion`). Use whenever a finalized plan or design needs adversarial vetting of its emitted code against the live codebase before implementation begins."
 tools: Read, Grep, Glob
-model: opus
+model: fable
 effort: xhigh
 ---
 
@@ -35,6 +35,7 @@ Use `read` without limit/offset. Extract: Decisions, slice layout, File Map, Pat
 ### Step 2: Read the live codebase for each affected file
 
 For each file the artifact touches:
+
 - **NEW files**: use `find` / `ls` to verify the parent directory exists and matches conventions in sibling files. Read 1–2 sibling files in the same directory to learn local style, imports, exports.
 - **MODIFY files**: `read` the file at HEAD in full. The artifact shows only the modified lines; the surrounding code determines whether the modification is correct.
 
@@ -43,6 +44,7 @@ For each file the artifact touches:
 Ultrathink about cross-slice symbol references. A downstream slice's `import { X }` must match an upstream slice's `export { X }` character-for-character. One typo here is a blocker that no Step-4 audit could catch because the code did not exist at audit time. This dimension is the highest-leverage payoff for this agent — spend the most attention here.
 
 For each new symbol the artifact introduces (type, function, constant, module path):
+
 - Grep the codebase for name collisions or existing siblings
 - Verify import paths resolve to directories that exist (or that the artifact scaffolds)
 - Verify exports match every downstream import
@@ -50,6 +52,7 @@ For each new symbol the artifact introduces (type, function, constant, module pa
 ### Step 3.5: Walk each slice's Test Contract against its code fence
 
 For each behavior-changing slice, read the Test Contract next to the slice's code:
+
 - List the behaviors the code fence actually introduces/changes; every one needs a contract Behavior (missing = concern)
 - Check each Oracle: exact values derivable from the slice's code but stated vaguely ("works", "correct", shape-only) = concern; genuinely nondeterministic output with an inline justification = OK
 - Sanity-check each Expected red against HEAD: if the named test could already pass today (the behavior exists at HEAD), the red is bogus = concern
@@ -83,6 +86,7 @@ CRITICAL: Use EXACTLY this format. One markdown table; one row per finding. Noth
 ```
 
 **Row rules**:
+
 - `plan-loc` is `<slice-id> §M (filename.ext)` — `<slice-id>` is whatever the artifact uses to identify the slice (e.g. `Phase 2`, `Slice 3`); `§M` references the per-file subsection within the slice; `filename.ext` names the file. When a finding spans the slice's prose (Overview / Success Criteria) rather than a per-file subsection, drop `§M (filename.ext)` and write just the slice-id.
 - `codebase-loc` is `path/to/file.ext:line` for findings that reference live code, or literal `<n/a>` for artifact-internal findings (cross-slice mismatches, code-quality issues with no codebase counterpart).
 - `severity ∈ { blocker, concern, suggestion }` — exactly one per row.
@@ -91,6 +95,7 @@ CRITICAL: Use EXACTLY this format. One markdown table; one row per finding. Noth
 - `recommendation` is one sentence — the smallest concrete action that resolves the finding. No "consider…" hedging. If the finding requires a structural artifact change (e.g. a new slice), name the change explicitly and stop — do not draft the new slice's content.
 
 **Severity semantics (decision rules)**:
+
 - Run `/rpiv:implement` mentally against the cited slice: does it succeed? If no → `blocker`. If yes but with a real bug surface → `concern`. If yes and no bug surface but still improvable → `suggestion`.
 
 ## Important Guidelines
