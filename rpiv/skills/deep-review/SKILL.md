@@ -52,6 +52,7 @@ Every Wave-2 agent prompt contains EXACTLY `Known Context:` + the Discovery Map 
 
 - **Citation contract** (every Wave-2+ agent, every step): every `file:line` citation MUST carry the literal line text in backticks — `file:line — \`<verbatim line>\` — <note>`. Omit any finding whose line you cannot quote verbatim.
 - **Severity**: 🔴 fix before merge · 🟡 fix soon · 🔵 nice-to-have · 💭 discuss.
+- **References** (progressive disclosure — read each file at the step its pointer names, never earlier; resolve paths against this skill's directory, i.e. `${CLAUDE_PLUGIN_ROOT}/skills/deep-review/`): `references/discovery-map.md` (Step 2, at map synthesis) · `references/quality-surfaces.md` + `references/security-sinks.md` (Step 3, at Wave-2 dispatch — inlined verbatim into the lens prompts) · `references/gated-prompts.md` (Waves 1–3, only when the owning gate fires) · `references/severity-model.md` (Step 5 start; also governs Step 6 tag application).
 
 ## Steps
 
@@ -186,31 +187,7 @@ Spawn ALL of the following in parallel at T=0 in a **single message with multipl
 
 **Agent — CVE / advisory** (only when `ManifestChanged`): use the `web-search-researcher` prompt defined in Step 3 below — dispatch here. Input it needs: parsed `name@version` list from the manifest diff (orchestrator extracts and hands over directly).
 
-**Agent — Peer-Mirror** (only when `len(PeerPairs) > 0`): `subagent_type: peer-comparator`. Input: the `PeerPairs` list verbatim, nothing else — no Discovery Map (it isn't built yet and the agent doesn't need it), no patch path (the work is peer-vs-new entity comparison, not diff analysis). Prompt:
-  ```
-  Peer-mirror check.
-
-  PeerPairs (orchestrator-computed):
-  {list of (new_file, peer_file) tuples}
-
-  For each pair, Read BOTH files in full. Enumerate the peer's PUBLIC surface as rows:
-  - every public method / exported function
-  - every domain event / notification / message fired (language-agnostic: method calls named `fire*`, `emit*`, `publish*`, `dispatch*`, `raise*`, `notify*`, `AddDomainEvent`, or idiomatic equivalents)
-  - every state transition (name + precondition guard + side-effects)
-  - every constructor-injected / DI-supplied collaborator
-  - every persisted field / column / serialised property
-  - every registration this file contributes to a switch/map/table/route/handler registry elsewhere (match by type name appearing in a `switch`/`match`/`when`/dispatch table)
-
-  For each row, check the new file. Emit ONE row per peer invariant:
-
-    peer_site (file:line — `<verbatim line>`) | new_site (file:line — `<verbatim line>` OR `<absent>`) | status | one-sentence delta
-
-  status ∈ {Mirrored, Missing, Diverged, Intentionally-absent}.
-
-  "Intentionally-absent" requires an explicit cite — a comment in the new file, a commit-message line mentioning the omission, or a type-system constraint that makes the invariant inapplicable (e.g. the peer's `Trial*` methods are absent because the new entity's type says it doesn't support trials). Suspicion is not sufficient; when in doubt, emit Missing.
-
-  Output format: markdown table per pair, heading `### Peer pair: <new_file> ↔ <peer_file>`. No prose outside the tables. No severity. No recommendations. Citation contract applies to every cell.
-  ```
+**Agent — Peer-Mirror** (only when `len(PeerPairs) > 0`): `subagent_type: peer-comparator`. Input: the `PeerPairs` list verbatim, nothing else — no Discovery Map (it isn't built yet and the agent doesn't need it), no patch path (the work is peer-vs-new entity comparison, not diff analysis). Prompt: Read §Peer-Mirror in `references/gated-prompts.md` and use its fenced block byte-for-byte, substituting only the `{list of (new_file, peer_file) tuples}` placeholder.
 
 While these agents run, the orchestrator produces the rest of the Discovery Map inline from Step 1's data:
 - `ChangedFiles`, `ManifestChanged`, `LockstepSelfReview`, `ReviewType`
@@ -234,65 +211,7 @@ While these agents run, the orchestrator produces the rest of the Discovery Map 
 
 **Synthesize the Discovery Map** — a compact block that Wave-2 agents receive verbatim as `Known Context`. Each file line carries a *role tag* and a *symbols-touched hint*; files are clustered by shared directory prefix so agents orient without re-reading the patch.
 
-```
-#### Discovery Map
-
-Review type: {ReviewType}
-Scope: {scope argument}
-Commit/range: {git ref}
-Manifest changed: {yes|no}
-Lockstep self-review: {yes|no}
-
-Changed files ({N}):
-
-  ## {cluster — shared directory prefix}
-    path/file.ext (+A -B) {role-tag} — top 1–3 symbols touched
-    ...
-
-Auth-boundary crossings: {integration-scanner, file:line}
-Inbound refs (files with ≥3 consumers): {integration-scanner}
-Outbound deps: {integration-scanner}
-Wiring/config: {integration-scanner}
-Peer mirrors: {peer-mirror agent output verbatim — Missing/Diverged rows only; Mirrored and Intentionally-absent rows are summarised as counts}
-**Deterministic gates (Pre-Wave-1, authoritative):**
-Architecture gate (depcruiser): {depcruise violations intersecting ChangedFiles — E errors, W warnings, file:line}
-Knip audit: {N dead exports, M dead files touched by this diff, K dangling imports — knip report}
-Architectural smells (ast-grep): {N smell matches — sg output} | omitted when no matches
-SQLFluff gate (migration changes): {N lint violations on changed migrations — sqlfluff output} | omitted when no migration changes
-Security sink detection (ast-grep): {N structural sink matches — sg output} | omitted when no matches
-Static-analysis sinks (opengrep, when present): {check_id  severity  file:line — CANDIDATE sinks; orchestrator-run, digested — NOT findings}
-Dispatch/registration shapes (ast-grep, when present): {file:line — fire*/emit*/publish*/dispatch*/raise*/notify* calls + switch/match/when registration tables; orchestrator-run, digested}
-Risk keywords (rg): {file:line — keyword — TODO|FIXME|HACK|XXX|debugger|console.log|...} | omitted when no hits
-Code Health (CodeScene, when present): {per-file scores — `file`: score (smell); scope-aware dispatch: analyze_change_set (branch) | pre_commit_code_health_safeguard (working-tree) | per-file review (fallback); orchestrator-run, digested — NOT findings}
-Boundary/cycle violations (dependency-cruiser, when configured): {file — rule-name (forbidden boundary | circular) intersecting ChangedFiles; orchestrator-run, digested — NOT findings}
-```
-
-**Clustering**: group files by longest shared directory prefix yielding clusters of 2+ files; singletons form their own cluster labelled with the filename. Emerges from the repo — no framework assumptions.
-
-**Role-tag** (one tag per file, first match wins):
-1. `[boundary]` — in integration-scanner's auth-boundary output
-2. `[persistence]` — path contains `migration`/`schema`/`repository`/`dao`/`model`, or matches an ORM/migration convention visible in the repo
-3. `[test]` — path contains `/test`/`/spec`/`__tests__`, or filename ends in a test suffix (`.test.*`, `.spec.*`, `_test.*`, `Test.*`)
-4. `[config]` — in integration-scanner's wiring/config output, or is a manifest/lockfile/settings file
-5. `[hub]` — in integration-scanner's inbound-refs with ≥3 consumers
-6. `[code]` — default
-
-**Symbols-touched hint**: extract top 1–3 top-level definitions from the diff's `+` lines using a heuristic appropriate to the file's language (class/function/def/fn/struct/trait/interface/type/export). Cap at ~80 chars. Leave blank if ambiguous — orientation, not completeness.
-
-**Structural enrichment of the Discovery Map (tool-gated, read-only).** When ast-grep / opengrep are present (probe `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/tool-probe.mjs" "."`), the orchestrator runs them over the on-disk `ChangedFiles` (from review-range.mjs's `---changed-files---`) — NOT `<patch_path>` (a unified diff is not parseable by an AST/rule engine) — and folds the DIGESTED results into the two Discovery-Map rows above:
-- Opengrep -> `Static-analysis sinks`: `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/structural.mjs" --tool opengrep --config auto <target>` (network stock security rules; if opengrep absent OR offline/no-JSON, OMIT the row — diff-auditor's own sink grep is the fallback).
-- ast-grep -> `Dispatch/registration shapes`: `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/structural.mjs" --tool ast-grep --pattern '<dispatch/registration shape>' --lang <l> <target>`, intersected to ChangedFiles.
-- rg -> `Risk keywords` (always — rg is installed everywhere via tool-probe): `rg -n "TODO|FIXME|HACK|XXX|debugger|console\.(log|error|warn)" <ChangedFiles>` — one sweep over the on-disk files. Digest to `file:line — keyword` rows in the Discovery Map. A `TODO`/`FIXME` on a changed line is a 🟡 by itself (author intended to come back). A `console.log`/`debugger` left in changed production code is a 🟡 (observability leak — already caught by the architectural-smell ast-grep gate; this is the regex fallback for files ast-grep skips). Omit only if rg is absent (tool-probe shows absent — rare).
-- CodeScene -> `Code Health` (per-file + scope-aware): when the `codescene_code_health_*` tools are available (CodeScene MCP connected), run TWO passes:
-  - **Per-file baseline on EVERY changed file.** Run `codescene_code_health_score` on each file in ChangedFiles with delta ≥ 5. Digest to `file: score` in the Discovery Map. For files scoring < 9.0, also run `codescene_code_health_review` to name the specific smell (Complex Method, Bumpy Road, etc.) — include the smell name and function/line. This is the strongest quantitative signal in the Discovery Map: a file at 6.2 with a risky diff carries more weight than one at 10. The Quality lens uses these scores to prioritize its file-order strategy and weight findings; the Security lens uses them to deprioritize healthy files.
-  - **Scope-aware dispatch** for the delta/verdict row:
-    - **Branch/PR review** (scope resolves a base ref): run `analyze_change_set` once (`base_ref` = review base, `git_repository_path` = repo root). Digest to `file — improved | degraded | stable` + any failed `quality_gates`.
-    - **Working-tree review** (`staged` / `working` / `modified`): run `pre_commit_code_health_safeguard` on the repo root. Catches files `git diff HEAD` may miss. Digest to `file — improved | degraded | stable` + failed `quality_gates`.
-    - **Fallback** (MCP tools absent or scope is bare `commit` hash): run `code_health_review` on each changed file with delta ≥ 5. Slower but works anywhere.
-  - If NO CodeScene tool is available, omit the row entirely — the Quality lens (diff-auditor) is the fallback.
-- SonarQube -> `Sonar issues`: when `mcp__sonarqube__*` tools are available (SonarQube MCP connected) or the repo carries a `sonar-project.properties` with `sonarqube-cli` installed, pull the open issues intersecting ChangedFiles (MCP per-file analysis, or CLI issue search filtered to the changed paths). Digest to `file:line — rule — severity` rows in the Discovery Map as ground truth — the Quality and Security lenses MUST NOT re-report these; they focus on what Sonar's rules do not cover. When neither surface exists, omit the row entirely.
-- dependency-cruiser -> `Boundary/cycle violations`: when the `dependency-cruiser` row from the probe is `configured` (the repo has a `.dependency-cruiser.*` config), run it ONCE root-scoped — the repo's own deps script if present (e.g. `npm run deps`), else `npx depcruise <root-scope> --config <config> --output-type json` — then keep ONLY violations whose `from`/`to` module intersects ChangedFiles. Surfaces a PR that introduces a cycle or crosses a forbidden architectural boundary (the boundary-erosion signal diff-auditor can't see from the diff alone). Digest to `file — rule-name` rows. Run from the repo ROOT (a scoped scan under-counts cross-boundary imports). If depcruise is `absent`/`installed-unconfigured`, or the change set is docs/trivial-only, OMIT the row — CI's own `deps` gate + the Quality lens are the fallback.
-Digested rows ONLY — NEVER paste raw tool output into a Wave-2 prompt (the Wave-2 isolation rule below: raw dumps cause silent quality collapse). Both are read-only; never pass a mutate flag.
+Read `references/discovery-map.md` NOW — it holds the exact map template, the clustering / role-tag / symbols-touched-hint rules, and the tool-gated structural-enrichment digest rules (opengrep sinks, ast-grep dispatch shapes, rg risk keywords, CodeScene Code Health, SonarQube issues, dependency-cruiser boundary violations). Build the map exactly per that file before dispatching Wave-2.
 
 ### Step 3: Dispatch Wave-2 — Quality + Security Lenses
 
@@ -311,7 +230,7 @@ Spawn Quality + Security in parallel using the Agent tool. Each receives the Dis
 
 **Self-check before dispatching Wave-2**: read your outgoing Agent prompt. If it contains any content from Wave-1 agent RESULTS beyond the Discovery Map you synthesised, strip it. The Discovery Map is the contract; raw outputs are reconciliation-only.
 
-**Quality lens** (`diff-auditor`) — **file-oriented**:
+**Quality lens** (`diff-auditor`) — **file-oriented**. Before dispatching: Read `references/quality-surfaces.md`, strip its leading `<!-- -->` comment, and substitute the remainder for the `{{QUALITY_SURFACES}}` line below — the dispatched prompt must carry the full 13-surface block verbatim, never the placeholder:
   ```
   Analyse changes file by file. For each file in ChangedFiles, read its diff region in `<patch_path>` (patch has `-U30` — full function context is already inline; rarely need an extra Read call), form a mental model of what the file does and what the diff changes about it, then apply the 13 surfaces below to the file as a whole. Cite `file:line` with verbatim line text (citation contract) for every finding. Omit findings not traceable to a diff-touched change. No severity.
 
@@ -319,26 +238,12 @@ Spawn Quality + Security in parallel using the Agent tool. Each receives the Dis
 
   **Per file**, write a short section (`### file/path.ext`) containing only the surfaces that APPLY to that file's changes. Use sub-headings for grouped evidence. A surface may be flagged across multiple files — report the evidence where it lives, and rely on cross-layer surfaces (8, 9) to tie them together.
 
-  **Surfaces** — each surface's mechanical trigger decides whether it APPLIES to a given file's changes. Walk every applicable trigger:
-
-  1. **Logic & flow** (always, per file with new/modified code) — validation, error paths, off-by-one, null misses, branch ordering, return/await, unguarded mutation.
-  2. **Pattern coherence** (≥2 similar constructs within a file, or ≥2 files in the same cluster) — cite nearby line broken from.
-  3. **Blast radius** (Discovery Map lists inbound refs to this file, OR this file is flagged as a hub) — `consumer:line` + what changes for each inbound ref.
-  4. **Test coverage gaps** (always, checked once across the whole changeset) — for each risk-bearing function/method added/changed, check whether any `[test]`-tagged file in ChangedFiles contains a corresponding test. Flag risk-bearing behavior with no adjacent test.
-  5. **Predicate-set coherence** (`HasGatingPredicate`) — ≥2 conditionals on the same enum/type across the changeset. Tabulate `predicate file:line | accepted | rejected`. Flag mismatches. Surface 5 output MUST use heading `### Predicate-set coherence` at review-scope level (not nested inside a per-file section) — downstream step consumes it verbatim.
-  6. **Registration coverage** (changeset adds discriminator value / enum variant / handler key / route / event type / strategy entry) — every dispatch/registry/switch across ChangedFiles that must enumerate it. Cite each registration site + each enumeration site. Flag gaps. When the `Dispatch/registration shapes` Discovery-Map row is present (ast-grep), use it as the structural ground-truth list of dispatch/registration sites to check coverage against — still open each cited site to confirm (the row is an orientation digest, not a verified finding).
-  7. **Query/write symmetry** (changeset adds setter/linker, shape change, or new persisted field) — trace BOTH creation and renewal/update paths; cite the setter file:line AND the reader file:line.
-  8. **Cross-layer drift** (same entity/enum/key appears in ≥2 files in different clusters or role tags — e.g. model ↔ DTO ↔ schema ↔ registry ↔ presentation) — open each file, tabulate presence, flag asymmetry. When the entity is a **key fanned out across parallel tables** (locale maps, theme maps, strategy registries, handler/command tables, feature-flag tables), every table must carry the added key and none must retain a removed/renamed one — flag orphaned references and missing entries.
-  9. **Peer-member consistency** (a file gains a new method/hook/case/handler in a set of peers — class methods, hook siblings, reducer cases, handler registrations, CLI subcommands) — tabulate the invariants the peers share (state mutation, emitted event/signal, precondition guard, bookkeeping counter, teardown symmetry); flag omissions in the new member.
-  10. **Durable-state hygiene** (file is a schema migration, repository/DAO, file-backed config, KV/cache, serialized artifact, or adds a new persisted field) — trace the forward-write AND the reverse/rollback path; flag irreversible or data-losing rollback, missing lookup affordance for a new query field (index, key, sorted structure), iteration over an unbounded/mutable source without a stable cursor, and new invariants at the storage layer not mirrored by the in-memory validator.
-  11. **Shared-state acquisition** (file introduces async handler, event listener, singleton init, queue consumer, file-lock region, or global cache mutation) — trace acquire/release around every mutation; flag unguarded check-then-act across an `await`/callback/IPC boundary, stale reads while another writer is in flight, non-commutative acquire order between distinct state slots, and replay/retry paths that lack an idempotency key.
-  12. **Multi-step commitment** (file issues ≥2 writes that must all succeed or all be undone — DB transaction, cross-table mutation, multi-file write, filesystem+network pair, multi-API orchestration, compensating-action chain) — trace the commit boundary; flag missing undo/compensation on partial failure, retry paths that re-apply non-idempotent steps, and divergence between two stores that must agree without a coordinating primitive.
-  13. **Error handling & idempotency** (file adds a failure-response construct — retry loop, catch/except block, error boundary, fallback branch, circuit breaker, timeout, resumable step) — trace the error-propagation path; flag swallowed errors, retry without an idempotency key, fallback that silently degrades observable behavior, unjustified timeout values.
+  {{QUALITY_SURFACES}}
 
   **Economising Reads**: issue a `Read` only when (a) you need a file NOT in ChangedFiles (hub, peer, test), or (b) the changed function is longer than the `-U30` window can show. Never re-Read a file just to re-orient — that's what the symbols-touched hint is for. **When the orchestrator has pre-indexed dependency files (known via `ctx_search` availability), prefer `ctx_search(source: "deep-review-deps", queries: [...])` over `Read` for cross-file traces — it is cheaper on token budget.**
   ```
 
-**Security lens** (`diff-auditor`) — **file-oriented**:
+**Security lens** (`diff-auditor`) — **file-oriented**. Before dispatching: Read `references/security-sinks.md`, strip its leading `<!-- -->` comment, and substitute the remainder for the `{{SECURITY_SINKS}}` line below — the dispatched prompt must carry the full sink-class catalog + do-NOT-report list verbatim, never the placeholder:
   ```
   Analyse each changed file as a whole, looking for sinks in the classes below. **Prefer ast-grep over grep for sink detection:** the Pre-Wave-1 gate already ran `sg scan` for structural sinks — its findings are AUTHORITATIVE for `dangerouslySetInnerHTML`, `eval()`, `Function()`, `.innerHTML =`, and `document.write()` (zero false positives). Do NOT re-grep these patterns; start from the ast-grep matches and ADD your traced source→sink reachability analysis. For sink classes ast-grep didn't cover (command execution, path traversal, SSRF), fall back to grep on `<patch_path>` (patch has `-U30` — sink context is inline). For each hit provide the verbatim line (citation contract) plus 2 surrounding lines and `confidence: N/10` that user-controlled input can reach the sink under current deployment. Drop hits with confidence < 8. Cross-reference Discovery Map auth-boundary crossings and inbound refs — a sink in a file reached from an auth-boundary file is in scope even if the sink file itself doesn't cross the boundary. Also cross-reference the `Static-analysis sinks` Discovery-Map row (Opengrep candidates): each is a CANDIDATE to TRACE, not a finding — promote to a verified Security finding only with a concrete user-reachable source→sink trace (the `confidence: N/10 < 8` drop and the untraced-rejection at the severity-reconciliation step still gate). Opengrep supplies recall (breadth across the sink classes); you supply the trace + reachability. This stays complementary — never emit an Opengrep candidate that your trace did not confirm.
 
@@ -348,49 +253,12 @@ Spawn Quality + Security in parallel using the Agent tool. Each receives the Dis
 
   IN-SCOPE RULE: only report findings whose sink line is inside a changed file's diff region (add/modify/adjacent-context rewrite). Pre-existing sinks in files the diff did not change are out of scope, UNLESS the diff changes how data flows TO the sink (e.g. new user-controlled source routed to an untouched sink) — then cite both locations. When in doubt, trace data flow from Discovery Map boundary crossings through the changed files.
 
-  Sink classes — match the concept in whatever language the diff uses:
-  - **Command execution** — shell/process spawn w/ user input (e.g. `exec`, `subprocess.run(shell=True)`, `Runtime.exec`, …).
-  - **Dynamic code / unsafe deserialization** — `eval` / dynamic-function constructors; deserializers that can execute code (e.g. `pickle.loads`, `yaml.load` w/o safe loader, `ObjectInputStream`, `BinaryFormatter`, …).
-  - **Query injection** — user input concatenated or interpolated into a query string interpreted by an external engine (SQL, NoSQL operators, LDAP filters, XPath, GraphQL constructed as string). Parameterized/prepared queries and typed query builders are safe.
-  - **Explicit-trust rendering** — user input emitted into a channel that will interpret it as code/markup rather than data. In-scope only when the framework's explicit-trust API is invoked (`dangerouslySetInnerHTML`, `bypassSecurityTrustHtml`, `v-html`, `template.HTML`, `mark_safe`, `html_safe`, triple-stache, raw-HTML markdown, …), plain `innerHTML =` / `document.write(` in vanilla/server-rendered code, or equivalent passthroughs in non-HTML renderers (unescaped ANSI-escape emission to a TTY, unquoted shell-prompt interpolation, template-engine raw blocks).
-  - **Path traversal** — user-controlled components into file-system APIs without normalization/allowlist.
-  - **SSRF** — outbound HTTP/TCP with user-controlled host OR protocol (not just path).
-  - **Secrets in diff** — literal credentials, API keys, PEM blocks, connection strings w/ embedded passwords, `.env` content.
-  - **Missing trust-boundary check** — a traced sink reached from a Discovery-Map boundary crossing (HTTP handler, RPC endpoint, IPC message, CLI flag that flows to a privileged operation, webhook receiver) without an upstream authorization/validation step (middleware, guard, attribute/decorator, allowlist check, signature verification).
-
-  Do NOT report: DOS/resource exhaustion/rate-limiting, missing hardening without a traced sink, theoretical races/timing without reproducer, log spoofing/prototype pollution/tabnabbing/open redirects/XS-Leaks/regex DOS, client-side-only authn/authz (server is the authority), findings sourced only from env var / CLI flag / UUID, test-only or notebook files without a concrete untrusted-input path, outdated-dependency CVEs (CVE lens handles).
+  {{SECURITY_SINKS}}
 
   Name the sink class and the matched idiom. Evidence only. No CVE lookups.
   ```
 
-**Dependencies lens** (`codebase-analyzer`, only when `ManifestChanged`; otherwise SKIP and omit `### Dependencies` in artifact). **Prefer Knip for dependency audit:** When Knip ran at the Pre-Wave-1 gate AND `ManifestChanged`, use its output as the primary dependency signal:
-  ```
-  Knip dependency audit (Pre-Wave-1, authoritative):
-  {paste knip --dependencies output: unused deps, unlisted deps, with file:line citations}
-
-  Supplement with codebase-analyzer only for:
-  1. License field changes in manifest or lockfile (Knip doesn't cover license changes).
-  2. Lockstep=yes: flag intra-monorepo drift where a sibling pin diverges (Knip reports dep presence, not version drift).
-  3. Ecosystem-specific concerns Knip doesn't parse (Cargo feature flags, Poetry extras, Maven scopes).
-
-  Evidence only. No CVE lookups.
-  ```
-
-  When Knip did NOT run (absent at Pre-Wave-1), fall back to the full codebase-analyzer Dependencies lens:
-  ```
-  Lockstep self-review: {yes|no}
-
-  Identify the ecosystem from touched manifests (npm, Cargo, Go modules, PyPI/Poetry, Bundler, NuGet, Maven/Gradle, …). Parse the changed manifest(s) and list:
-  1. Added deps: `name@version` with `file:line`.
-  2. Bumped deps: `name: old -> new` with `file:line`.
-  3. Removed deps.
-  4. Peer / optional / dev-scope changes (whatever the ecosystem calls them).
-  5. License field changes in manifest or lockfile.
-  6. Lockstep=yes: flag only intra-monorepo drift where a sibling pin diverges from the lockstep version. Treat wildcard peer pins as intentional.
-  7. Lockstep=no: flag version conflicts between direct dep and lockfile resolution.
-
-  Evidence only. No CVE lookups.
-  ```
+**Dependencies lens** (`codebase-analyzer`, only when `ManifestChanged`; otherwise SKIP and omit `### Dependencies` in artifact): when the gate fires, Read §Dependencies in `references/gated-prompts.md` — it selects between the Knip-primary prompt (Knip ran at the Pre-Wave-1 gate) and the full fallback prompt; use the applicable fenced block byte-for-byte.
 
 **Precedents lens** (`precedent-locator`):
   ```
@@ -398,13 +266,7 @@ Spawn Quality + Security in parallel using the Agent tool. Each receives the Dis
   Find similar past changes touching these files or nearby. Per precedent: commit hash, blast radius, follow-up fixes within 30 days, one-sentence takeaway. Distil composite lessons.
   ```
 
-**CVE/advisory lens** (`web-search-researcher`, only when `ManifestChanged`):
-  ```
-  Look up CVEs / GitHub Advisories / OSS Index entries for the target versions. Return LINKS. Per vulnerability: severity (Critical/High/Moderate/Low), affected range, whether bumped-to version is fixed.
-
-  Dependencies:
-  {name@version per line — orchestrator-extracted}
-  ```
+**CVE/advisory lens** (`web-search-researcher`, only when `ManifestChanged`): when the gate fires, Read §CVE/advisory in `references/gated-prompts.md` and use its fenced block byte-for-byte, substituting the `{name@version per line}` placeholder (orchestrator-extracted).
 
 **Wait for Quality + Security to complete** before proceeding. Precedents / Dependencies / CVE from Wave-1 may still be running; gather them before Step 5, not before Step 4.
 
@@ -420,19 +282,7 @@ Once Wave-2 (Quality + Security) completes, dispatch 4a and 4b as parallel agent
 
 **Gate**: SKIP this sub-step (do not dispatch 4a) unless `HasGatingPredicate` is true AND the Quality lens returned ≥2 rows in its `Predicate-set coherence` table referencing the same enum/type. If skipped, 4b and 4c still dispatch.
 
-Otherwise spawn ONE `codebase-analyzer` in parallel with 4b:
-  ```
-  Coherence rows (Quality — Predicate-set coherence): {paste verbatim}
-  Gating predicates in diff: {`file:line` list}
-
-  Per predicate, return: `predicate file:line | inputs | promise (what TRUE/matching branch implies) | consumer file:line | consumer filter | fulfils? | gap`.
-
-  Flag:
-  - *False promise* — matching branch depends on a consumer/filter elsewhere that excludes this entity's source/type/state.
-  - *Stranded state* — entity reaches state X via one conditional, but every conditional that operates on this entity elsewhere excludes X (no exit path).
-
-  Evidence only. Citation contract applies.
-  ```
+Otherwise spawn ONE `codebase-analyzer` in parallel with 4b — Read §Predicate-Trace in `references/gated-prompts.md` and use its fenced block byte-for-byte as the prompt, substituting the coherence-rows and gating-predicates placeholders.
 
 Do NOT wait — 4b (Interaction Sweep) dispatches in the same message as 4a; 4c runs inline in the orchestrator.
 
@@ -490,15 +340,7 @@ No agent dispatch. Compute inline while 4a / 4b run:
   - Not ancestor: the precedent is on a different branch / not merged; treat it as **context only**. Do NOT mark the finding resolved; annotate the precedent's row in `## Precedents` third column `NOT ancestor of {TIP} (context only)`.
   - Orchestrator unable to run git (e.g., `staged` / `working` scope with no commit): skip the check and annotate `resolution: unverified`.
 
-1. **Compile and classify evidence** per lens:
-   - **Quality** — 🔴 traced flow contradiction (dropped error path, missing validation on a sink, null-deref); 🟡 blast-radius × complexity-delta (hot path + new allocation, ABI change without migration); 🔵 pattern divergence with nearby template; 💭 composite-lesson architecture concern.
-   - **Security** — 🔴 concrete user-reachable source→sink trace via Discovery Map auth-boundary (reject hits without explicit trace); 🟡 concrete crypto issue (weak hash in auth/integrity role, non-constant-time compare, hardcoded key material); 🔵 divergence from a secure example in the same file; 💭 architectural question.
-   - **Dependencies** — 🔴 Critical/High CVE in touched dep OR lockstep-contract violation; 🟡 Moderate CVE, outdated major with migration path, license incompatibility; 🔵 minor/transitive drift; 💭 architectural dep question.
-   - **Interaction-sweep** — 🔴/🟡 only (no 💭): 🔴 concrete emergent failure across ≥2 files/components; 🟡 multi-component mismatch with bounded blast radius or existing mitigation. **Promotion rule**: when ≥2 lens findings share the same entity/flow and combine into an emergent failure, the aggregate is 🔴 even if each constituent was 🟡/🔵. The interaction IS the defect — don't leave constituents at their original severity and skip the cross-finding bullet.
-   - **Gap-finder** — 🟡 uncovered risk-bearing region in a changed file with no lens coverage; 🔵 low-impact gap (style-only or defensive-only region missed). No 🔴 (gap findings are uncertain by nature).
-   - **Peer-mirror** — treat every Missing/Diverged row as a finding. Base severity 🔵. **Bump to 🟡** when the missing invariant is a domain-event emission, a precondition guard on a state-mutating method, or a persisted-field invariant. **Bump to 🔴** when the missing invariant intersects a dispatch site the diff touches (switch/map/table/registry enumerating the peer's type alongside the new type — detectable from integration-scanner's `Wiring/config` output and the Discovery Map's `[config]`/`[hub]` files). Rationale: a missing mirror on a dispatched invariant is a silent-stranded-state cascade constituent; on a non-dispatched invariant it is a style issue. Record every peer-mirror bump in `## Reconciliation Notes`.
-   - **Precedents** → compile into `## Precedents` (table: `hash | subject | 30d-follow-ups | note`), composite lessons below. **Severity weighting**: for each current finding, count precedent commits touching the same symbol/file that had ≥1 follow-up fix within 30 days. If count ≥ 2, bump the finding one severity tier (🔵→🟡, 🟡→🔴); cap at 🔴. Record the bump by annotating the finding's title line `[precedent-weighted]` — do NOT emit a separate reconciliation section.
-   - **CodeScene business case** (tool-gated, when the `codescene_code_health_refactoring_business_case` tool is available AND the Discovery Map has per-file CodeScene scores): for each 🔴 finding whose cited file has a Discovery Map score < 9.0, run `codescene_code_health_refactoring_business_case` on that file. The tool returns optimistic/pessimistic ROI estimates (% development speed improvement, % defect reduction). Annotate the finding's title line `[roi: +{X}% velocity, −{Y}% defects]` and cite the estimates in the artifact's `## Recommendation` table. This does NOT bump severity — ROI is corroboration, not a tier change — but it transforms "fix before merge" from a hand-wavy opinion into a data-driven argument. If the tool is unavailable, skip silently — no degradation.
+1. **Compile and classify evidence** per lens — Read `references/severity-model.md` NOW (it also governs Step 6's tag application). Apply its per-lens classification (Quality, Security, Dependencies, Interaction-sweep, Gap-finder, Peer-mirror — including the peer-mirror severity bumps), its Precedents compilation + severity-weighting rule, and the tool-gated CodeScene business-case annotation.
 
 2. **Probe advisor availability** — attempt a probe by checking whether `advisor` is in the active tool set (main-thread visibility). If yes, proceed to advisor path; otherwise take the inline path.
 
@@ -515,11 +357,7 @@ No agent dispatch. Compute inline while 4a / 4b run:
    - Interaction findings carry `I<n>` IDs and appear under the severity H2 that matches their final tier (`## 🔴 Critical`, `## 🟡 Important`). The old `### Cross-Finding Interactions` sub-heading is retired — severity is the top-level grouping.
    - When an interaction finding subsumes a local finding at the root-cause level, keep the local finding only if its evidence is independently actionable; annotate the local finding's title line `[subsumed-by I<n>]`.
    - Distinct structural defects MUST remain distinct findings even when related. Specifically: a *stranded state* (entity reaches X, no exit path) and a *false-promise predicate* (TRUE branch promises unreachable behavior) are separate defects even when they arise in the same subsystem — do NOT collapse them. Collapse only when the narrative, fix, and evidence locations are identical.
-   - **Cascade detection** (load-bearing): before emitting severities, scan findings for these triples and emit a 🔴 Cross-Finding bullet if any fires —
-       • *{entity reaches state X} + {no event on that transition} + {consumer filter excludes X}* = **silent stranded state**
-       • *{check-then-act on shared resource} + {no ordering primitive} + {retry/replay path}* = **duplicate-processing cascade**
-       • *{spec A accepts Y} + {spec B rejects Y} + {workflow depends on both}* = **contradictory-predicate deadlock**
-     Also check `.rpiv/artifacts/reviews/*.md` and Precedents: if a prior review names a cascade whose constituents appear in current findings, cite it and assert reproduction. Missed cascades are the biggest historical quality regression; prefer false positives here.
+   - **Cascade detection** (load-bearing — missed cascades are the biggest historical quality regression): apply §Cascade detection from `references/severity-model.md` verbatim — scan findings for its three defect triples and emit a 🔴 Cross-Finding bullet if any fires; it also mandates the prior-review cascade-reproduction check.
 
 ### Step 6: Verify Findings
 
@@ -553,13 +391,7 @@ Before writing the artifact, spawn ONE `claim-verifier` whose sole job is to gro
   Citation contract applies to every justification. No recommendations. No new findings.
   ```
 
-**Before applying tags** — re-read every Weakened and Falsified justification (the tag is a summary; the justification is the evidence). Per `agents/claim-verifier.md` tag semantics: Weakened = narrower, Falsified = wrong direction, Verified = correct or understated. If a justification contradicts its tag (e.g. "inverted" / "opposite" under Weakened, or "worse than stated" under Weakened), override before applying the rules below. Also verify identity on the ID set — exactly one row per input finding; re-dispatch `claim-verifier` on any missing IDs before proceeding.
-
-**Apply the tags** (on the corrected tag):
-- **Falsified** findings — remove from the artifact entirely. Their ID is retired (never reused); the retirement is counted in the frontmatter `verification` string (`F` dropped) and nowhere else.
-- **Weakened** findings — demote one severity tier (🔴→🟡, 🟡→🔵, 🔵→💭). Rewrite the finding's evidence line to reflect the narrower claim.
-- **Verified** findings — carry through unchanged to Step 7.
-- **Edge case**: if a 🔴 Cross-Finding Interaction bullet relies on constituents that are now Falsified or Weakened, re-evaluate the interaction. Drop the interaction if it no longer stands on ≥2 Verified constituents from different files.
+**Apply the verifier's tags** per §Verification tag semantics & application in `references/severity-model.md` (read at Step 5; re-open it if no longer in context): the tag-override check runs first, then the per-tag actions — Falsified removed + ID retired, Weakened demoted one tier + evidence rewritten, Verified carried through, and the Cross-Finding edge case re-evaluated.
 
 **Gate**: after verification, set `blockers_count` = remaining 🔴 + 🟡 findings and `status: ready` in the artifact frontmatter. Emit no verdict — the review reports the count, nothing more.
 
@@ -641,6 +473,7 @@ Ask follow-ups, or chain forward.
   - Step 6 verification runs between reconcile and write — never skip it; it also validates `resolved-by` via `git merge-base --is-ancestor` (Step 6).
   - Advisor: emit `## Pre-Adjudication Findings` to the main branch before `advisor()` (reads `getBranch()`, main-thread-only, `advisor.ts:336`); probe availability first (`advisor.ts:463-472`); NEVER call from a sub-agent or parse its prose (paste verbatim).
   - PRESERVE severity emoji + frontmatter keys verbatim — `artifacts-locator`/`artifacts-analyzer` grep these. Scope is orchestrator-owned; agent contracts (`claim-verifier.md:11-30`) stay scope-blind.
+  - **References are load-bearing**: read each `references/*.md` at the step its pointer names (see Conventions); the placeholders `{{QUALITY_SURFACES}}` / `{{SECURITY_SINKS}}` must NEVER reach a dispatched prompt — substitute the reference file's contents verbatim (leading `<!-- -->` comment stripped), never a paraphrase (Steps 2, 3, 5).
 - **Row-only specialists** at narrativisation-prone sites: `diff-auditor` (Wave-2 Q+S), `peer-comparator` (Wave-1 PM), `claim-verifier` (Step 6). See `.rpiv/guidance/agents/architecture.md`.
 - **Agent roles**:
   - `integration-scanner` (Wave-1) — inbound/outbound refs, auth-boundary crossings.
