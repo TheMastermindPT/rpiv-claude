@@ -12,6 +12,10 @@
 //                                     only => NOT envy — the per-symbol call regex can't make).
 //   ---dead-exports-semantic---  (A)  exports with zero EXTERNAL `findReferences` (type-
 //                                     resolved dead, stronger than the export-usage stem).
+//   ---projection-shapes-semantic--- (M/D) near-identical object-literal projections
+//                                     (same record built at >=2 sites with a field of
+//                                     drift) — expression-level duplication that neither
+//                                     type declarations nor literal-text clone tools see.
 //
 // Read-only (navigates the AST; never mutates). Always exits 0. ts-morph is the ONLY
 // dependency and it is OPTIONAL: if ts-morph is unresolvable or there is no tsconfig, this
@@ -34,6 +38,10 @@ const ENVY_MIN_REFS = 5; // Fe: total refs to the module (mirrors metrics.mjs en
 const ENVY_MIN_RATIO = 0.6; // Fe: ext / (ext + own) gate (mirrors metrics.mjs envyOf)
 const TYPE_MIN_PROPS = 3; // C: ignore trivial shapes (< 3 props, e.g. {id:string}) — FP guard
 const TYPE_EXAMINE_CAP = 2000; // C: bound the type-shape scan (AST-only, cheap)
+const PROJ_MIN_PROPS = 8; // M/D: object-literal projections below this are config-object noise
+const PROJ_MIN_SIM = 0.8; // M/D: pairwise Jaccard on property-name sets
+const PROJ_EXAMINE_CAP = 1500; // M/D: bound the literal scan
+const PROJ_MAX_ROWS = 20; // M/D: emit only the strongest pairs
 
 const toPosix = (p) => p.replaceAll("\\", "/");
 const safeGit = (args, fb = "") => {
@@ -338,6 +346,53 @@ for (const ds of bySig.values()) {
 }
 typeRows.sort((a, b) => b.defs - a.defs || a.label.localeCompare(b.label));
 
+// --- Block 5: projection-shapes-semantic (M/D) -------------------------------
+// Near-identical object-literal PROJECTIONS — duplication that lives in EXPRESSIONS,
+// so neither type-fragmentation (declarations) nor jscpd (literal text) reliably sees
+// it: two inline literals building the same record with a field or two of drift
+// (e.g. an exact vs family summary snapshot sharing 21/22 keys — the M3 class a
+// human-validated gymapp review found and a later run missed). A deterministic pair
+// seed lets the D/M lenses START from the projection instead of hoping to notice it.
+// FP guards: >= PROJ_MIN_PROPS own named props, literals with spreads skipped (their
+// key set is partial), Jaccard >= PROJ_MIN_SIM, capped scan, strongest rows only.
+const projLits = [];
+let projExamined = 0;
+let projCapped = false;
+outerProj: for (const sf of targetFiles) {
+	const f = rel(sf);
+	for (const lit of sf.getDescendantsOfKind(SyntaxKind.ObjectLiteralExpression)) {
+		if (projExamined >= PROJ_EXAMINE_CAP) {
+			projCapped = true;
+			break outerProj;
+		}
+		projExamined += 1;
+		const props = lit.getProperties();
+		if (props.some((p) => p.getKind() === SyntaxKind.SpreadAssignment)) continue;
+		const names = new Set(
+			props
+				.map((p) => p.getName?.())
+				.filter((n) => typeof n === "string" && n.length > 0),
+		);
+		if (names.size < PROJ_MIN_PROPS) continue;
+		projLits.push({ f, line: lit.getStartLineNumber(), names });
+	}
+}
+const projRows = [];
+for (let i = 0; i < projLits.length; i += 1) {
+	for (let j = i + 1; j < projLits.length; j += 1) {
+		const a = projLits[i];
+		const b = projLits[j];
+		if (a.f === b.f && a.line === b.line) continue;
+		let shared = 0;
+		for (const n of a.names) if (b.names.has(n)) shared += 1;
+		const union = a.names.size + b.names.size - shared;
+		const sim = union === 0 ? 0 : shared / union;
+		if (sim >= PROJ_MIN_SIM) projRows.push({ a, b, shared, union, sim });
+	}
+}
+projRows.sort((x, y) => y.shared - x.shared || y.sim - x.sim);
+projRows.length = Math.min(projRows.length, PROJ_MAX_ROWS);
+
 // --- Emit -------------------------------------------------------------------
 const out = [];
 out.push(`target:           ${toPosix(relative(root, targetAbs)) || "."}`);
@@ -347,6 +402,7 @@ out.push(`files_in_target:  ${targetFiles.length}`);
 out.push(`write_resolution: resolved=${writeResolved} unresolved=${writeUnresolved}`);
 out.push(`dead_export_scan: ${knipAvailable ? "skipped (knip present — A delegated to knip)" : `examined=${examined} capped=${capped}`}`);
 out.push(`type_scan:        examined=${typesExamined}`);
+out.push(`proj_scan:        literals=${projExamined}${projCapped ? " capped" : ""} pairs=${projRows.length}`);
 
 const block = (label, rows) => {
 	out.push(`---${label}---`);
@@ -356,6 +412,7 @@ block("write-sites-semantic", writeRows.map((r) => `${r.key}\twriters=${r.writer
 block("feature-envy-semantic", envyRows.map((r) => `${r.f}\tenvies=${r.module}\text=${r.ext}\town=${r.own}\tratio=${r.ratio.toFixed(2)}\tbehavioralRefs=${r.beh}\tdataRefs=${r.data}`));
 block("dead-exports-semantic", deadRows.map((r) => `${r.f}:${r.name}\tkind=${r.kind}\textRefs=0`));
 block("type-fragmentation-semantic", typeRows.map((r) => `kind=${r.kind}\t${r.label}\tdefs=${r.defs}\tfiles=${r.files.join(", ")}`));
+block("projection-shapes-semantic", projRows.map((r) => `${r.a.f}:${r.a.line} <-> ${r.b.f}:${r.b.line}\tshared=${r.shared}/${r.union}\toverlap=${r.sim.toFixed(2)}\tsizeA=${r.a.names.size} sizeB=${r.b.names.size}`));
 
 process.stdout.write(`${out.join("\n")}\n`);
 process.exit(0);

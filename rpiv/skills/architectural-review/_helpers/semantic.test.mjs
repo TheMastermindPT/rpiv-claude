@@ -117,6 +117,20 @@ const shapesB = [
 const driftA = `export interface Account { id: string; name: string; balance: number }`;
 const driftB = `export interface Account { id: string; name: string; balance: number; currency: string }`; // same name, drifted
 
+// M/D-lens fixtures: two object-literal PROJECTIONS sharing 9/10 keys (Jaccard 9/11 =
+// 0.82) -> must pair; a same-keyed literal built with a spread -> partial key set, must
+// NOT participate. Mirrors the gymapp M3 class (exact vs family snapshot, 21/22 fields).
+const projKeys = (extra) =>
+	`{ a1: 1, a2: 2, a3: 3, a4: 4, a5: 5, a6: 6, a7: 7, a8: 8, a9: 9, ${extra} }`;
+const projA = `export function exactSnapshot() {\n\treturn ${projKeys("exactOnly: 10")};\n}`;
+const projB = `export function familySnapshot() {\n\treturn ${projKeys("familyOnly: 10")};\n}`;
+const projSpread = [
+	`const base = { a1: 1 };`,
+	`export function spreadSnapshot() {`,
+	`\treturn { ...base, a2: 2, a3: 3, a4: 4, a5: 5, a6: 6, a7: 7, a8: 8, a9: 9, spreadOnly: 10 };`,
+	`}`,
+].join("\n");
+
 // --- Build repo, run, assert ------------------------------------------------
 
 const repo = mkdtempSync(join(tmpdir(), "argate-sem-"));
@@ -133,6 +147,9 @@ try {
 	write("src/shapes-b.ts", shapesB);
 	write("src/drift-a.ts", driftA);
 	write("src/drift-b.ts", driftB);
+	write("src/proj-a.ts", projA);
+	write("src/proj-b.ts", projB);
+	write("src/proj-spread.ts", projSpread);
 	git(repo, ["init", "-q"]);
 	git(repo, ["add", "-A"]);
 
@@ -192,8 +209,16 @@ try {
 		`trivial 2-prop shapes (Pt/Pt2) must NOT flag (below the >=3-prop guard)\n${out}`,
 	);
 
+	// 5. projection-shapes: near-identical object literals pair across files; the
+	// spread-built twin (partial key set) must not participate.
+	const proj = extractBlock(out, "projection-shapes-semantic");
+	const pairRow = proj.find((r) => r.includes("proj-a.ts") && r.includes("proj-b.ts"));
+	assert.ok(pairRow, `proj-a/proj-b (9/10 shared keys) must pair in projection-shapes-semantic\n${out}`);
+	assert.ok(/shared=9\/11/.test(pairRow), `pair must report shared=9/11, got: ${pairRow}`);
+	assert.ok(!proj.some((r) => r.includes("proj-spread.ts")), `spread-built literal (partial key set) must NOT participate\n${out}`);
+
 	console.log(
-		`OK (semantic) — imported-const write resolved (writers=2), behavioral envy kept + data-only dropped, dead export flagged, type drift + same-shape flagged (${writes.length} write-sites, ${envy.length} envy, ${dead.length} dead, ${frag.length} type-frag).`,
+		`OK (semantic) — imported-const write resolved (writers=2), behavioral envy kept + data-only dropped, dead export flagged, type drift + same-shape flagged, projection pair seeded (${writes.length} write-sites, ${envy.length} envy, ${dead.length} dead, ${frag.length} type-frag, ${proj.length} proj-pairs).`,
 	);
 } finally {
 	rmSync(repo, { recursive: true, force: true });
