@@ -86,6 +86,8 @@ C. Synthesize
 
 The final artifact is blueprint-consumable per phase.
 
+**References (progressive disclosure — read each file at the step its pointer names, never earlier; resolve paths against this skill's directory, i.e. `${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/`):** `references/metrics-blocks.md` (Step 2.1, after metrics.mjs) · `references/tool-ingestion.md` (Step 2.2, before any external tool runs) · `references/slop-map.md` (Step 5a, map assembly) · `references/wave2-lenses.md` (Step 5d, only when Wave 2 dispatches) · `references/dimension-sweep.md` (Step 7.2, first layer) · `references/drift-fingerprints.md` (Step 8, only when a prior review exists).
+
 ## Steps
 
 ### Step 1: Identify the Target
@@ -113,20 +115,7 @@ The final artifact is blueprint-consumable per phase.
    node "${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/_helpers/metrics.mjs" "<target>"
    ```
 
-   Read the output as authoritative. Hold every block in main context — they are the severity anchors for the whole review:
-   - `loc_median` / `loc_p90` — the peer baseline outliers are judged against.
-   - `---size-outliers---` (`path  loc  x_median`) — raw LOC outliers (size context for the scorecard); NOT the god-file gate by themselves.
-   - `---godfile-candidates---` (`path  loc  x_median  cats=N  coh=R  reason`) — **the god-file (G) gate**: responsibility-mixing candidates. `reason` is one of `mixing` (many distinct concern categories, LOC-independent — catches small tangles), `mixing+size`, `size+low-cohesion` (a LOC outlier that is ALSO fragmented), or `size` (non-JS/TS legacy LOC path). A large high-cohesion, few-concern file (parser/schema/fixture) is deliberately ABSENT here even when it is a size-outlier — that absence is the false-positive rescue, not a miss.
-   - `---low-cohesion---` (`path  coh  syms  islands`) — **low-cohesion (Lc) candidates**: files whose top-level symbols form multiple disjoint islands (several responsibilities glued together) at ANY size. Excludes god-file candidates so it does not double-report G. The Lc lens confirms and names the split.
-   - `---churn-hotspots---` (`path  commits`) — instability signal; weights severity.
-   - `---export-usage---` (`path  exports=N  inbound=M`) — `inbound=0` with many exports is a dead-abstraction (A) candidate; `inbound=?` means the stem was too generic to measure (NOT dead).
-   - `---test-density---` (`path  cases  asserts  ratio`) — test-theater (T) candidates (ratio < 1).
-   - `---dup-candidates---` (`fileA | fileB  run=N  shared=N  overlap=R  tokenSim=R  via=...`) — **content-based** duplication (D) pre-signal, file PAIRS. Two INDEPENDENT signals: `run` = longest CONTIGUOUS shared block of normalized lines (the literal-copy-paste signal — FILE-SIZE-INDEPENDENT, so a real block flags even inside otherwise-different files; scattered shared idiom never forms a run); `tokenSim` = token-MinHash Jaccard (STRUCTURAL / Type-2 clones — same shape, renamed identifiers/literals). `via` is `lines` (run only) | `structural` (tokenSim only) | `both`. `overlap`/`shared` are CONTEXT only (no longer a gate). A pair flags when either signal clears its bar. Grounded in content, never filename coincidence; the D lens confirms semantics and routes D-vs-M.
-   - `---co-change-candidates---` (`fileA -> fileB  support=N  conf=R`) — **temporal / hidden-coupling (Tc) signal**: DIRECTIONAL file pairs that change together across history (`support` shared commits, `conf` = support / the driver's total changes; the arrow points from the driver — "when A changes, B follows") but share NO REAL import edge (resolved import graph) and where NEITHER end is a re-export barrel. Deterministic, metric-only — there is NO wave agent for this lens; the orchestrator carries these pairs into the Slop Map and the Interaction Sweep (Step 6.5) consumes them directly. Empty on thin-history targets (non-fatal).
-   - `---co-change-groups---` (`g{n}  files=...  modules=...`) — **ripple-groups**: connected components of the hidden-coupling edges (stronger-support edges only, so they stay entity-sized). The entity-ripple seed the **System Model** (Step 2.7) consumes; each cluster is a candidate domain-entity neighborhood, not a final entity.
-   - `---feature-envy-candidates---` (`path  envies=<module>  ext=N  own=M  ratio=R`) — **feature-envy (Fe) pre-signal**: a file that references ONE internal module's bound names (`ext`) far more than its own top-level symbols (`own`), `ratio = ext / (ext + own)`. Coarse + file-level (third-party imports excluded); the Fe lens agent confirms at function granularity.
-
-   **Single-file target:** there is no peer median — judge size against the language's absolute threshold (TS/Rust/Go ~200 LOC, Python/Kotlin ~300, C# ~400, Java ~500) and note this in the scorecard.
+   Read the output as authoritative. Hold every block in main context — they are the severity anchors for the whole review. Read `references/metrics-blocks.md` NOW — it is the block-by-block interpretation glossary (loc baselines, size-outliers vs the godfile G gate, low-cohesion Lc, churn, export-usage, test-density, dup-candidates run/tokenSim semantics, co-change Tc pairs + ripple-groups, feature-envy pre-signal, and the single-file-target rule); interpret every block exactly per that file.
 
 2. **Probe + ingest external tools as ground truth** (read-only, portable, suggest-never-install). Run the capability probe:
 
@@ -134,68 +123,9 @@ The final artifact is blueprint-consumable per phase.
    node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/tool-probe.mjs" "<target>"
    ```
 
-   **Read-only tool contract (enforced for EVERY tool in this step).** A tool may ONLY read source and write its OWN report artifact — analysis JSON to the scratchpad, or a coverage report to the repo's conventional `coverage/` dir. NO tool may modify source files: never pass `knip --fix`, `biome --write`/`--fix`, a dependency-cruiser auto-fix, or invoke any ts-morph mutation / `.save()`. The `metrics.mjs` / `tool-probe.mjs` / `coverage.mjs` / `semantic.mjs` helpers are **stdout-only** by construction. The single code-EXECUTING action permitted is running the test suite to produce a coverage report (writes the report, never source) — and only through the coverage checkpoint. A tool that cannot run read-only is treated as `absent`.
+   It maps each tool to the **lens it sharpens** and classifies it `configured | installed-unconfigured | absent` — **without running or installing anything**. Then Read `references/tool-ingestion.md` NOW — BEFORE running any external tool — and follow it exactly: the read-only tool contract, the per-tool ingestion instructions (depcruise, knip, jscpd, coverage, stryker, ts-morph, ast-grep/opengrep, CodeScene, SonarQube), the DB ground-truth gates (SQLFluff, Atlas), the per-tool degradation checkpoint, the `## Tool Coverage` section rule, the Deterministic Ground Truth Fold (K- / DC- / DC-orphan- / CS- / AS- / OG- / P- Slop Map entries), and the per-lens tool precedence.
 
-   It maps each tool to the **lens it sharpens** and classifies it `configured | installed-unconfigured | absent` — **without running or installing anything**. Then:
-   - **Run the present ones** (status `configured`/`installed`) to the scratchpad and parse them:
-     - dependency-cruiser (sharpens **L**): **scan from the repo ROOT, then filter to the target** — `npx depcruise . --config <config> --output-type json --metrics`, then keep modules whose `source` and violations whose `from` start with `<target>`. **Do NOT scan the target subpath directly** (`depcruise <target>`) when the target is not the repo root: a scoped scan cannot see `app/`→`lib/` (cross-boundary) imports, so afferent `Ca` is undercounted AND the `no-orphans` rule FALSE-flags every target file consumed only from outside the target (verified: a `lib`-scoped scan reports `lib/account/display.ts` as an orphan though 9 app pages import it; a root scan correctly shows `afferent=9`, 0 orphans). Capture the FULL graph (modules + edges + `circular`/orphans) **and** the per-folder stability metrics (afferent `Ca` / efferent `Ce` / instability `I = Ce/(Ca+Ce)`), not just `summary.violations`. Count `forbidden`/`required` rules in the config: **if few/none, "no violations" is NOT meaningful** — note it and SUGGEST `depcruise --init` / boundary rules; the graph + metrics are still ingested. **Dead-wood (reachability, sharpens A):** harvest any `reachable`/`no-orphans` rule the config already defines, AND — since the ROOT scan yields afferent coupling — treat modules with `Ca=0` that are not entry points (framework entrypoints, `*.d.ts`, tests) as dead-*module* candidates that complement knip's dead-*export* signal from the module-reachability angle knip misses (precedence: knip is authoritative for dead exports; depcruise reachability ADDS unreachable whole-modules). **Blast-radius (sharpens state/data-flow ownership + temporal coupling):** when the review zooms into a single target file/entity, `npx depcruise <root-scope> --config <config> --output-type text --focus '<module-path-regex>'` lists everything reaching or reached-by it — its scoped dependency neighborhood (read-only; `--reaches '<regex>'` gives the downstream-only cone). Both run from the repo ROOT (a scoped scan under-counts cross-boundary afferent, per the root-scan rule above).
-     - knip (sharpens **A**): `npx knip --reporter json` — dead exports/files within the target.
-     - jscpd (sharpens **D**; v5 = self-contained Rust binary, also `cpd`): `jscpd <target> --reporters json --output <scratchpad> --silent --min-tokens 50 --format "typescript,tsx,javascript,jsx"`, then read `<scratchpad>/jscpd-report.json` — `duplicates[]` (`firstFile.name` / `secondFile.name` / `lines` / `fragment`) + `statistics.total.percentage`. It writes ONLY its report to the scratchpad (read-only on source). When present, jscpd is the **authoritative D signal**; `metrics` `dup-candidates` drops to corroboration + structural-Type-2 supplement (see precedence).
-     - coverage (sharpens **T**): Framework-aware coverage generation. Read the tool-probe `---report-status---` lines: `coverage: present|absent`. If `absent` AND the tool is `configured`/`installed`, run a **Tier 1 checkpoint** via `ask_user_question`:
-       "Coverage report absent. Generate one? Detected: `{covTool}`. Estimated: ~30s. Coverage gives the T lens per-file percentages to cross with assertion density."
-       Options: **"Generate coverage (Recommended)"** / **"Skip — T lens on assertion density only"**. On **Generate**: run the framework-specific command from the probe's `cmd=` key (e.g. `npx vitest run --coverage`). On **Skip**: record "T lens running unaided (no coverage)" in `## Tool Coverage`. When the tool is `absent`, route through the per-tool degradation checkpoint below — the T lens runs on assertion density only.
-       If present, parse with `coverage.mjs`:
-       ```bash
-       node "${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/_helpers/coverage.mjs" "<target>"
-       ```
-     - stryker (sharpens **T**, mutation testing): Mutation score distinguishes genuine test coverage from test theater. Read the tool-probe `---report-status---` lines: `mutation: present|absent`. If `absent` AND the tool is `configured`, run a **Tier 2 checkpoint** via `ask_user_question`:
-       "Mutation report absent. Run StrykerJS on `{target}`? {N} source files, estimated {X} min. Mutation testing finds tests that execute code but don't verify behavior — definitive test theater detection. High coverage + low mutation score is the strongest T-lens signal."
-       Options: **"Run mutation testing (Recommended)"** / **"Skip — use coverage only"** / **"I'll run StrykerJS manually"**. On **Run**: `npx stryker run --mutate "<target>/**/*.ts" --reporters json --concurrency 4`. On **Skip**: record "T lens running without mutation signal" in `## Tool Coverage`. On **Manual**: the review continues; parse the report when available.
-       When a report EXISTS: check freshness via `git diff --name-only HEAD -- <target>` — if no files under the target changed since the report's mtime, use it directly. If files changed, re-offer the checkpoint ("Files changed since last mutation run. Re-run?").
-       If present, parse with `mutation.mjs`:
-       ```bash
-       node "${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/_helpers/mutation.mjs" "<target>"
-       ```
-     - ts-morph (sharpens **S / Fe / A**; status `configured`): `node "${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/_helpers/semantic.mjs" "<target>"` — type-resolved supersets of three metrics signals the type system sees and regex cannot: `---write-sites-semantic---` (writers per table/RPC, resolving **imported/aliased** table names — not just same-file consts), `---feature-envy-semantic---` (per-symbol **behavioralRefs vs dataRefs** split; data-only leans are dropped at source), `---dead-exports-semantic---` (exports with **zero external `findReferences`** — emitted ONLY when knip is absent; knip is the primary, dynamic-pattern-aware A tool, so when it ran this block is `skipped` and the slow `findReferences` pass is avoided), and `---type-fragmentation-semantic---` (**C** — `kind=drift`: one name with structurally DIFFERENT shapes; `kind=same-shape`: the SAME shape under DIFFERENT names = a missing shared type — the structural seed no name-based search or external tool produces). `write-sites-semantic` / `feature-envy-semantic` **SUPERSEDE** the regex `---write-sites---` / `---feature-envy-candidates---` for S / Fe whenever present; `dead-exports-semantic` supersedes `---export-usage---` for A only on the knip-absent fallback path; `type-fragmentation-semantic` SEEDS the C lens (complementary to its name-based search). If it returns `---semantic-status--- unavailable: …` (no tsconfig / project > cap / ts-morph unresolvable), S / Fe / A degrade to the regex signals — route this through the per-tool degradation checkpoint below; do NOT silently proceed.
-     - ast-grep / opengrep (structural CONFIRMATION, sharpens **D / M / C / S / Fe**; via `${CLAUDE_PLUGIN_ROOT}/skills/_shared/structural.mjs`): these are pattern-MATCHING tools (you supply a shape), NOT discovery tools — so they do NOT pre-seed the Slop Map this version. When a lens later NAMES a concrete candidate shape, the orchestrator (or the verify-gate `claim-verifier`, which has Bash) confirms/counts it READ-ONLY: `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/structural.mjs" --tool ast-grep --pattern '<shape>' --lang <l> <target>` — a structural occurrence count that beats a regex grep. A curated arch "slop-shape" ast-grep pattern pack AND an Opengrep arch rule pack are DEFERRED (Opengrep runs live only in deep-review's Security lens). NEVER pass a mutate flag.
-     - CodeScene Code Health (MCP — gated by tool AVAILABILITY, not the filesystem probe; corroboration, never owns a lens): when the `mcp__codescene__*` tools are available to you (CodeScene MCP connected), fold Code Health as an authoritative maintainability cross-check on the `metrics.mjs` structural signals — `mcp__codescene__code_health_score` (or `code_health_review` for the smell breakdown) on the target's top size/complexity outliers (file-based, works on any license). On a paid CodeScene project also `mcp__codescene__list_technical_debt_hotspots_for_project` (churn x health systemic hotspots — a ground-truth prioritization signal complementing `metrics` churn) and `mcp__codescene__code_health_refactoring_business_case` on the top polish targets (ROI to weight the Step-8 phased plan). This is corroboration / prioritization only — `metrics.mjs` + the repo's own linters remain the authoritative structural ground truth — so when the MCP is unavailable it degrades SILENTLY (no per-tool checkpoint): record `CodeScene: unavailable` in `## Tool Coverage` and proceed. Read-only; never a mutate action.
-     - SonarQube (MCP or CLI — gated by AVAILABILITY; ground truth, same do-not-re-report discipline as the other linters): when `mcp__sonarqube__*` tools are available or the repo carries a `sonar-project.properties` with `sonarqube-cli` installed, pull the open issues intersecting the target (MCP per-file analysis, or CLI issue search filtered to target paths). Digest to `Sonar (SQ-): {file:line — rule — severity}` rows folded with the linter ground truth — lenses MUST NOT re-report these; they focus on what Sonar's rules do not cover. When neither surface exists, omit the row silently.
-   - **DB ground truth** (scope-gated, runs before the lens wave). When the tool-probe `---report-status---` shows `db-tools: present`, the target has a detectable database surface (migrations directory, ORM config, or DB driver dependency). Run:
-     ```bash
-     sqlfluff lint supabase/migrations/ --format json 2>/dev/null || echo '{"error":"TOOL_FAILED"}'
-     ```
-     Digest to `DB (SQLFluff): {N} lint violations — file:line — rule` in the Discovery Map. `CP01`/`RF02`/`ST06` violations on changed migration files are 🟡 findings — migrations with anti-patterns are pre-existing bugs in waiting.
-   - When the probe also shows `atlas: configured`, run:
-     ```bash
-     atlas schema diff --env dev 2>/dev/null || echo 'TOOL_FAILED'
-     ```
-     Digest to `DB (Atlas): {schema-drift summary}`. Schema drift (DB state ≠ migration state) is a 🔴 finding — the migration history no longer represents reality. These become **P- prefixed Slop Map entries**. When the DB is unreachable, record `DB runtime: unavailable` and skip pg_stat_statements/hypoPG — the migration-lint signals (SQLFluff, Atlas) still run.
-   - When `db-tools: absent`, skip the entire DB gate — no degradation prompt needed (the P lens won't fire).
-   - **Per-tool degradation checkpoint (never degrade silently).** For EACH registry tool whose lens(es) would run UNAIDED — status `absent` or `installed-unconfigured`, OR a `configured` tool whose run returned `unavailable`/errored (e.g. `semantic.mjs` → `unavailable`, depcruise config with no rules, coverage with no report) — CHECKPOINT via `ask_user_question` **before continuing**: "{tool} (sharpens {lens}) is {status/reason} — {probe `hint=`}. Proceed with {lens} running unaided, or pause so you can install/configure it?" Options: **"Proceed unaided (Recommended)"** / **"Pause — I'll set it up"**. On **Proceed** → record "{lens} running unaided" in `## Tool Coverage` and continue. On **Pause** → STOP the review and let the user install/configure (NEVER install for them); when they resume, re-run the probe + present-tool runs from the top of this step. A `configured`/`installed` tool that ran cleanly needs no checkpoint. Ask **one question per degraded tool** (each tool gets its OWN Proceed/Pause decision — not a single bundled yes/no); you MAY place several of these per-tool questions in one `ask_user_question` call, but every degraded tool must get its own decision — none is skipped silently.
-   - **Write a `## Tool Coverage` section** into the skeleton (Step 4): one row per tool — status, the lens it backs, and whether it was run / suggested — so the artifact is explicit about which lenses are tool-backed vs running unaided.
-
-   **These outputs are GROUND TRUTH — findings must NOT re-report them.** They define what the tools already cover so the review spends judgment only on the slop they miss. Any tool absent / unconfigured / timed-out routes through the per-tool degradation checkpoint above — never silently skipped; on **Proceed** it is recorded "{lens} running unaided" and the review continues, on **Pause** the review stops until the user sets it up.
-
-   **Deterministic Ground Truth Fold** (authoritative at the Slop Map level). When knip and depcruise ran successfully, promote their output into non-negotiable Slop Map entries BEFORE the lens wave. Per line above, every folded entry is ground truth its lens MUST NOT re-report — each entry below names only the judgment-level residue that lens still owns:
-   - **Knip → dead-code (A) ground truth**: Every `knip` unused export + unused file whose path is under the target becomes an **A-finding with severity set by knip's own category** (`exports` = 🟡, `files` = 🔵, `dependencies` = 🔴), prefix `K-`. A lens residue: judgment-level dead abstractions knip can't see (exported but semantically dead, stale abstractions behind `export *`).
-   - **depcruiser → boundary/cycle (L) ground truth**: Every `depcruise` circular dependency or forbidden-rule violation whose `from`/`to` paths intersect the target becomes an **L-finding**. Forbidden-rule violations with `severity: error` are 🔴; `severity: warn` are 🟡; prefix `DC-`. L lens residue: semantic leaks (infrastructure vocabulary leaking into domain types, wrong abstraction direction) that depcruiser's regex-based rules cannot detect.
-   - **depcruiser → orphaned modules (A supplement)**: Modules with `Ca=0` that are not framework entrypoints / test files / type declarations become **A-findings at 🟡** (whole-module dead wood — complements knip's dead-exports). Record with prefix `DC-orphan-`.
-   - **CodeScene → god-file quality (G ground truth)**: Every `size-outlier` file with a `code_health_score` < 9.0 becomes a **G-finding at 🟡 (score 7.0–8.9) or 🔴 (score < 7.0)**, prefix `CS-`. G lens residue: **responsibility-mixing** (concern categories, cohesion islands) that CodeScene's complexity metrics can't see. When CodeScene is unavailable, the G lens falls back to `metrics.mjs` alone — no CS- entries.
-   - **Arch-lint ast-grep → multi-lens ground truth (G/Lc/D/C/M/S/Fe/A)**: When the `---report-status---` footer shows `arch-lint-ast: present`, `ast-grep scan` matches become **AS- prefixed Slop Map entries** with severity from each rule's YAML. The lens each rule targets (encoded in the rule's `id`) owns only the judgment-level residue the structural pattern can't see. When the pack is absent, lenses run unaided — no degradation checkpoint needed.
-   - **Arch-lint opengrep → security + missing-abstraction ground truth (Sec/M)**: When the `---report-status---` footer shows `arch-lint-og: present`, `opengrep scan --taint-intrafile` matches become **OG- prefixed Slop Map entries** with severity from each rule's YAML. Sec/M residue: judgment-level concerns (reachability analysis, business-logic security, abstraction semantics). Opengrep's HOF-aware taint is authoritative for injection paths; ast-grep's syntactic patterns are authoritative for structural smells. When the pack is absent, Sec/M run unaided.
-   - **Arch-lint ast-grep security rules → module security ground truth (Sec)**: When the `tools/arch-lint/rules/security/` directory has rules, `ast-grep scan` matches on those rules become additional **OG- prefixed Slop Map entries**. These cover hardcoded secrets (🔴 — immediate compromise) and exposed routes (🟡). The Sec lens agent cross-references these with opengrep taint sinks to produce a complete module-security picture.
-   - **DB tools → persistence health ground truth (P)**: When `db-tools: present`, SQLFluff and Atlas output becomes **P- prefixed Slop Map entries**. SQLFluff CP01/RF02/ST06 violations → 🟡. Atlas schema drift → 🔴. When the DB is reachable, pg_stat_statements slow queries and hypoPG index gaps supplement these — runtime signals, not pre-scanned ground truth. When `db-tools: absent`, the P lens does not fire.
-   **Tool precedence per lens (run the best available, no double-reporting).** When more than one signal covers a lens, the most capable one that actually RAN is **authoritative**; the others are corroboration / fallback only — never emit a finding the authoritative signal already covers, and prefer running the better tool over the weaker metric. Precedence:
-   - **A** (dead code): knip ▶ `dead-exports-semantic` ▶ `export-usage`. knip ran ⇒ `export-usage` + `dead-exports-semantic` are corroboration only; knip absent ⇒ `dead-exports-semantic` is primary, then `export-usage`.
-   - **cycles**: depcruise `circular` ▶ madge (madge is redundant when depcruise ran).
-   - **L**: depcruise graph + metrics (authoritative; no metric overlap).
-   - **S / Fe**: `*-semantic` (ts-morph) ▶ **ast-grep** (structural confirmation of a NAMED candidate, via `structural.mjs`) ▶ `metrics` regex.
-   - **C**: `type-fragmentation-semantic` + the name-based agent are **complementary** (structural vs name-based — neither supersedes; see the C lens). **ast-grep** may confirm a named structural type-shape (complementary; not a curated discovery pass this version).
-   - **D**: jscpd (if installed) ▶ `metrics` `dup-candidates`. jscpd ran ⇒ its clones are authoritative; `metrics` dup corroborates and ADDS structural Type-2 clones (renamed identifiers) jscpd's exact-mode may miss — never re-report a pair jscpd already found. **ast-grep** confirms a named D/M shape's occurrence count (structural; beats regex) — confirmation only, no curated discovery pass.
-   - **Multi-lens (G/Lc/D/C/M/S/Fe/A)**: `AS-` (ast-grep arch-lint) findings are authoritative for their target lenses — lenses MUST NOT re-report them. The arch-lint pack runs BEFORE the lens wave, so its findings are Slop Map ground truth like K- and DC-.
-   - **Sec/M**: `OG-` (opengrep arch-lint) taint findings are authoritative for security and missing-abstraction — Sec and M lenses MUST NOT re-report them. Opengrep's HOF-aware taint is the strongest available signal for injection paths.
-   - **P**: `P-` (SQLFluff + Atlas) findings are authoritative for persistence health — the P lens MUST NOT re-report them. When the DB is reachable, pg_stat_statements + hypoPG runtime signals provide additional quantitative evidence.
-   A lower-precedence block may still ride in the Slop Map for CONTEXT, but that is not a license to re-report what the authoritative signal found.
+   **These outputs are GROUND TRUTH — findings must NOT re-report them.** They define what the tools already cover so the review spends judgment only on the slop they miss. Any tool absent / unconfigured / timed-out routes through the per-tool degradation checkpoint in `references/tool-ingestion.md` — never silently skipped; on **Proceed** it is recorded "{lens} running unaided" and the review continues, on **Pause** the review stops until the user sets it up.
 
 3. **Locate the prior review** for drift tracking. Dispatch the `artifacts-locator` agent:
 
@@ -274,24 +204,7 @@ Detect the judgment-level slop linters miss. Instead of dispatching all 10 lense
 
 #### 5a. Build the Slop Map (shared across both waves)
 
-```
-Target: {target}   Layers: {layer table, one line each}
-Metrics: median {loc_median} LOC, p90 {loc_p90}
-Size outliers: {path  loc  x_median rows — raw LOC context}
-God-file candidates (G gate): {path  loc  x_median  cats  coh  reason rows from ---godfile-candidates---}
-Low-cohesion (Lc): {path  coh  syms  islands rows from ---low-cohesion--- — disjoint responsibilities, any size}
-Export-usage flags: {path  exports  inbound rows where inbound is 0 or low; PLUS dead-exports-semantic rows when semantic.mjs ran}
-Test-density flags: {path  cases  asserts  ratio rows}
-Dup-candidates: {jscpd clones when present = AUTHORITATIVE; ---dup-candidates--- = corroboration + structural-Type-2 supplement}
-Co-change pairs (Tc): {fileA | fileB  support  conf rows — hidden coupling, no import edge}
-Feature-envy (Fe): {feature-envy-semantic rows when present, else ---feature-envy-candidates---}
-Write-sites (S ownership): {write-sites-semantic rows when present, else ---write-sites--- — writers>=2 = scattered write path}
-Type fragmentation (C): {type-fragmentation-semantic rows when present — kind=drift / kind=same-shape; structural seed for the C lens}
-Tool ground-truth: depcruise {violations summary; per-folder instability Ca/Ce/I; circular; orphans}; knip {dead-code summary}; coverage {per-file stmt/branch/fn% + branch-gaps}; mutation {per-file killed/survived/score% from ---mutation--- when present; scope line values: "full" = missing target files are clean (StrykerJS filtered no-executable-code files), "partial" = missing files were never mutated (unknown, NOT clean), "detected" = whole-repo target — the report IS the target, read like "full", "none"/"empty"/"parse-error" = no usable report — T lens runs on coverage + test-density alone}
-Arch-lint (ast-grep): {AS- findings — file:line — rule-id — severity} | omitted when pack absent
-Arch-lint (opengrep): {OG- taint findings — source→sink — rule-id — severity} | omitted when pack absent
-CodeScene (CS-): {file — score — smell} | omitted when MCP unavailable
-```
+Read `references/slop-map.md` NOW and assemble the map exactly per its template — one row per Step-2 signal (metrics blocks, tool ground-truth incl. the mutation scope-line semantics, arch-lint AS-/OG- rows, CodeScene CS- rows), filled from the Step 2 outputs.
 
 The **co-change pairs are the temporal-coupling (Tc) lens in full** — there is no Tc agent; the deterministic metric IS the lens. They ride in the Slop Map and are consumed by the full Interaction Sweep (Step 6.5).
 
@@ -360,18 +273,7 @@ The warrant never overrides a developer choice — on the `full` band the develo
 
 **Dispatch only the lenses the checkpoint selected.** On the `full` band, dispatch all nine. On the `selective` band, dispatch exactly the warrant's `selectiveWave2` set (the live cross-cutting lenses + always-on M, L, Sec, and P) — skip the rest and note them as "no seed — not dispatched" in the artifact. Below, each lens is described in full; run the subset that applies. Send them in a single multi-Agent message. Each receives the full Slop Map + the Wave 1 findings + IX compounds as context (they CAN see each other's output — Wave 2 lenses run cooperatively, not isolated from Wave 1).
 
-- **C — Concept / type fragmentation** (always for typed targets): `codebase-pattern-finder` — "Start from `type-fragmentation-semantic` seeds when present (drift: same name, different shapes; same-shape: same shape, different names). Then also find name-based duplicates: `export type X` / `interface X` / enum / const-union NAMES. Per concept emit every definition `file:line`, whether definitions AGREE or DRIFTED, and the canonical home."
-- **A — Speculative generality / dead abstraction** (per `export-usage` row with `inbound=0`, cross-ref knip): `codebase-analyzer` — "Confirm whether the abstraction is speculative: cite actual consumers or `<none found>`. Distinguish genuinely-unused from knip false-negative. `inbound=?` means unmeasured, NOT dead. When `skipped (knip present)`, A rests on knip + `export-usage`."
-- **T — Test theater** (fires on `test-density` rows AND/OR `coverage` gaps AND/OR `mutation` low-score rows): `codebase-analyzer` — "Cross assert-density with coverage AND mutation score. 2x2x2: covered+asserted+high-mutation-score = real (skip); covered+NOT asserted = theater; covered+asserted+LOW mutation score (<40%) = DEFINITIVE theater (code runs but behavior unverified); NOT covered+has asserts = mock theater; covered with 0%-branch region = coverage gap (not theater). Per finding: `file:line` + verbatim test + coverage number + mutation score when available. Mutation score is the strongest T-lens signal — promote severity when high coverage meets low mutation."
-- **L — Leaky abstraction / boundary erosion** (always; fed depcruise's FULL graph): `codebase-analyzer` — "depcruise violations are ground truth — do NOT re-report. Find SDP violations (stable→unstable), SEMANTIC leaks (implementation types exposed), circular clusters / orphans the rules miss. For any leak that a `forbidden` rule could prevent, emit a `prevention:` line with the proposed rule (read-only — do NOT modify `.dependency-cruiser.cjs`)."
-- **Sec — Module security** (always for typed targets; fed opengrep taint + ast-grep security rules): `codebase-analyzer` — "Feed: opengrep taint sinks (XSS, command injection, path traversal) + ast-grep secret/route matches + depcruiser boundary graph. For each: trace reachability — who can call this from outside the module? Cross-reference with integration-scanner's inbound refs and depcruiser's boundary graph. Hardcoded secrets in production code → 🔴 (immediate compromise). Exported server action without auth guard → 🔴. Taint sink reached from boundary → 🔴. Opengrep taint matches are AUTHORITATIVE for injection paths — do NOT re-evaluate. Ast-grep security matches are discovery — verify each. When opengrep is absent, degrade to ast-grep rules only (structural patterns, no data-flow)."
-- **M — Missing abstraction** (always): `codebase-pattern-finder` — "Start from the `projection-shapes-semantic` pairs when present — near-identical object-literal projections (the same record built at >=2 sites with a field of drift); these are deterministic, confirm and characterize each pair rather than re-discovering it. Then find the same CONCEPTUAL shape re-implemented inline across >= 2 files — NOT literal copy-paste (that's D). Per cluster: every `file:line`, the shared shape, the missing primitive (named function/type/module). Severity = repetition count + layer spread."
-- **S — State / data-flow ownership** (seed-gated: fires on `write-sites writers >= 2` OR a System-Model `owner: NONE` entity; grounded by write-site counts + System Model): `codebase-analyzer` — "START from `write-sites` with `writers >= 2`. Then the System Model's `owner: NONE` entities. Per finding: `file:line`, what the invariant IS, which sites can violate it. `writers=1` = clean — do NOT manufacture. Flag lower-confidence unless backed by `writers>=2`. **Respect style-specific ownership: event-driven PERSIST has no single owner by design; CQRS READ has no owner — do NOT flag these.**"
-- **Fe — Feature envy** (per `feature-envy` row; REJECT first, confirm second): `codebase-analyzer` — "When `feature-envy-semantic` is present: `behavioralRefs` is the genuine-envy magnitude (data-only leans already dropped). REJECT: thin forwarders, facade/orchestrator layers, constants/config files. Confirm genuine envy at FUNCTION granularity: a function doing substantial LOGIC on the envied module's members. Per finding: `file:line`, function name, suggested home on the envied module."
-- **P — Persistence health** (scope-gated: fires when tool-probe reports `db-tools: present`; always-on when gated): `codebase-analyzer` — "Feed: SQLFluff violations + Atlas schema diff + pg_stat_statements slow queries + hypoPG index gaps. For each: SQLFluff CP01/RF02/ST06 on changed migration → 🟡. Atlas schema drift (DB state ≠ migration history) → 🔴 — the source of truth is lost. Table with high sequential scans and no covering index → 🟡. Unused index on target table → 🔵. Slow query touching target tables above latency threshold → 🟡. When DB is unreachable, note 'DB runtime unavailable — migration-only signals' and proceed with SQLFluff + Atlas only. P- SQLFluff/Atlas findings are GROUND TRUTH — the P lens MUST NOT re-report what the gate already found."
-
-Also dispatch in the same message:
-- **Agent — precedent-locator:** "In git history for `{target}`, find prior splits / dedups / boundary-moves. Per precedent: commit, blast radius, follow-up fixes within 30 days, lesson."
+Read `references/wave2-lenses.md` NOW (only on a dispatching band — never when Wave 2 is skipped) and use its nine lens prompts verbatim for the selected subset, plus its `precedent-locator` dispatch in the same message.
 
 Wait for all Wave 2 agents. Collect their findings alongside the Wave 1 findings — together they form the complete **candidate slop findings** set, each keyed to a file and its layer, with a provisional `L<layer>-<seq>` ID and lens tag (G, Lc, D, C, A, T, L, Sec, M, S, Fe, P).
 
@@ -428,19 +330,7 @@ Collect the returned `IX-<n>` compounds. Each carries: Kind, Constituent finding
 3. **Resolve non-obvious call graphs** with a parallel `codebase-analyzer` when a file's internal structure is not clear from one read.
 
 #### 7.2 Dimension Sweep (10 dimensions)
-Walk all ten across every file in the layer; hold candidates in memory (do NOT triage yet). These catch layer-local issues the slop lenses, which are file-targeted, do not:
-- **Boundary** — what the layer owns; leaks up or down.
-- **Public surface** — exported names/types/ergonomics; siblings reaching past the facade; per-symbol consumer counts (from integration-scanner).
-- **Coherence / SRP** — each file and function does one thing.
-- **Granularity** — functions/methods too big/small; god-parameter lists.
-- **Programming by intention** — reads top-down as a story; named operations over inline blocks.
-- **DRY** — duplicated patterns within the layer or across siblings (hand any cross-file duplication to the D-lens evidence).
-- **DDD / ubiquitous language** — domain vocabulary consistent; no lingering legacy names.
-- **Naming** — file/type/function/constant names; symmetric where the concept is symmetric.
-- **Error / fail-soft posture** — uniform across the layer; multi-state returns use the language's idiomatic discriminated form.
-- **Module-graph hygiene** — no cycles; type-only back-refs only where supported.
-
-Produce a candidate list (typically 6-14/layer), each with ID `L<layer>-<seq>`, lens `10dim`, Evidence (`file:line` + verbatim quote), Quantified anchor (cite the relevant metric), What it is, Why it's slop, provisional Severity / Effort / Blast radius / Class.
+Walk all ten across every file in the layer; hold candidates in memory (do NOT triage yet). These catch layer-local issues the slop lenses, which are file-targeted, do not. Read `references/dimension-sweep.md` at the FIRST layer (it applies to every layer) — it defines the ten dimensions and the exact candidate-list format (`L<layer>-<seq>`, lens `10dim`, Evidence, Quantified anchor, What/Why, provisional Severity / Effort / Blast radius / Class).
 
 #### 7.3 Merge Verified Slop Findings (+ single-layer interactions)
 Pull in the Step 6 verified slop findings whose files belong to this layer. They already carry lens tag, quantified anchor, and Verify status. De-duplicate against 7.2 candidates (a DRY dimension hit and a D-lens hit on the same code are ONE finding — keep the richer one, note both signals). Also pull in any Step 6.5 `IX` compound whose constituents ALL fall in this layer — triage it here as a finding (lens `IX`, carrying its Root cause). Cross-layer `IX` compounds stay deferred to Step 10, where they seed the themes.
@@ -464,48 +354,7 @@ If Step 2 found no prior review: omit the Drift Delta section; the scorecard Com
 
 Otherwise, match prior review findings against this run's using **content-hash fingerprints** that survive file renames and line-number drift — unlike the old `path#symbol@lens` pattern which breaks when files move.
 
-#### 8a. Compute fingerprints for the current run
-
-For each accepted/deferred finding, compute a fingerprint via the helper:
-
-```bash
-node "${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/_helpers/fingerprint.mjs"
-```
-
-Feed it one JSON line per finding:
-```json
-{"id": "L0-01", "lens": "G", "quotedLines": ["export class GodFile {"], "symbol": "GodFile"}
-```
-
-The `quotedLines` field is the verbatim evidence line(s) from the finding. The helper normalises whitespace, strips comments, and produces a deterministic SHA-256 prefix. Two findings with the same lens class, same normalised code, and same symbol produce the same fingerprint regardless of file path or line numbers.
-
-The helper emits **exactly one stdout line per input finding**. A well-formed finding yields `{id, fp, lens, symbol}`; a malformed one yields `{id, fp: null, error}` (surfaced, never silently dropped). The run summary (`N ok, M invalid`) goes to stderr only, so it never pollutes the fingerprint stream.
-
-**Assertion (two checks, both must hold before matching):**
-1. **Count:** stdout line count == number of input findings. A mismatch means the helper itself misbehaved — abort and report.
-2. **No nulls:** no stdout line has `fp: null`. Any such line is a malformed finding — abort, print its `error`, and fix the input before proceeding.
-
-Then collect fingerprint → finding ID mappings from the `fp`-bearing lines for all accepted/deferred findings.
-
-#### 8b. Compute fingerprints for the prior review
-
-Read the prior review artifact. For each finding (by its ID), extract `lens`, the verbatim evidence line(s), and the symbol name. Pipe through the same helper to get prior-finding fingerprints.
-
-#### 8c. Match by fingerprint
-
-Match `{prior_fp → prior_id}` against `{current_fp → current_id}`. The orchestrator computes this inline — no agent dispatch needed. For each match:
-
-- **Fingerprint match** → `Still-open`. The finding moved (possibly renamed file, shifted line numbers) but the code is the same.
-- **Prior fingerprint has NO current match** → check if the evidence is genuinely gone. Read the cited code at HEAD via the `claim-verifier`:
-  - Evidence genuinely absent → `Resolved` (VERIFY — do not trust path alone; a renamed file with the same bug must not read as Resolved)
-  - Evidence still present but fingerprint changed (partial fix, body edited) → `Regressed` (the bug evolved but wasn't fixed)
-- **Current fingerprint has NO prior match** → `NEW` (net-new slop since last review)
-
-Fallback: if the fingerprint helper is unavailable (missing node, etc.), degrade to `path#symbol@lens` matching and note "fingerprint unavailable — path-based matching" in the Drift Delta section.
-
-#### 8d. Write the Drift Delta
-
-Write the **Drift Delta** section + scorecard `Resolved R · Regressed Rg · Still-open S · NEW N · Net Δ`. Update frontmatter `drift`. Headline the Regressed and NEW rows — they are the net-new slop the review exists to surface. Note when a Still-open match involves a renamed file (the fingerprint matched but the path didn't).
+Read `references/drift-fingerprints.md` NOW (gated — only when a prior review exists) and execute its 8a–8d exactly: fingerprint current + prior findings via `fingerprint.mjs` (count + no-null assertions, abort on either), match inline (no agent), classify `Still-open` / `Resolved` (claim-verifier-verified at HEAD) / `Regressed` / `NEW`, write the Drift Delta section + scorecard row + frontmatter `drift`, and fall back to `path#symbol@lens` matching when the helper is unavailable.
 
 ### Step 9: Capture Emergent Methodology Principles
 
@@ -611,6 +460,7 @@ Spawn agents in parallel only when searching for different things. Wave 1 lenses
 ## Important Notes
 
 - **All checkpoints are `ask_user_question`** — the tool always offers free-text via "Other"; don't author prose prompts.
+- **References are load-bearing**: read each `references/*.md` at the step its pointer names (see the References index after Flow); apply reference content verbatim — never paraphrase it into a dispatch or the artifact, and never read a gated reference (`wave2-lenses`, `drift-fingerprints`) when its gate did not fire.
 - **Read all in-scope files FULLY in Step 7.1** — selective reads bias findings toward what you happened to load.
 - **Edit the artifact progressively in Step 7.5** — never batch all findings into one final write. The artifact is the durable checkpoint between sessions.
 - **Critical ordering:**
