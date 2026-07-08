@@ -38,6 +38,8 @@ writeFileSync(
 	join(tmp, "repo", "src", "deep", "beta.ts"),
 	["import { CAP } from \"../alpha\";", "export function validate(load: number, prior: number, pct: number) {", "  return load <= prior * (1 + pct / 100) + CAP;", "}"].join("\n"),
 );
+mkdirSync(join(tmp, "repo", ".github", "workflows"), { recursive: true });
+writeFileSync(join(tmp, "repo", ".github", "workflows", "ci.yml"), ["name: ci", "on: push"].join("\n"));
 
 // ---------- review-artifact case ----------
 mkdirSync(join(tmp, "art", ".rpiv", "artifacts", "reviews"), { recursive: true });
@@ -64,6 +66,7 @@ slop_by_lens: { duplication: 2, dead_abstraction: 0 }
 
 - \`src/alpha.ts:3\` — \`return prior * (1 + pct / 100);\` (good quote)
 - \`src/deep/beta.ts:2\` — \`export function TOTALLY_WRONG(\` (bad quote)
+- \`.github/workflows/ci.yml:1\` — CI gate unaffected (dot-dir citation must resolve)
 `,
 );
 const g1 = run(reviewArtifact, {
@@ -87,6 +90,7 @@ assert.equal(byText(g1, "status: ready").passed, false, "in-progress fixture mus
 assert.equal(byText(g1, "placeholders").passed, true, "fixture has no step placeholders");
 assert.equal(byText(g1, "citation resolves").passed, false, "ghost.ts + line 99 must fail resolvability");
 assert.match(byText(g1, "citation resolves").evidence, /ghost\.ts/);
+assert.doesNotMatch(byText(g1, "citation resolves").evidence, /ci\.yml/, ".github/** paths resolve (dot-dir whitelist)");
 assert.equal(byText(g1, "verbatim quote").passed, false, "one bad quote must fail");
 assert.match(byText(g1, "verbatim quote").evidence, /1\/2|beta\.ts:2/);
 assert.equal(byText(g1, "recall D1").passed, true, "both dup sites cited within window");

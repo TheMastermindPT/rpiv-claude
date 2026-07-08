@@ -44,10 +44,12 @@ expect("produced artifact exists", true, artifact);
 // Skip anything that is not the source tree: dot-dirs (.git, .stryker-tmp — a full
 // sandbox COPY of the sources that a T-lens mutation run leaves behind, .rpiv, ...),
 // dependency/build/report output. Otherwise every real path resolves ambiguously.
+// Exception: .github IS source tree (CI workflows are legitimate citation targets —
+// a review's blast-radius rows cite them; iteration-4 DR-2 false-failed without this).
 const SKIP_DIRS = new Set(["node_modules", "coverage", "reports", "playwright-report", "dist", "build", "out"]);
 function walk(dir, acc, base) {
 	for (const e of readdirSync(dir)) {
-		if (e.startsWith(".") || SKIP_DIRS.has(e)) continue;
+		if ((e.startsWith(".") && e !== ".github") || SKIP_DIRS.has(e)) continue;
 		const p = join(dir, e);
 		const rel = base ? `${base}/${e}` : e;
 		if (statSync(p).isDirectory()) walk(p, acc, rel);
