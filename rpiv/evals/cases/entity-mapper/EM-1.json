@@ -1,0 +1,23 @@
+{
+  "id": "EM-1",
+  "name": "real-seeds-system-model",
+  "skill": "entity-mapper (agent)",
+  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-96e3553",
+  "ref": "96e3553",
+  "clean": [],
+  "output": "agent",
+  "prompt_file": "EM-1.prompt.md",
+  "ground_truth_note": "Real Step 2.7 dispatch: frozen metrics.mjs seeds for lib/generation at 96e3553. The 06-29 human-reviewed artifact's System Model named WeeklyPlan, PlanGenerationRun, UserExerciseState/Substitution. plan_generation_runs has writers=1 (run-lifecycle.ts owns).",
+  "checks": {
+    "citations": { "min_resolvable_pct": 100 },
+    "forbidden_vocab": "🔴|🟡|severit|remediat|refactor|must fix",
+    "required_sections": [
+      "^## System Model",
+      "^### L0",
+      "\\*\\*Owner:\\*\\*",
+      "\\*\\*Ripple-group:\\*\\*",
+      "\\*\\*Unguarded / split-brain:\\*\\*"
+    ],
+    "expected_entities": ["WeeklyPlan", "PlanGenerationRun"]
+  }
+}

@@ -1,0 +1,18 @@
+diff --git a/lib/generation/adaptive-context/validation.ts b/lib/generation/adaptive-context/validation.ts
+index fda2003..05efebd 100644
+--- a/lib/generation/adaptive-context/validation.ts
++++ b/lib/generation/adaptive-context/validation.ts
+@@ -306,10 +306,9 @@ function getIncreaseLoadValidationError(
+     return `${exercise.exercise_id}: increase-load recommendation requires load above ${formatNumber(summary.prescribedLoadKg)} kg`;
+   }
+ 
+-  const maxAllowedLoad = getMaxAllowedLoadKg(
+-    summary.prescribedLoadKg,
+-    recommendation.max_load_increase_pct,
+-  );
++  // Cap math inlined here — one multiply instead of the helper round-trip.
++  const maxAllowedLoad =
++    (summary.prescribedLoadKg * (1 + recommendation.max_load_increase_pct)) / 100;
+ 
+   if (loadAtOrBelow(exercise.load_target_kg, maxAllowedLoad)) {
+     return null;

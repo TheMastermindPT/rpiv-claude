@@ -1,0 +1,33 @@
+{
+  "id": "AR-2",
+  "name": "fixed-slop-absence-adaptive",
+  "skill": "architectural-review",
+  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
+  "ref": "b460257",
+  "clean": [".rpiv/artifacts/architecture-reviews"],
+  "artifact_glob": ".rpiv/artifacts/architecture-reviews/*.md",
+  "prompt": "/rpiv:architectural-review the adaptive sub-pipeline of lib/generation — the two directories lib/generation/adaptive-context and lib/generation/adaptive-application plus their barrels lib/generation/adaptive-context.ts and lib/generation/adaptive-application.ts. It has grown organically; give it an anti-slop pass. (Headless non-interactive run: at every approval checkpoint — scope, layer split, follow-ups — choose the recommended option and continue; never wait for user input.)",
+  "ground_truth_note": "Same target at HEAD, AFTER the user implemented the fixes: load-cap consolidated into lib/generation/load-cap.ts, snapshot projection shared, clamp fork unified. A precise review must not re-report the fixed findings as fresh slop. Remaining real slop (e.g. M6 prep-guard re-derivation, D4) MAY legitimately appear — no ceiling on findings.",
+  "checks": {
+    "validate_artifact": true,
+    "citations": { "min_resolvable_pct": 95, "verbatim": true },
+    "absence": [
+      {
+        "id": "M1-fixed",
+        "pair": ["lib/generation/adaptive-context/validation.ts", "lib/generation/adaptive-application/prescription-mutators.ts"],
+        "pattern": "(load.?cap|max.?allowed|epsilon)[^\\n]*(duplicat|re-?deriv|diverg|re-?encode|copie|inlin)|(duplicat|re-?deriv|diverg)[^\\n]*(load.?cap|max.?allowed|epsilon)",
+        "note": "load-cap duplication was consolidated into load-cap.ts; both sides now import the same predicates"
+      },
+      {
+        "id": "M3-fixed",
+        "pair": ["lib/generation/adaptive-context/snapshots.ts"],
+        "pattern": "(snapshot|projection|field)[^\\n]*(duplicat|forked|parallel|copied)",
+        "note": "summary-snapshot projection now flows through a shared helper"
+      }
+    ],
+    "_semantic_stage_absence": "D1-fixed moved OUT of mechanical checks after two adjudications: regex cannot distinguish 'the unified clamp helper is duplicated' (would be a false re-report) from clamp-ADJACENT residual duplications that legitimately survive (iter-1: the dispatch fork; iter-2: inline roundToHalfKg(x*0.9) vs getScaledLoadTarget — quotes verify at HEAD). Grader-model question: does any finding claim the shared load-clamp HELPER itself is still duplicated between family-transforms.ts and prescription-mutators.ts? Both runs: no.",
+    "frontmatter": {
+      "present": ["health_score", "verification", "slop_by_lens"]
+    }
+  }
+}

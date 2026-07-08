@@ -1,0 +1,18 @@
+{
+  "id": "IS-2",
+  "name": "restraint-under-pressure",
+  "skill": "interaction-sweeper (agent)",
+  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
+  "ref": "b460257",
+  "clean": [],
+  "output": "agent",
+  "prompt_file": "IS-2.prompt.md",
+  "ground_truth_note": "REDESIGNED after four curation rounds proved 'exactly zero compounds' unwinnable inside one cohesive codebase: every hand-curated 'independent' set turned out to encode a real (or accidentally planted) coupling, which the sweeper grounded legitimately. What mechanically separated the BAD baseline outputs (thematic umbrellas: 'copy has no owner', 'mutation scope masks tests') from good ones: compound count under pressure, grounded constituent-anchored evidence, and explicit rejection reasoning for non-grouped findings. Semantic admission-test adjudication (does the compound require the constituents' STATED defects?) is the grader-model second stage. Archived evidence: skill-evals/archive/IS-2-v1-*, IS-2-v2-*.",
+  "checks": {
+    "max_compounds": 1,
+    "require_rejection_reasoning": true,
+    "compounds": {
+      "constituents_subset_of": ["X1", "X2", "X3", "X4", "X5"]
+    }
+  }
+}

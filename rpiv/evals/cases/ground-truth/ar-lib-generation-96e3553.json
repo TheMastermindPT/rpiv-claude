@@ -1,0 +1,1159 @@
+{
+  "meta": {
+    "artifact": "C:/Users/pedro/Documents/GymApp/.rpiv/artifacts/architecture-reviews/2026-06-29_18-53-29_lib-generation.md",
+    "repo": "C:/Users/pedro/Documents/GymApp",
+    "ref": "96e3553",
+    "targets": [
+      "lib/generation/adaptive-context",
+      "lib/generation/adaptive-application",
+      "lib/generation/adaptive-context.ts",
+      "lib/generation/adaptive-application.ts"
+    ],
+    "extracted_at": "2026-07-08T02:15:17.526Z",
+    "finding_count": 24,
+    "compound_count": 8
+  },
+  "entities": [
+    "WeeklyPlan",
+    "PlanGenerationRun",
+    "UserExerciseState / Substitution"
+  ],
+  "findings": [
+    {
+      "id": "M1",
+      "lens": "M",
+      "severity": "High",
+      "what": "\"max allowed load = `prior*(1+pct/100)`\" + `0.001` kg epsilon",
+      "cites": [
+        {
+          "raw": "adaptive-application/prescription-mutators.ts:76",
+          "path": "lib/generation/adaptive-application/prescription-mutators.ts",
+          "line": 76,
+          "verbatim": "const loadTargetKg = getLoadIncreaseTarget({",
+          "resolved": true
+        },
+        {
+          "raw": "prescription-math.ts:111",
+          "path": "lib/generation/adaptive-application/prescription-math.ts",
+          "line": 111,
+          "verbatim": "preferred > prescribedLoadKg + 0.001 &&",
+          "resolved": true
+        },
+        {
+          "raw": "adaptive-context/validation.ts:307",
+          "path": "lib/generation/adaptive-context/validation.ts",
+          "line": 307,
+          "verbatim": "if (exercise.load_target_kg <= summary.prescribedLoadKg + 0.001) {",
+          "resolved": true
+        },
+        {
+          "raw": "adaptive-application/load-cap.ts",
+          "path": null,
+          "line": null,
+          "verbatim": null,
+          "resolved": false
+        }
+      ],
+      "primary": {
+        "raw": "adaptive-application/prescription-mutators.ts:76",
+        "path": "lib/generation/adaptive-application/prescription-mutators.ts",
+        "line": 76,
+        "verbatim": "const loadTargetKg = getLoadIncreaseTarget({",
+        "resolved": true
+      },
+      "in_target": true,
+      "fully_in_target": true,
+      "still_at_head": true,
+      "proposal_at_head": [
+        "lib/generation/load-cap.ts"
+      ]
+    },
+    {
+      "id": "M2",
+      "lens": "M",
+      "severity": "High",
+      "what": "\"near-max exertion\" `maxRpe >= 9.5`",
+      "cites": [
+        {
+          "raw": "plateau-rules.ts:251",
+          "path": "lib/generation/plateau-rules.ts",
+          "line": 251,
+          "verbatim": "if (evidence.maxRpe === null || evidence.maxRpe < 9.5) {",
+          "resolved": true
+        },
+        {
+          "raw": "adaptive-context/recommendations.ts:458",
+          "path": "lib/generation/adaptive-context/recommendations.ts",
+          "line": 458,
+          "verbatim": "evidence.maxRpe === null ||",
+          "resolved": true
+        },
+        {
+          "raw": "progression-types.ts",
+          "path": "lib/generation/progression-types.ts",
+          "line": null,
+          "verbatim": null,
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "plateau-rules.ts:251",
+        "path": "lib/generation/plateau-rules.ts",
+        "line": 251,
+        "verbatim": "if (evidence.maxRpe === null || evidence.maxRpe < 9.5) {",
+        "resolved": true
+      },
+      "in_target": true,
+      "fully_in_target": false,
+      "still_at_head": false,
+      "proposal_at_head": []
+    },
+    {
+      "id": "M7",
+      "lens": "M",
+      "severity": "High",
+      "what": "progression action/mode vocabulary scaffold + increase-ness",
+      "cites": [
+        {
+          "raw": "progression-knobs.ts:37",
+          "path": "lib/generation/progression-knobs.ts",
+          "line": 37,
+          "verbatim": "} as const satisfies Record<LoadProgressionAction, LoadProgressionMode>;",
+          "resolved": true
+        },
+        {
+          "raw": "progression-vocabulary.ts:55",
+          "path": "lib/generation/progression-vocabulary.ts",
+          "line": 55,
+          "verbatim": "} as const satisfies Record<ProgressionAction, ProgressionMode>;",
+          "resolved": true
+        },
+        {
+          "raw": "adaptive-action-policy.ts:97",
+          "path": "lib/generation/adaptive-action-policy.ts",
+          "line": 97,
+          "verbatim": "progressionIncrease: true,",
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "progression-knobs.ts:37",
+        "path": "lib/generation/progression-knobs.ts",
+        "line": 37,
+        "verbatim": "} as const satisfies Record<LoadProgressionAction, LoadProgressionMode>;",
+        "resolved": true
+      },
+      "in_target": false,
+      "fully_in_target": false,
+      "still_at_head": true,
+      "proposal_at_head": []
+    },
+    {
+      "id": "M5",
+      "lens": "M",
+      "severity": "Med-High",
+      "what": "\"recovery-replacement day = `orderedTrainingDays[0]`\"",
+      "cites": [
+        {
+          "raw": "session-patterns/templates.ts:62",
+          "path": "lib/generation/session-patterns/templates.ts",
+          "line": 62,
+          "verbatim": "resolvedCyclePhasePolicy.replaceTrainingDayWithRecovery",
+          "resolved": true
+        },
+        {
+          "raw": "validator.ts:40",
+          "path": "lib/generation/validator.ts",
+          "line": 40,
+          "verbatim": "if (!cyclePhasePolicy?.replaceTrainingDayWithRecovery) {",
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "session-patterns/templates.ts:62",
+        "path": "lib/generation/session-patterns/templates.ts",
+        "line": 62,
+        "verbatim": "resolvedCyclePhasePolicy.replaceTrainingDayWithRecovery",
+        "resolved": true
+      },
+      "in_target": false,
+      "fully_in_target": false,
+      "still_at_head": false,
+      "proposal_at_head": []
+    },
+    {
+      "id": "M3",
+      "lens": "M",
+      "severity": "Med",
+      "what": "exact vs family summary-snapshot field projection (21/22 fields identical)",
+      "cites": [
+        {
+          "raw": "adaptive-context/snapshots.ts:114",
+          "path": "lib/generation/adaptive-context/snapshots.ts",
+          "line": 114,
+          "verbatim": "function buildExactSummarySnapshot(summary: ExerciseHistorySummary) {",
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "adaptive-context/snapshots.ts:114",
+        "path": "lib/generation/adaptive-context/snapshots.ts",
+        "line": 114,
+        "verbatim": "function buildExactSummarySnapshot(summary: ExerciseHistorySummary) {",
+        "resolved": true
+      },
+      "in_target": true,
+      "fully_in_target": true,
+      "still_at_head": false,
+      "proposal_at_head": []
+    },
+    {
+      "id": "M4",
+      "lens": "M",
+      "severity": "Med",
+      "what": "\"no training exposure\" `loggedSessions===0 \\",
+      "cites": [
+        {
+          "raw": "plateau-rules.ts:239",
+          "path": "lib/generation/plateau-rules.ts",
+          "line": 239,
+          "verbatim": "return evidence.loggedSessions === 0 || evidence.loggedSets === 0",
+          "resolved": true
+        },
+        {
+          "raw": "progression-types.ts",
+          "path": "lib/generation/progression-types.ts",
+          "line": null,
+          "verbatim": null,
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "plateau-rules.ts:239",
+        "path": "lib/generation/plateau-rules.ts",
+        "line": 239,
+        "verbatim": "return evidence.loggedSessions === 0 || evidence.loggedSets === 0",
+        "resolved": true
+      },
+      "in_target": false,
+      "fully_in_target": false,
+      "still_at_head": false,
+      "proposal_at_head": []
+    },
+    {
+      "id": "M6",
+      "lens": "M",
+      "severity": "Med",
+      "what": "warm-up/preparation skip-guard re-derived (primitive exists)",
+      "cites": [
+        {
+          "raw": "volume-classification.ts:18",
+          "path": "lib/generation/volume-classification.ts",
+          "line": 18,
+          "verbatim": "prescription.is_warmup === true ||",
+          "resolved": true
+        },
+        {
+          "raw": "adaptive-context/validation.ts:31",
+          "path": "lib/generation/adaptive-context/validation.ts",
+          "line": 31,
+          "verbatim": "exercise.is_warmup === true ||",
+          "resolved": true
+        },
+        {
+          "raw": "validator/training-day-quality.ts:38",
+          "path": "lib/generation/validator/training-day-quality.ts",
+          "line": 38,
+          "verbatim": "return isWarmup || isStrengthPairSlotTag(slotTag);",
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "volume-classification.ts:18",
+        "path": "lib/generation/volume-classification.ts",
+        "line": 18,
+        "verbatim": "prescription.is_warmup === true ||",
+        "resolved": true
+      },
+      "in_target": true,
+      "fully_in_target": false,
+      "still_at_head": true,
+      "proposal_at_head": []
+    },
+    {
+      "id": "L1",
+      "lens": "L",
+      "severity": "High",
+      "what": "`db/types.ts:3,38` imported by ~70 generation files (`training-cycle-policy.ts:1`, `equipment-rules.ts:1`, `session-archetypes.ts:1`)",
+      "cites": [
+        {
+          "raw": "db/types.ts:3",
+          "path": "lib/db/types.ts",
+          "line": 3,
+          "verbatim": "// Auto-typed from schema; regenerate with: npx supabase gen types typescript",
+          "resolved": true
+        },
+        {
+          "raw": "training-cycle-policy.ts:1",
+          "path": "lib/generation/training-cycle-policy.ts",
+          "line": 1,
+          "verbatim": "import type { AthleteProfileRow } from \"@/lib/db/types\";",
+          "resolved": true
+        },
+        {
+          "raw": "equipment-rules.ts:1",
+          "path": "lib/generation/equipment-rules.ts",
+          "line": 1,
+          "verbatim": "import type { AthleteProfileRow, ExerciseRow, LoadStyle } from \"@/lib/db/types\";",
+          "resolved": true
+        },
+        {
+          "raw": "session-archetypes.ts:1",
+          "path": "lib/generation/session-archetypes.ts",
+          "line": 1,
+          "verbatim": "import type { AthleteProfileRow } from \"@/lib/db/types\";",
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "db/types.ts:3",
+        "path": "lib/db/types.ts",
+        "line": 3,
+        "verbatim": "// Auto-typed from schema; regenerate with: npx supabase gen types typescript",
+        "resolved": true
+      },
+      "in_target": false,
+      "fully_in_target": false,
+      "still_at_head": true,
+      "proposal_at_head": []
+    },
+    {
+      "id": "L2",
+      "lens": "L",
+      "severity": "High",
+      "what": "`planner-types/deterministic.ts:48` `export type DeterministicPlanOutput = LLMPlanOutput & {`",
+      "cites": [
+        {
+          "raw": "planner-types/deterministic.ts:48",
+          "path": "lib/generation/planner-types/deterministic.ts",
+          "line": 48,
+          "verbatim": "export type DeterministicPlanOutput = LLMPlanOutput & {",
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "planner-types/deterministic.ts:48",
+        "path": "lib/generation/planner-types/deterministic.ts",
+        "line": 48,
+        "verbatim": "export type DeterministicPlanOutput = LLMPlanOutput & {",
+        "resolved": true
+      },
+      "in_target": false,
+      "fully_in_target": false,
+      "still_at_head": false,
+      "proposal_at_head": []
+    },
+    {
+      "id": "L3",
+      "lens": "L",
+      "severity": "High",
+      "what": "`plan-generation/service.ts:26,175`, `run-lifecycle.ts:1,9`",
+      "cites": [
+        {
+          "raw": "plan-generation/service.ts:26",
+          "path": "lib/generation/plan-generation/service.ts",
+          "line": 26,
+          "verbatim": "import { createSupabaseServerClient } from \"@/lib/supabase/server\";",
+          "resolved": true
+        },
+        {
+          "raw": "run-lifecycle.ts:1",
+          "path": "lib/generation/plan-generation/run-lifecycle.ts",
+          "line": 1,
+          "verbatim": "import type { SupabaseClient } from \"@supabase/supabase-js\";",
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "plan-generation/service.ts:26",
+        "path": "lib/generation/plan-generation/service.ts",
+        "line": 26,
+        "verbatim": "import { createSupabaseServerClient } from \"@/lib/supabase/server\";",
+        "resolved": true
+      },
+      "in_target": false,
+      "fully_in_target": false,
+      "still_at_head": false,
+      "proposal_at_head": []
+    },
+    {
+      "id": "L4",
+      "lens": "L",
+      "severity": "Med-High",
+      "what": "`substitution/context.ts:2-3`, `candidates.ts:1`, `plan-generation/context.ts:9`, `template-selection.ts:7`, `generation-errors.ts:1`, `safety-regeneration.ts:1`",
+      "cites": [
+        {
+          "raw": "substitution/context.ts:2",
+          "path": "lib/generation/substitution/context.ts",
+          "line": 2,
+          "verbatim": "import { getAthleteProfile } from \"@/lib/db/athlete-profiles\";",
+          "resolved": true
+        },
+        {
+          "raw": "candidates.ts:1",
+          "path": "lib/generation/substitution/candidates.ts",
+          "line": 1,
+          "verbatim": "import { listActiveUserExerciseStatesForExercises } from \"@/lib/db/exercise-states\";",
+          "resolved": true
+        },
+        {
+          "raw": "plan-generation/context.ts:9",
+          "path": "lib/generation/plan-generation/context.ts",
+          "line": 9,
+          "verbatim": "import { getWeeklyCheckIn } from \"@/lib/db/weekly-check-ins\";",
+          "resolved": true
+        },
+        {
+          "raw": "template-selection.ts:7",
+          "path": "lib/generation/plan-generation/template-selection.ts",
+          "line": 7,
+          "verbatim": "import { getPublishedWorkoutTemplateForGeneration } from \"@/lib/db/workout-templates\";",
+          "resolved": true
+        },
+        {
+          "raw": "generation-errors.ts:1",
+          "path": "lib/generation/generation-errors.ts",
+          "line": 1,
+          "verbatim": "import { getFilteredExercises } from \"@/lib/db/exercises\";",
+          "resolved": true
+        },
+        {
+          "raw": "safety-regeneration.ts:1",
+          "path": "lib/generation/safety-regeneration.ts",
+          "line": 1,
+          "verbatim": "import { getPendingReplacementGenerationRun } from \"@/lib/db/plan-generation-runs\";",
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "substitution/context.ts:2",
+        "path": "lib/generation/substitution/context.ts",
+        "line": 2,
+        "verbatim": "import { getAthleteProfile } from \"@/lib/db/athlete-profiles\";",
+        "resolved": true
+      },
+      "in_target": false,
+      "fully_in_target": false,
+      "still_at_head": true,
+      "proposal_at_head": []
+    },
+    {
+      "id": "L5",
+      "lens": "L",
+      "severity": "Med",
+      "what": "`training-cycle-policy.ts:1`, `planner-types/deterministic.ts:6`, `adaptive-context.ts:8`",
+      "cites": [
+        {
+          "raw": "training-cycle-policy.ts:1",
+          "path": "lib/generation/training-cycle-policy.ts",
+          "line": 1,
+          "verbatim": "import type { AthleteProfileRow } from \"@/lib/db/types\";",
+          "resolved": true
+        },
+        {
+          "raw": "planner-types/deterministic.ts:6",
+          "path": "lib/generation/planner-types/deterministic.ts",
+          "line": 6,
+          "verbatim": "LLMPlanOutput,",
+          "resolved": true
+        },
+        {
+          "raw": "adaptive-context.ts:8",
+          "path": "lib/generation/adaptive-context.ts",
+          "line": 8,
+          "verbatim": "export { buildAdaptivePlanContext } from \"./adaptive-context/service\";",
+          "resolved": true
+        },
+        {
+          "raw": "db/types.ts",
+          "path": "lib/db/types.ts",
+          "line": null,
+          "verbatim": null,
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "training-cycle-policy.ts:1",
+        "path": "lib/generation/training-cycle-policy.ts",
+        "line": 1,
+        "verbatim": "import type { AthleteProfileRow } from \"@/lib/db/types\";",
+        "resolved": true
+      },
+      "in_target": true,
+      "fully_in_target": false,
+      "still_at_head": false,
+      "proposal_at_head": []
+    },
+    {
+      "id": "D1",
+      "lens": "D",
+      "severity": "Med",
+      "what": "`adaptive-application/family-transforms.ts:133` ↔ `prescription-mutators.ts:164`",
+      "cites": [
+        {
+          "raw": "adaptive-application/family-transforms.ts:133",
+          "path": "lib/generation/adaptive-application/family-transforms.ts",
+          "line": 133,
+          "verbatim": "function capPrescriptionToFamilySummary(",
+          "resolved": true
+        },
+        {
+          "raw": "prescription-mutators.ts:164",
+          "path": "lib/generation/adaptive-application/prescription-mutators.ts",
+          "line": 164,
+          "verbatim": ") {",
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "adaptive-application/family-transforms.ts:133",
+        "path": "lib/generation/adaptive-application/family-transforms.ts",
+        "line": 133,
+        "verbatim": "function capPrescriptionToFamilySummary(",
+        "resolved": true
+      },
+      "in_target": true,
+      "fully_in_target": true,
+      "still_at_head": false,
+      "proposal_at_head": []
+    },
+    {
+      "id": "D2",
+      "lens": "D",
+      "severity": "Med",
+      "what": "`prescriptions/base.ts:81` ↔ `session-patterns/templates.ts:38`",
+      "cites": [
+        {
+          "raw": "prescriptions/base.ts:81",
+          "path": "lib/generation/prescriptions/base.ts",
+          "line": 81,
+          "verbatim": "const resolvedCyclePhasePolicy =",
+          "resolved": true
+        },
+        {
+          "raw": "session-patterns/templates.ts:38",
+          "path": "lib/generation/session-patterns/templates.ts",
+          "line": 38,
+          "verbatim": "const resolvedCyclePhasePolicy =",
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "prescriptions/base.ts:81",
+        "path": "lib/generation/prescriptions/base.ts",
+        "line": 81,
+        "verbatim": "const resolvedCyclePhasePolicy =",
+        "resolved": true
+      },
+      "in_target": false,
+      "fully_in_target": false,
+      "still_at_head": false,
+      "proposal_at_head": []
+    },
+    {
+      "id": "D3",
+      "lens": "D",
+      "severity": "Low",
+      "what": "`exercise-ranking/scoring.ts:65` ↔ `substitution/candidates.ts:92`",
+      "cites": [
+        {
+          "raw": "exercise-ranking/scoring.ts:65",
+          "path": "lib/generation/exercise-ranking/scoring.ts",
+          "line": 65,
+          "verbatim": ".sort((left, right) => {",
+          "resolved": true
+        },
+        {
+          "raw": "substitution/candidates.ts:92",
+          "path": "lib/generation/substitution/candidates.ts",
+          "line": 92,
+          "verbatim": ".sort((left, right) => {",
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "exercise-ranking/scoring.ts:65",
+        "path": "lib/generation/exercise-ranking/scoring.ts",
+        "line": 65,
+        "verbatim": ".sort((left, right) => {",
+        "resolved": true
+      },
+      "in_target": false,
+      "fully_in_target": false,
+      "still_at_head": true,
+      "proposal_at_head": []
+    },
+    {
+      "id": "D4",
+      "lens": "D",
+      "severity": "Low",
+      "what": "`adaptive-context/history.ts:62` ↔ `:103`",
+      "cites": [
+        {
+          "raw": "adaptive-context/history.ts:62",
+          "path": "lib/generation/adaptive-context/history.ts",
+          "line": 62,
+          "verbatim": "export function buildExactSummaryMap(",
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "adaptive-context/history.ts:62",
+        "path": "lib/generation/adaptive-context/history.ts",
+        "line": 62,
+        "verbatim": "export function buildExactSummaryMap(",
+        "resolved": true
+      },
+      "in_target": true,
+      "fully_in_target": true,
+      "still_at_head": true,
+      "proposal_at_head": []
+    },
+    {
+      "id": "A1",
+      "lens": "A",
+      "severity": "delete (pass-through; const `HIGH_RISK_PATTERNS_BY_REGION` is what's used)",
+      "what": "`getHighRiskPatternsByLimitationRegionMap`",
+      "cites": [
+        {
+          "raw": "limitation-rules.ts:28",
+          "path": "lib/generation/limitation-rules.ts",
+          "line": 28,
+          "verbatim": "export function getHighRiskPatternsByLimitationRegionMap() {",
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "limitation-rules.ts:28",
+        "path": "lib/generation/limitation-rules.ts",
+        "line": 28,
+        "verbatim": "export function getHighRiskPatternsByLimitationRegionMap() {",
+        "resolved": true
+      },
+      "in_target": false,
+      "fully_in_target": false,
+      "still_at_head": false,
+      "proposal_at_head": []
+    },
+    {
+      "id": "A2",
+      "lens": "A",
+      "severity": "delete (veneer over private `getExerciseRegionMatch`)",
+      "what": "`exerciseMatchesRegion`",
+      "cites": [
+        {
+          "raw": "limitation-rules.ts:247",
+          "path": "lib/generation/limitation-rules.ts",
+          "line": 247,
+          "verbatim": "export function exerciseMatchesRegion(exercise: ExerciseRow, region: string) {",
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "limitation-rules.ts:247",
+        "path": "lib/generation/limitation-rules.ts",
+        "line": 247,
+        "verbatim": "export function exerciseMatchesRegion(exercise: ExerciseRow, region: string) {",
+        "resolved": true
+      },
+      "in_target": false,
+      "fully_in_target": false,
+      "still_at_head": false,
+      "proposal_at_head": []
+    },
+    {
+      "id": "A3",
+      "lens": "A",
+      "severity": "delete (barrel-laundered, no consumer)",
+      "what": "`roundLoadTargetKg`",
+      "cites": [
+        {
+          "raw": "prescriptions/load-targets.ts:27",
+          "path": "lib/generation/prescriptions/load-targets.ts",
+          "line": 27,
+          "verbatim": "export function roundLoadTargetKg(",
+          "resolved": true
+        },
+        {
+          "raw": "prescriptions.ts:7",
+          "path": "lib/generation/prescriptions.ts",
+          "line": 7,
+          "verbatim": "export { roundLoadTargetKg } from \"./prescriptions/load-targets\";",
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "prescriptions/load-targets.ts:27",
+        "path": "lib/generation/prescriptions/load-targets.ts",
+        "line": 27,
+        "verbatim": "export function roundLoadTargetKg(",
+        "resolved": true
+      },
+      "in_target": false,
+      "fully_in_target": false,
+      "still_at_head": false,
+      "proposal_at_head": []
+    },
+    {
+      "id": "A4",
+      "lens": "A",
+      "severity": "delete (never wired in)",
+      "what": "`shouldUseConservativeProgressionFromWeeklyCheckIn`",
+      "cites": [
+        {
+          "raw": "adaptive-context/note-signals.ts:387",
+          "path": "lib/generation/adaptive-context/note-signals.ts",
+          "line": 387,
+          "verbatim": "export function shouldUseConservativeProgressionFromWeeklyCheckIn(",
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "adaptive-context/note-signals.ts:387",
+        "path": "lib/generation/adaptive-context/note-signals.ts",
+        "line": 387,
+        "verbatim": "export function shouldUseConservativeProgressionFromWeeklyCheckIn(",
+        "resolved": true
+      },
+      "in_target": true,
+      "fully_in_target": true,
+      "still_at_head": false,
+      "proposal_at_head": []
+    },
+    {
+      "id": "A5",
+      "lens": "A",
+      "severity": "delete (pass-through of `getStructuredInjuryRegionSet`)",
+      "what": "`getStructuredInjuryRegions`",
+      "cites": [
+        {
+          "raw": "intake-derivation.ts:54",
+          "path": "lib/generation/intake-derivation.ts",
+          "line": 54,
+          "verbatim": "export function getStructuredInjuryRegions(limitations: UserLimitationRow[]) {",
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "intake-derivation.ts:54",
+        "path": "lib/generation/intake-derivation.ts",
+        "line": 54,
+        "verbatim": "export function getStructuredInjuryRegions(limitations: UserLimitationRow[]) {",
+        "resolved": true
+      },
+      "in_target": false,
+      "fully_in_target": false,
+      "still_at_head": false,
+      "proposal_at_head": []
+    },
+    {
+      "id": "Tc1",
+      "lens": "Tc",
+      "severity": "apply + validate re-encode the same load-cap contract (→ M1)",
+      "what": "`adaptive-context/validation.ts` → `adaptive-application.ts`",
+      "cites": [
+        {
+          "raw": "adaptive-context/validation.ts",
+          "path": "lib/generation/adaptive-context/validation.ts",
+          "line": null,
+          "verbatim": null,
+          "resolved": true
+        },
+        {
+          "raw": "adaptive-application.ts",
+          "path": "lib/generation/adaptive-application.ts",
+          "line": null,
+          "verbatim": null,
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "adaptive-context/validation.ts",
+        "path": "lib/generation/adaptive-context/validation.ts",
+        "line": null,
+        "verbatim": null,
+        "resolved": true
+      },
+      "in_target": true,
+      "fully_in_target": true,
+      "still_at_head": null,
+      "proposal_at_head": []
+    },
+    {
+      "id": "Tc2",
+      "lens": "Tc",
+      "severity": "shared progression-decision contract (→ M2)",
+      "what": "`plateau-rules.ts` → `adaptive-application.ts`",
+      "cites": [
+        {
+          "raw": "plateau-rules.ts",
+          "path": "lib/generation/plateau-rules.ts",
+          "line": null,
+          "verbatim": null,
+          "resolved": true
+        },
+        {
+          "raw": "adaptive-application.ts",
+          "path": "lib/generation/adaptive-application.ts",
+          "line": null,
+          "verbatim": null,
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "plateau-rules.ts",
+        "path": "lib/generation/plateau-rules.ts",
+        "line": null,
+        "verbatim": null,
+        "resolved": true
+      },
+      "in_target": true,
+      "fully_in_target": false,
+      "still_at_head": null,
+      "proposal_at_head": []
+    },
+    {
+      "id": "Tc3",
+      "lens": "Tc",
+      "severity": "validator re-derives generator rules (→ M5)",
+      "what": "`experience-rules.ts` / `session-archetypes.ts` / `session-quality.ts` → `validator.ts`",
+      "cites": [
+        {
+          "raw": "experience-rules.ts",
+          "path": "lib/generation/experience-rules.ts",
+          "line": null,
+          "verbatim": null,
+          "resolved": true
+        },
+        {
+          "raw": "session-archetypes.ts",
+          "path": "lib/generation/session-archetypes.ts",
+          "line": null,
+          "verbatim": null,
+          "resolved": true
+        },
+        {
+          "raw": "session-quality.ts",
+          "path": "lib/generation/session-quality.ts",
+          "line": null,
+          "verbatim": null,
+          "resolved": true
+        },
+        {
+          "raw": "validator.ts",
+          "path": "lib/generation/validator.ts",
+          "line": null,
+          "verbatim": null,
+          "resolved": true
+        }
+      ],
+      "primary": {
+        "raw": "experience-rules.ts",
+        "path": "lib/generation/experience-rules.ts",
+        "line": null,
+        "verbatim": null,
+        "resolved": true
+      },
+      "in_target": false,
+      "fully_in_target": false,
+      "still_at_head": null,
+      "proposal_at_head": []
+    }
+  ],
+  "compounds": [
+    {
+      "id": "IX-1",
+      "headline": "Adaptive load cap enforced twice (apply + validate), no owner",
+      "constituents": [
+        "M1"
+      ],
+      "kind": "hidden-coupling/distributed-invariant",
+      "severity": "High",
+      "cites": [
+        {
+          "raw": "prescription-mutators.ts:76",
+          "path": "lib/generation/adaptive-application/prescription-mutators.ts",
+          "line": 76,
+          "verbatim": "const loadTargetKg = getLoadIncreaseTarget({",
+          "resolved": true
+        },
+        {
+          "raw": "adaptive-context/validation.ts:312",
+          "path": "lib/generation/adaptive-context/validation.ts",
+          "line": 312,
+          "verbatim": "summary.prescribedLoadKg * (1 + recommendation.max_load_increase_pct / 100);",
+          "resolved": true
+        },
+        {
+          "raw": "validation.ts",
+          "path": "lib/generation/adaptive-context/validation.ts",
+          "line": null,
+          "verbatim": null,
+          "resolved": true
+        },
+        {
+          "raw": "adaptive-application.ts",
+          "path": "lib/generation/adaptive-application.ts",
+          "line": null,
+          "verbatim": null,
+          "resolved": true
+        }
+      ],
+      "in_target": true,
+      "fully_in_target": true
+    },
+    {
+      "id": "IX-2",
+      "headline": "The validator re-derives the generator's plan structure",
+      "constituents": [
+        "M4",
+        "M5"
+      ],
+      "kind": "distributed-invariant",
+      "severity": "Med-High",
+      "cites": [
+        {
+          "raw": "validator.ts:45",
+          "path": "lib/generation/validator.ts",
+          "line": 45,
+          "verbatim": "const firstTrainingDay = orderedTrainingDays[0] ?? null;",
+          "resolved": true
+        },
+        {
+          "raw": "templates.ts:63",
+          "path": "lib/generation/session-patterns/templates.ts",
+          "line": 63,
+          "verbatim": "? (orderedTrainingDays[0] ?? null)",
+          "resolved": true
+        },
+        {
+          "raw": "volume-classification.ts:18",
+          "path": "lib/generation/volume-classification.ts",
+          "line": 18,
+          "verbatim": "prescription.is_warmup === true ||",
+          "resolved": true
+        }
+      ],
+      "in_target": false,
+      "fully_in_target": false
+    },
+    {
+      "id": "IX-3",
+      "headline": "\"near-max exertion\" maxRpe ≥ 9.5 hard-coded across producers",
+      "constituents": [
+        "M2"
+      ],
+      "kind": "shared-root",
+      "severity": "High",
+      "cites": [
+        {
+          "raw": "plateau-rules.ts:251",
+          "path": "lib/generation/plateau-rules.ts",
+          "line": 251,
+          "verbatim": "if (evidence.maxRpe === null || evidence.maxRpe < 9.5) {",
+          "resolved": true
+        },
+        {
+          "raw": "recommendations.ts:459",
+          "path": "lib/generation/adaptive-context/recommendations.ts",
+          "line": 459,
+          "verbatim": "evidence.maxRpe < 9.5",
+          "resolved": true
+        }
+      ],
+      "in_target": true,
+      "fully_in_target": false
+    },
+    {
+      "id": "IX-4",
+      "headline": "Two parallel progression vocabularies + un-owned bridge",
+      "constituents": [
+        "M7"
+      ],
+      "kind": "shared-root/masking",
+      "severity": "High",
+      "cites": [
+        {
+          "raw": "progression-knobs.ts:192",
+          "path": "lib/generation/progression-knobs.ts",
+          "line": 192,
+          "verbatim": "export function isLoadIncreaseAction(action: LoadProgressionAction) {",
+          "resolved": true
+        },
+        {
+          "raw": "progression-vocabulary.ts:78",
+          "path": "lib/generation/progression-vocabulary.ts",
+          "line": 78,
+          "verbatim": "export function isProgressionIncreaseAction(action: ProgressionAction) {",
+          "resolved": true
+        },
+        {
+          "raw": "adaptive-action-policy.ts:97",
+          "path": "lib/generation/adaptive-action-policy.ts",
+          "line": 97,
+          "verbatim": "progressionIncrease: true,",
+          "resolved": true
+        },
+        {
+          "raw": "progression-vocabulary.ts:96",
+          "path": "lib/generation/progression-vocabulary.ts",
+          "line": 96,
+          "verbatim": "export function getLegacyLoadAction(",
+          "resolved": true
+        }
+      ],
+      "in_target": false,
+      "fully_in_target": false
+    },
+    {
+      "id": "IX-5",
+      "headline": "Exact vs family history forked at every pipeline stage",
+      "constituents": [
+        "D1",
+        "M3"
+      ],
+      "kind": "shared-root",
+      "severity": "Med",
+      "cites": [
+        {
+          "raw": "prescription-mutators.ts:181",
+          "path": "lib/generation/adaptive-application/prescription-mutators.ts",
+          "line": 181,
+          "verbatim": "const nextSets =",
+          "resolved": true
+        },
+        {
+          "raw": "family-transforms.ts:146",
+          "path": "lib/generation/adaptive-application/family-transforms.ts",
+          "line": 146,
+          "verbatim": ": Math.min(prescription.load_target_kg, summary.prescribedLoadKg),",
+          "resolved": true
+        },
+        {
+          "raw": "snapshots.ts:125",
+          "path": "lib/db/provider-exercise-catalog/snapshots.ts",
+          "line": 125,
+          "verbatim": "",
+          "resolved": true
+        }
+      ],
+      "in_target": true,
+      "fully_in_target": false
+    },
+    {
+      "id": "IX-6",
+      "headline": "Default cycle-phase/experience resolution copied (weekNumber:1)",
+      "constituents": [
+        "D2"
+      ],
+      "kind": "shared-root",
+      "severity": "Med",
+      "cites": [
+        {
+          "raw": "prescriptions/base.ts:86",
+          "path": "lib/generation/prescriptions/base.ts",
+          "line": 86,
+          "verbatim": "weekNumber: 1,",
+          "resolved": true
+        },
+        {
+          "raw": "session-patterns/templates.ts:43",
+          "path": "lib/generation/session-patterns/templates.ts",
+          "line": 43,
+          "verbatim": "weekNumber: 1,",
+          "resolved": true
+        }
+      ],
+      "in_target": false,
+      "fully_in_target": false
+    },
+    {
+      "id": "IX-7",
+      "headline": "The generated persistence schema-mirror is the engine's domain currency",
+      "constituents": [
+        "L1",
+        "L2",
+        "L5"
+      ],
+      "kind": "shared-root/amplification",
+      "severity": "High",
+      "cites": [
+        {
+          "raw": "planner-types/deterministic.ts:48",
+          "path": "lib/generation/planner-types/deterministic.ts",
+          "line": 48,
+          "verbatim": "export type DeterministicPlanOutput = LLMPlanOutput & {",
+          "resolved": true
+        },
+        {
+          "raw": "db/types.ts",
+          "path": "lib/db/types.ts",
+          "line": null,
+          "verbatim": null,
+          "resolved": true
+        }
+      ],
+      "in_target": false,
+      "fully_in_target": false
+    },
+    {
+      "id": "IX-8",
+      "headline": "The \"100% deterministic, pure\" engine performs runtime DB I/O",
+      "constituents": [
+        "L3",
+        "L4"
+      ],
+      "kind": "contradictory-design",
+      "severity": "Med-High",
+      "cites": [
+        {
+          "raw": "service.ts:26",
+          "path": "lib/generation/adaptive-context/service.ts",
+          "line": 26,
+          "verbatim": "import {",
+          "resolved": true
+        },
+        {
+          "raw": "run-lifecycle.ts:1",
+          "path": "lib/generation/plan-generation/run-lifecycle.ts",
+          "line": 1,
+          "verbatim": "import type { SupabaseClient } from \"@supabase/supabase-js\";",
+          "resolved": true
+        },
+        {
+          "raw": "substitution/context.ts:2",
+          "path": "lib/generation/substitution/context.ts",
+          "line": 2,
+          "verbatim": "import { getAthleteProfile } from \"@/lib/db/athlete-profiles\";",
+          "resolved": true
+        },
+        {
+          "raw": "candidates.ts:1",
+          "path": "lib/generation/substitution/candidates.ts",
+          "line": 1,
+          "verbatim": "import { listActiveUserExerciseStatesForExercises } from \"@/lib/db/exercise-states\";",
+          "resolved": true
+        },
+        {
+          "raw": "plan-generation/context.ts",
+          "path": "lib/generation/plan-generation/context.ts",
+          "line": null,
+          "verbatim": null,
+          "resolved": true
+        }
+      ],
+      "in_target": true,
+      "fully_in_target": false
+    }
+  ]
+}

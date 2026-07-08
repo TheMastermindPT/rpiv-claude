@@ -1,0 +1,38 @@
+target:       lib/db/provider-exercise-catalog
+file_count:   15
+loc_total:    3906
+loc_median:   175
+loc_p90:      470
+churn_window: 180d
+---size-outliers---
+---godfile-candidates---
+---low-cohesion---
+lib/db/provider-exercise-catalog/internal/utils.ts	coh=0.27	syms=12	islands=9
+---feature-envy-candidates---
+---churn-hotspots---
+lib/db/provider-exercise-catalog/derivation-upsert.ts	2
+lib/db/provider-exercise-catalog/internal/utils.ts	2
+---export-usage---
+lib/db/provider-exercise-catalog/derivation-upsert.ts	exports=7	inbound=3
+lib/db/provider-exercise-catalog/entities.ts	exports=8	inbound=7
+lib/db/provider-exercise-catalog/snapshots.ts	exports=5	inbound=22
+lib/db/provider-exercise-catalog/types.ts	exports=46	inbound=?
+lib/db/provider-exercise-catalog/internal/utils.ts	exports=9	inbound=?
+---test-density---
+---dup-candidates---
+lib/db/provider-exercise-catalog/derivation-upsert.ts | lib/db/provider-exercise-catalog/sync.ts	run=7	shared=28	overlap=0.18	tokenSim=0.16	via=lines
+---co-change-candidates---
+---co-change-groups---
+---write-sites---
+table:exercise_source_normalizations	writers=2	files=lib/db/provider-exercise-catalog/derivation-upsert.ts, lib/db/provider-exercise-catalog/entities.ts
+rpc:apply_provider_catalog_review_workflow_atomic	writers=1	files=lib/db/provider-exercise-catalog/atomic-workflow.ts
+rpc:approve_exercise_source_rebind_proposal_atomic	writers=1	files=lib/db/provider-exercise-catalog/rebind.ts
+table:arrayBuffer	writers=1	files=lib/db/provider-exercise-catalog/media.ts
+table:exercise_media_assets	writers=1	files=lib/db/provider-exercise-catalog/media.ts
+table:exercise_planner_profiles	writers=1	files=lib/db/provider-exercise-catalog/derivation-upsert.ts
+table:exercise_presentation_profiles	writers=1	files=lib/db/provider-exercise-catalog/derivation-upsert.ts
+table:exercise_publish_runs	writers=1	files=lib/db/provider-exercise-catalog/publish.ts
+table:exercise_rebind_proposals	writers=1	files=lib/db/provider-exercise-catalog/rebind.ts
+table:exercise_review_events	writers=1	files=lib/db/provider-exercise-catalog/internal/utils.ts
+table:exercise_source_snapshots	writers=1	files=lib/db/provider-exercise-catalog/snapshots.ts
+table:exercises	writers=1	files=lib/db/provider-exercise-catalog/entities.ts

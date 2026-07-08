@@ -1,0 +1,20 @@
+diff --git a/lib/generation/training-cycle-policy.ts b/lib/generation/training-cycle-policy.ts
+index 136e76c..2a9eb93 100644
+--- a/lib/generation/training-cycle-policy.ts
++++ b/lib/generation/training-cycle-policy.ts
+@@ -218,11 +218,14 @@ function applyGoalModifiers(
+   primaryGoal: AthleteProfile["primary_goal"],
+ ): CyclePhasePolicy {
+   if (primaryGoal === "strength" && policy.phase === "intensification") {
++    // The final intensification week is the strength athlete's peak week —
++    // give it its own narrative instead of the generic intensification copy.
++    const isPeakWeek = policy.weekInPhase >= 2;
+     return {
+       ...policy,
+       intensityRpeOffset: roundToHalf(policy.intensityRpeOffset + 0.5),
+       loadCapMultiplier: roundToTwo(policy.loadCapMultiplier * 1.03),
+-      narrativeKey: "strength_intensification",
++      narrativeKey: isPeakWeek ? "peak_intensification" : "strength_intensification",
+       volumeMultiplier: roundToTwo(policy.volumeMultiplier * 0.95),
+     };
+   }

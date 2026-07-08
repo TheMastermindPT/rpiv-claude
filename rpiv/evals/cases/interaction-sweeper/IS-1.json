@@ -1,0 +1,17 @@
+{
+  "id": "IS-1",
+  "name": "real-verified-set-compounds",
+  "skill": "interaction-sweeper (agent)",
+  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-96e3553",
+  "ref": "96e3553",
+  "clean": [],
+  "output": "agent",
+  "prompt_file": "IS-1.prompt.md",
+  "ground_truth_note": "Real Step 6.5 dispatch: 21 verified finding rows extracted from the 06-29 artifact (verbatims re-read at 96e3553) + the real co-change pair list. The human-reviewed artifact recorded 8 compounds; the strongest groupings to look for (grader-model check): validation.ts↔adaptive-application load-cap distributed invariant (IX-1-shaped) and the exact/family fork tying D1+M3 (IX-5-shaped).",
+  "checks": {
+    "required_sections": ["^## Interaction Sweep"],
+    "compounds": {
+      "constituents_subset_of": ["M1", "M2", "M7", "M5", "M3", "M4", "M6", "L1", "L2", "L3", "L4", "L5", "D1", "D2", "D3", "D4", "A1", "A2", "A3", "A4", "A5"]
+    }
+  }
+}

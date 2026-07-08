@@ -1,0 +1,52 @@
+{
+  "id": "AR-1",
+  "name": "known-slop-recall-adaptive",
+  "skill": "architectural-review",
+  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-96e3553",
+  "ref": "96e3553",
+  "clean": [".rpiv/artifacts/architecture-reviews"],
+  "artifact_glob": ".rpiv/artifacts/architecture-reviews/*.md",
+  "prompt": "/rpiv:architectural-review the adaptive sub-pipeline of lib/generation — the two directories lib/generation/adaptive-context and lib/generation/adaptive-application plus their barrels lib/generation/adaptive-context.ts and lib/generation/adaptive-application.ts. It has grown organically; give it an anti-slop pass. (Headless non-interactive run: at every approval checkpoint — scope, layer split, follow-ups — choose the recommended option and continue; never wait for user input.)",
+  "ground_truth_note": "At ref 96e3553 this target contains human-validated slop (fixes were implemented in later commits): M1 load-cap formula duplicated across apply+validate, M3 snapshot projection duplicated, D1 exact-vs-family clamp fork, A4 dead export in note-signals.ts. Recall items derive from .rpiv ground-truth JSON ar-lib-generation-96e3553.json.",
+  "checks": {
+    "validate_artifact": true,
+    "citations": { "min_resolvable_pct": 95, "verbatim": true },
+    "recall": [
+      {
+        "id": "M1-loadcap-dup",
+        "files": [
+          { "path": "lib/generation/adaptive-application/prescription-mutators.ts", "line": 76, "radius": 60 },
+          { "path": "lib/generation/adaptive-context/validation.ts" },
+          { "path": "lib/generation/adaptive-application/prescription-math.ts", "line": 120, "radius": 60 }
+        ],
+        "min_files": 2,
+        "note": "load-cap formula + epsilon enforced on both apply and validate sides with no owner (user-fixed later via load-cap.ts)"
+      },
+      {
+        "id": "M3-snapshot-projection",
+        "files": [{ "path": "lib/generation/adaptive-context/snapshots.ts", "line": 114, "radius": 60 }],
+        "min_files": 1,
+        "note": "exact vs family summary-snapshot field projection duplicated (21/22 identical fields; user-fixed later)"
+      },
+      {
+        "id": "D1-family-fork",
+        "files": [
+          { "path": "lib/generation/adaptive-application/family-transforms.ts" },
+          { "path": "lib/generation/adaptive-application/prescription-mutators.ts", "line": 181, "radius": 80 }
+        ],
+        "min_files": 2,
+        "note": "clamp transform forked exact vs family (user-fixed later)"
+      },
+      {
+        "id": "A4-dead-export",
+        "files": [{ "path": "lib/generation/adaptive-context/note-signals.ts", "line": 387, "radius": 100 }],
+        "min_files": 1,
+        "note": "dead export, knip-confirmed at this ref, deleted at HEAD"
+      }
+    ],
+    "frontmatter": {
+      "expect_nonzero_lenses": ["missing_abstraction", "duplication", "dead_abstraction"],
+      "present": ["health_score", "verification", "slop_by_lens", "entities"]
+    }
+  }
+}

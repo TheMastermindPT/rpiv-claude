@@ -1,0 +1,22 @@
+{
+  "id": "EM-2",
+  "name": "ownership-rule-and-seed-noise",
+  "skill": "entity-mapper (agent)",
+  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-96e3553",
+  "ref": "96e3553",
+  "clean": [],
+  "output": "agent",
+  "prompt_file": "EM-2.prompt.md",
+  "ground_truth_note": "lib/db/provider-exercise-catalog at 96e3553. Real seeds contain (a) table:exercise_source_normalizations writers=2 (derivation-upsert.ts + entities.ts) — under the CRUD rule this MUST yield owner: NONE, and (b) a metrics parser artifact 'table:arrayBuffer' — a fake table the mapper must NOT promote to an entity (no type/contract basis).",
+  "checks": {
+    "citations": { "min_resolvable_pct": 100 },
+    "forbidden_vocab": "🔴|🟡|severit|remediat|refactor|^#{2,4} .*[Aa]rray[Bb]uffer|\\| ?[Aa]rray[Bb]uffer",
+    "required_sections": [
+      "^## System Model",
+      "^### L0",
+      "\\*\\*Owner:\\*\\*.*NONE",
+      "[Ee]xercise[_ ]?[Ss]ource[_ ]?[Nn]ormalization"
+    ],
+    "expected_entities": []
+  }
+}

@@ -1,0 +1,176 @@
+target:       lib/generation
+file_count:   121
+loc_total:    16101
+loc_median:   100
+loc_p90:      315
+churn_window: 180d
+---size-outliers---
+lib/generation/deterministic-plan/service.ts	561	5.6x
+lib/generation/plateau-rules.ts	529	5.3x
+---godfile-candidates---
+---low-cohesion---
+---feature-envy-candidates---
+lib/generation/exercise-ranking/constants.ts	envies=@/lib/generation/exercise-ranking-policy	ext=5	own=0	ratio=1.00
+lib/generation/progression-knob-translation.ts	envies=@/lib/generation/progression-knobs	ext=12	own=5	ratio=0.71
+lib/generation/adaptive-application/exact-transforms.ts	envies=./prescription-mutators	ext=14	own=9	ratio=0.61
+---churn-hotspots---
+lib/generation/generate-plan.ts	23
+lib/generation/validator.ts	17
+lib/generation/deterministic-plan.ts	16
+lib/generation/exercise-ranking.ts	15
+lib/generation/adaptive-application.ts	14
+lib/generation/prescriptions.ts	14
+lib/generation/planner-types.ts	13
+lib/generation/adaptive-context.ts	12
+lib/generation/persist-plan.ts	10
+lib/generation/progression-rationale.ts	9
+lib/generation/goal-rules.ts	9
+lib/generation/session-patterns.ts	9
+lib/generation/substitute-exercise.ts	8
+lib/generation/adaptive-context/service.ts	7
+lib/generation/adaptive-context/recommendations.ts	7
+lib/generation/rationale-snapshot.ts	7
+lib/generation/rule-trace.ts	7
+lib/generation/training-cycle-policy.ts	7
+lib/generation/adaptive-context/validation.ts	7
+lib/generation/adaptive-context/snapshots.ts	6
+lib/generation/adaptive-context/types.ts	6
+lib/generation/limitation-rules.ts	6
+lib/generation/plateau-rules.ts	6
+lib/generation/safety-regeneration.ts	6
+lib/generation/prescriptions/base.ts	5
+lib/generation/plan-generation/service.ts	5
+lib/generation/session-fit.ts	5
+lib/generation/experience-rules.ts	5
+lib/generation/deterministic-plan/service.ts	4
+lib/generation/rationale-snapshot/types.ts	4
+lib/generation/adaptive-context/history.ts	4
+lib/generation/plan-generation/run-lifecycle.ts	4
+lib/generation/weekly-volume-budget.ts	4
+lib/generation/session-archetypes.ts	4
+lib/generation/adaptive-context/applied-rules-trace.ts	3
+lib/generation/deterministic-plan/budget-reservation.ts	3
+lib/generation/adaptive-application/prescription-mutators.ts	3
+lib/generation/prescriptions/structured-sets.ts	3
+lib/generation/exercise-ranking/scoring.ts	3
+lib/generation/validator/structural.ts	3
+lib/generation/prescriptions/load-targets.ts	3
+lib/generation/plan-generation/persistence.ts	3
+lib/generation/plan-generation/template-selection.ts	3
+lib/generation/plan-generation/types.ts	3
+lib/generation/substitution/apply-persistence.ts	3
+lib/generation/adaptive-context/cycle-limitations.ts	3
+lib/generation/progression-vocabulary.ts	3
+lib/generation/intake-derivation.ts	3
+lib/generation/volume-classification.ts	3
+lib/generation/session-quality.ts	3
+lib/generation/adaptive-application/selection-policy.ts	2
+lib/generation/planner-types/adaptive.ts	2
+lib/generation/adaptive-application/exact-transforms.ts	2
+lib/generation/adaptive-application/family-transforms.ts	2
+lib/generation/adaptive-application/runtime-adjustments.ts	2
+lib/generation/session-patterns/target-counts.ts	2
+lib/generation/validator/constants.ts	2
+lib/generation/validator/helpers.ts	2
+lib/generation/validator/training-day-quality.ts	2
+lib/generation/adaptive-context/legacy-action-mapping.ts	2
+lib/generation/adaptive-context/recommendation-accessors.ts	2
+lib/generation/adaptive-context/recommendation-breakdown.ts	2
+lib/generation/deterministic-plan/advanced-techniques.ts	2
+lib/generation/planner-types/deterministic.ts	2
+lib/generation/prescriptions/session-entry.ts	2
+lib/generation/substitution/candidates.ts	2
+lib/generation/progression-knobs.ts	2
+lib/generation/adaptive-application/prescription-math.ts	2
+lib/generation/goal-rules/modulation.ts	2
+lib/generation/substitution/context.ts	2
+lib/generation/deterministic-plan/template-sessions.ts	2
+lib/generation/plan-generation/build-validate.ts	2
+lib/generation/planner-types/template-selection.ts	2
+lib/generation/prescriptions/warmups.ts	2
+lib/generation/plan-generation/errors.ts	2
+lib/generation/adaptive-action-policy.ts	2
+lib/generation/limitation-cycle-directives.ts	2
+lib/generation/adaptive-context/constants.ts	2
+lib/generation/exercise-ranking-policy.ts	2
+lib/generation/adaptive-guidance.ts	2
+lib/generation/substitution/scoring.ts	2
+lib/generation/plan-generation/context.ts	2
+lib/generation/equipment-rules.ts	2
+lib/generation/generation-errors.ts	2
+lib/generation/ai-helpers.ts	2
+---export-usage---
+lib/generation/rationale-snapshot/rule-events.ts	exports=13	inbound=2
+lib/generation/plan-generation/run-lifecycle.ts	exports=12	inbound=2
+lib/generation/exercise-ranking/pattern-resolution.ts	exports=5	inbound=2
+lib/generation/generation-errors.ts	exports=5	inbound=3
+lib/generation/adaptive-application/prescription-mutators.ts	exports=13	inbound=4
+lib/generation/adaptive-guidance.ts	exports=6	inbound=4
+lib/generation/plateau-rules.ts	exports=6	inbound=4
+lib/generation/deterministic-plan/template-sessions.ts	exports=5	inbound=4
+lib/generation/intake-derivation.ts	exports=5	inbound=4
+lib/generation/planner-types/template-selection.ts	exports=5	inbound=4
+lib/generation/adaptive-context/degradation.ts	exports=6	inbound=5
+lib/generation/adaptive-context/recommendation-breakdown.ts	exports=6	inbound=5
+lib/generation/plan-generation/persistence-helpers.ts	exports=6	inbound=5
+lib/generation/adaptive-action-policy.ts	exports=18	inbound=6
+lib/generation/planner-types/session-entry.ts	exports=5	inbound=6
+lib/generation/exercise-ranking-policy.ts	exports=11	inbound=7
+lib/generation/substitution/scoring.ts	exports=7	inbound=7
+lib/generation/progression-rationale.ts	exports=6	inbound=7
+lib/generation/adaptive-application/prescription-math.ts	exports=11	inbound=8
+lib/generation/progression-types.ts	exports=7	inbound=8
+lib/generation/session-archetypes.ts	exports=5	inbound=9
+lib/generation/generate-plan.ts	exports=5	inbound=10
+lib/generation/exercise-ranking.ts	exports=5	inbound=11
+lib/generation/rationale-snapshot.ts	exports=5	inbound=11
+lib/generation/progression-knobs.ts	exports=34	inbound=14
+lib/generation/weekly-volume-budget.ts	exports=9	inbound=14
+lib/generation/progression-vocabulary.ts	exports=15	inbound=15
+lib/generation/exercise-ranking/eligibility.ts	exports=10	inbound=16
+lib/generation/limitation-rules.ts	exports=8	inbound=16
+lib/generation/prescriptions.ts	exports=5	inbound=22
+lib/generation/experience-rules.ts	exports=7	inbound=25
+lib/generation/planner-types/deterministic.ts	exports=5	inbound=33
+lib/generation/planner-types.ts	exports=13	inbound=37
+lib/generation/adaptive-context.ts	exports=5	inbound=41
+lib/generation/training-cycle-policy.ts	exports=5	inbound=44
+lib/generation/adaptive-context/history.ts	exports=11	inbound=57
+lib/generation/adaptive-context/types.ts	exports=16	inbound=?
+lib/generation/adaptive-context/constants.ts	exports=13	inbound=?
+lib/generation/rationale-snapshot/types.ts	exports=11	inbound=?
+lib/generation/exercise-ranking/constants.ts	exports=8	inbound=?
+lib/generation/goal-rules/types.ts	exports=7	inbound=?
+lib/generation/substitution/types.ts	exports=7	inbound=?
+lib/generation/plan-generation/types.ts	exports=6	inbound=?
+lib/generation/validator/constants.ts	exports=6	inbound=?
+---test-density---
+---dup-candidates---
+lib/generation/progression-knobs.ts | lib/generation/progression-vocabulary.ts	run=3	shared=24	overlap=0.30	tokenSim=0.51	via=structural
+lib/generation/adaptive-application/exact-transforms.ts | lib/generation/adaptive-application/family-transforms.ts	run=8	shared=37	overlap=0.61	tokenSim=0.29	via=lines
+lib/generation/adaptive-application/family-transforms.ts | lib/generation/adaptive-application/prescription-mutators.ts	run=8	shared=27	overlap=0.26	tokenSim=0.16	via=lines
+lib/generation/exercise-ranking/session-selection.ts | lib/generation/exercise-ranking/template-session.ts	run=7	shared=13	overlap=0.12	tokenSim=0.14	via=lines
+lib/generation/progression-types.ts | lib/generation/rationale-snapshot/types.ts	run=8	shared=12	overlap=0.20	tokenSim=0.12	via=lines
+lib/generation/prescriptions/base.ts | lib/generation/session-patterns/templates.ts	run=11	shared=19	overlap=0.33	tokenSim=0.08	via=lines
+lib/generation/exercise-ranking/constants.ts | lib/generation/exercise-ranking/session-selection.ts	run=7	shared=11	overlap=0.24	tokenSim=0.05	via=lines
+---co-change-candidates---
+lib/generation/adaptive-context/validation.ts -> lib/generation/adaptive-application.ts	support=6	conf=1.00
+lib/generation/plateau-rules.ts -> lib/generation/adaptive-application.ts	support=4	conf=1.00
+lib/generation/limitation-rules.ts -> lib/generation/adaptive-application.ts	support=4	conf=0.80
+lib/generation/persist-plan.ts -> lib/generation/validator.ts	support=4	conf=0.50
+lib/generation/plan-generation/persistence.ts -> lib/generation/plan-generation/run-lifecycle.ts	support=3	conf=1.00
+lib/generation/substitution/apply-persistence.ts -> lib/generation/plan-generation/service.ts	support=3	conf=1.00
+lib/generation/experience-rules.ts -> lib/generation/validator.ts	support=3	conf=1.00
+lib/generation/session-archetypes.ts -> lib/generation/validator.ts	support=3	conf=1.00
+lib/generation/session-quality.ts -> lib/generation/validator.ts	support=3	conf=1.00
+lib/generation/plateau-rules.ts -> lib/generation/limitation-rules.ts	support=3	conf=0.75
+lib/generation/session-fit.ts -> lib/generation/persist-plan.ts	support=3	conf=0.75
+lib/generation/adaptive-context/recommendations.ts -> lib/generation/adaptive-context/snapshots.ts	support=3	conf=0.60
+lib/generation/limitation-rules.ts -> lib/generation/rationale-snapshot.ts	support=3	conf=0.60
+lib/generation/adaptive-context/recommendations.ts -> lib/generation/adaptive-application.ts	support=3	conf=0.60
+lib/generation/adaptive-context/recommendations.ts -> lib/generation/adaptive-context/validation.ts	support=3	conf=0.60
+---co-change-groups---
+g1	files=lib/generation/adaptive-application.ts, lib/generation/adaptive-context/validation.ts, lib/generation/limitation-rules.ts, lib/generation/plateau-rules.ts	modules=lib/generation, lib/generation/adaptive-context
+g2	files=lib/generation/persist-plan.ts, lib/generation/validator.ts	modules=lib/generation
+---write-sites---
+table:plan_generation_runs	writers=1	files=lib/generation/plan-generation/run-lifecycle.ts

@@ -1,0 +1,28 @@
+{
+  "id": "DR-1",
+  "name": "planted-contract-divergence",
+  "skill": "deep-review",
+  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-dr1",
+  "ref": "b460257",
+  "patch": "patches/dr1-inline-cap-bug.patch",
+  "clean": [".rpiv/artifacts/reviews"],
+  "artifact_glob": ".rpiv/artifacts/reviews/*.md",
+  "prompt": "/rpiv:deep-review my working changes before I commit — small cleanup in the adaptive validation path. (Headless non-interactive run: at any approval checkpoint or question, pick the recommended option and continue; never wait for user input.)",
+  "ground_truth_note": "validation.ts:310-312 inlines the load-cap formula with an operator-precedence bug: (prior * (1 + pct)) / 100 instead of prior * (1 + pct / 100). Divergence from load-cap.ts (getMaxAllowedLoadKg), which line 467 of the SAME file still uses. This is the repo's #1 historical failure class (producer/consumer contract divergence).",
+  "checks": {
+    "validate_artifact": true,
+    "citations": { "min_resolvable_pct": 95, "verbatim": true },
+    "recall": [
+      {
+        "id": "planted-cap-bug",
+        "files": [{ "path": "lib/generation/adaptive-context/validation.ts", "line": 311, "radius": 12 }],
+        "min_files": 1,
+        "note": "the inlined cap formula with the precedence bug is flagged at its line"
+      }
+    ],
+    "frontmatter": {
+      "present": ["verification", "blockers_count", "severity"],
+      "min": { "blockers_count": 1 }
+    }
+  }
+}
