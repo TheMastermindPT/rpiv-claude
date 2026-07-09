@@ -395,7 +395,9 @@ Before writing the artifact, spawn ONE `claim-verifier` whose sole job is to gro
 
 **Apply the verifier's tags** per §Verification tag semantics & application in `references/severity-model.md` (read at Step 5; re-open it if no longer in context): the tag-override check runs first, then the per-tag actions — Falsified removed + ID retired, Weakened demoted one tier + evidence rewritten, Verified carried through, and the Cross-Finding edge case re-evaluated.
 
-**Gate**: after verification, set `blockers_count` = remaining 🔴 + 🟡 findings and `status: ready` in the artifact frontmatter. Emit no verdict — the review reports the count, nothing more.
+**Citation-path gate (deterministic, before the flip)**: run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/check-citations.mjs" <the artifact path> --root .`. It exits non-zero and lists every **ambiguous bare-basename** cite (`service.ts:329` in a repo with several `service.ts`) — the un-greppable form that breaks the verify/drift tooling. For each, grep the basename, pick the file the finding means, rewrite the cite repo-relative from the repository root, and re-run until it exits 0. Do not flip status while it fails.
+
+**Gate**: after verification and the citation-path gate, set `blockers_count` = remaining 🔴 + 🟡 findings and `status: ready` in the artifact frontmatter. Emit no verdict — the review reports the count, nothing more.
 
 **Do not skip this step** — it is the only mechanism that stops confident-but-unread lens assertions from reaching the artifact.
 

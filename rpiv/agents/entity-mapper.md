@@ -150,6 +150,8 @@ A "missing" adapter stage is expected when no integration exists. Only flag when
 - **Stage: {NAME}** — `file:line` ...
 {one row per stage in the style's lifecycle; PRODUCE/pipeline-TRANSFORM expands to L2 sub-steps}
 
+**Path repetition in stage cells (the L1 failure mode):** one entity's stages usually cite the SAME file over and over (a `service.ts` that ingests, enriches, and outputs). Write its FULL repo-relative path in EVERY cell — do NOT drop to the basename (`service.ts:329`) after the first mention. The "(condensed)" you may put in the L1 heading means terse PROSE, never a shortened PATH: `lib/generation/adaptive-context/service.ts:329` in cell one stays `lib/generation/adaptive-context/service.ts:331` in cell two. A basename cite is discarded by the verify gate even when the prose right beside it names the module.
+
 - **Owner:** {style-appropriate description, e.g. "lib/db/athlete-profiles.ts" for CRUD with writers=1; "NONE — scattered writes in lib/admin/coverage.ts + lib/system/generation-persistence.ts" for CRUD with writers>=2; "EMIT: lib/domain/order-events.ts (schema); HANDLE: lib/payment/handler.ts + lib/shipping/handler.ts" for event-driven}
 - **Ripple-group:** {which co-change-group seeded this entity}
 - **Unguarded / split-brain:** {missing stages the style expects; duplicated stages across modules; contradictory invariants across handlers — or "none"}
