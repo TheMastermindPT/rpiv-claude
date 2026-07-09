@@ -144,5 +144,37 @@ assert.equal(byText(g3, "vocabulary").passed, true);
 const g4 = run(ixOut, { id: "T-none-fail", checks: { expect_no_interaction: true } });
 assert.equal(byText(g4, "no-interaction").passed, false, "IX blocks present -> must fail");
 
+// ---------- section_routing (discover-style: a keyword must land in the right section) ----------
+const frdOut = join(tmp, "frd.md");
+writeFileSync(
+	frdOut,
+	`---
+status: complete
+register: plain
+---
+## Goals
+- Coach can attach a short note that the client sees on their next plan.
+
+## Constraints & Assumptions
+- Must not change plan generation; a failed note must never block the plan from rendering.
+
+## Suggested Follow-ups
+- The exercise search is slow (~5s) — raised during the interview, out of scope for the note feature.
+`,
+);
+const g5 = run(frdOut, {
+	id: "T-routing",
+	checks: {
+		section_routing: [
+			{ id: "scope-creep", keyword: "exercise search", in_section: "Suggested Follow-ups", not_in_section: "Goals|Functional", note: "scope-creep aside routes to follow-ups, not scope" },
+			{ id: "constraint", keyword: "never block", in_section: "Constraints", note: "constraint captured" },
+			{ id: "leaked", keyword: "exercise search", in_section: "Goals", note: "negative control — should FAIL (not in Goals)" },
+		],
+	},
+});
+assert.equal(byText(g5, "routing scope-creep").passed, true, "scope-creep keyword in Follow-ups and not in Goals");
+assert.equal(byText(g5, "routing constraint").passed, true, "constraint keyword present in Constraints");
+assert.equal(byText(g5, "routing leaked").passed, false, "keyword is NOT in Goals -> in_section check must fail");
+
 rmSync(tmp, { recursive: true, force: true });
 console.log("OK");

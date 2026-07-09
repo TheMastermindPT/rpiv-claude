@@ -125,7 +125,12 @@ if (checks.citations) {
 	const all = citesIn(body);
 	const bad = [];
 	let checked = 0;
+	// Per-case exemptions: tokens that are format artifacts, not codebase citations
+	// (e.g. an agent-table's plan-loc column holds bare `(file.ext)` names by contract,
+	// and a dead-import finding legitimately cites the nonexistent path it reports).
+	const ignore = (checks.citations.ignore ?? []).map((r) => new RegExp(r, "i"));
 	for (const c of all) {
+		if (ignore.some((re) => re.test(c.raw) || re.test(c.tok))) continue;
 		const rel = resolveRel(c.tok);
 		if (!rel) { bad.push(`${c.raw} (${resolveRel.why.get(c.tok.replace(/\\/g, "/").replace(/^\.\//, "")) ?? "no such file"})`); checked++; continue; }
 		checked++;
@@ -250,6 +255,33 @@ for (const sec of checks.required_sections ?? []) {
 	const ok = new RegExp(sec, "m").test(body);
 	expect(`output contains required section /${sec}/`, ok, ok ? "present" : "MISSING");
 }
+// ---------- section routing (which `## Section` a keyword lands in) ----------
+// Tests an artifact's routing logic (e.g. discover puts a scope-creep aside under
+// `## Suggested Follow-ups`, NOT `## Goals`). Splits the body on `## ` headings.
+if (checks.section_routing?.length) {
+	const sections = {};
+	let cur = "(preamble)";
+	sections[cur] = [];
+	for (const line of body.split("\n")) {
+		const h = line.match(/^##\s+(.*)$/);
+		if (h) { cur = h[1].trim(); sections[cur] = sections[cur] ?? []; }
+		else sections[cur].push(line);
+	}
+	const sectionText = (reStr) => {
+		const re = new RegExp(reStr, "i");
+		return Object.entries(sections).filter(([h]) => re.test(h)).map(([, b]) => b.join("\n")).join("\n");
+	};
+	for (const spec of checks.section_routing) {
+		const kw = new RegExp(spec.keyword, "i");
+		const inHit = kw.test(sectionText(spec.in_section));
+		const notHit = spec.not_in_section ? kw.test(sectionText(spec.not_in_section)) : false;
+		expect(
+			`routing ${spec.id}: /${spec.keyword}/ under /${spec.in_section}/${spec.not_in_section ? ` and NOT under /${spec.not_in_section}/` : ""} — ${spec.note ?? ""}`,
+			inHit && !notHit,
+			`in-section: ${inHit ? "yes" : "NO"}${spec.not_in_section ? `; forbidden-section: ${notHit ? "PRESENT (leaked)" : "clean"}` : ""}`,
+		);
+	}
+}
 if (checks.expected_entities) {
 	const missing = checks.expected_entities.filter((e) => !new RegExp(e.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(body));
 	expect(
@@ -318,6 +350,14 @@ if (checks.require_rejection_reasoning) {
 if (checks.max_findings != null) {
 	const n = (body.match(/^(?:### |\| ?)(?:🔴|🟡|I\d|S\d|Q\d)/gm) ?? []).length;
 	expect(`total flagged findings <= ${checks.max_findings} (over-flagging ceiling on a clean diff)`, n <= checks.max_findings, `found ${n}`);
+}
+if (checks.max_table_rows != null) {
+	// Row-format agents (one markdown table, one row per finding): count body rows —
+	// every `|` line minus the header and separator. The max_findings marker regex
+	// (🔴/I\d/...) never matches these tables, so this is their over-flagging ceiling.
+	const rows = body.split("\n").filter((l) => /^\|/.test(l.trim())).length;
+	const n = Math.max(0, rows - 2);
+	expect(`table body rows <= ${checks.max_table_rows} (over-flagging ceiling)`, n <= checks.max_table_rows, `rows: ${n}`);
 }
 
 finish();

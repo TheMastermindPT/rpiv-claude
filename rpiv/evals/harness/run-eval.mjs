@@ -26,13 +26,34 @@ const casePath = resolve(args.case);
 const caseSpec = JSON.parse(readFileSync(casePath, "utf-8"));
 const rundir = resolve(args.rundir);
 const model = args.model ?? caseSpec.model ?? "fable";
-const worktree = caseSpec.worktree;
+// --worktree overrides the case's pinned worktree — used to fan parallel runs across
+// multiple clean worktrees at the SAME ref (e.g. plan + blueprint both write .rpiv/
+// artifacts/plans/, so they cannot share one worktree). The override must point at a
+// worktree checked out at the case's `ref`, or grading resolves against the wrong tree.
+const worktree = args.worktree ?? caseSpec.worktree;
 mkdirSync(join(rundir, "outputs"), { recursive: true });
 
 // 1. isolate: wipe any review artifacts a previous run left in the worktree
 for (const rel of caseSpec.clean ?? []) {
 	const p = join(worktree, rel);
 	if (existsSync(p)) rmSync(p, { recursive: true, force: true });
+}
+
+// 1b. seed pinned upstream artifacts into the worktree (pipeline-chain cases: design
+// needs a research artifact to read, plan needs a design artifact). `from` is relative
+// to the case's own dir; `to` is relative to the worktree. Seeding runs AFTER clean, and
+// `clean` must only list the skill's OWN output dir — never the seeded dir — so the seed
+// survives. Without this, design/plan/blueprint evals have no upstream input to consume.
+for (const s of caseSpec.seed ?? []) {
+	const src = resolve(dirname(casePath), s.from);
+	const dst = join(worktree, s.to);
+	if (!existsSync(src)) {
+		console.error(`[${caseSpec.id}] seed source missing: ${src}`);
+		process.exit(1);
+	}
+	mkdirSync(dirname(dst), { recursive: true });
+	cpSync(src, dst);
+	console.log(`[${caseSpec.id}] seeded ${s.to}`);
 }
 
 // 2. resolve the prompt ({OUT} -> absolute agent-output path inside the run dir)

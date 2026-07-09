@@ -1,0 +1,46 @@
+{
+  "id": "RS-1",
+  "name": "load-cap-enforcement-discovery",
+  "skill": "research",
+  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
+  "ref": "b460257",
+  "clean": [".rpiv/artifacts/research"],
+  "artifact_glob": ".rpiv/artifacts/research/*.md",
+  "prompt": "/rpiv:research I want to understand how load caps work in adaptive plan generation — when a user's prescribed load would climb too high week over week, where does the system decide the ceiling and actually enforce it? I'm a bit worried that ceiling logic might be duplicated in more than one place and could drift out of sync. (Headless non-interactive run: at any developer-checkpoint question, pick the recommended option and continue; never wait for user input.)",
+  "ground_truth_note": "Verified against wt-head (b460257) 2026-07-08. The max-allowed-load formula + kg tolerance live in lib/generation/load-cap.ts (getMaxAllowedLoadKg :15, LOAD_EPSILON_KG unexported :13, predicates loadExceeds/loadAtOrBelow/loadReducedBelow :22-31). Two consumer sides: VALIDATE side = adaptive-context/validation.ts (imports the predicates :19-22, uses getMaxAllowedLoadKg :309/:468 and loadExceeds :351/:378/:407/:475). APPLY side = adaptive-application/prescription-math.ts (loadExceeds/loadAtOrBelow/loadReducedBelow :161-188) and adaptive-application/prescription-mutators.ts (getMaxAllowedLoadKg :77). The anti-drift mechanism the research must surface: load-cap.ts is the single owner and keeps LOAD_EPSILON_KG unexported so consumers cannot re-derive the tolerance inline (this is the arch-review IX-1 lesson, documented in load-cap.ts's own header). Prompt deliberately names NO files (contamination control) — research must discover the owner + both consumer sides itself.",
+  "checks": {
+    "citations": { "min_resolvable_pct": 85 },
+    "required_sections": [
+      "^## Summary",
+      "^## Code References",
+      "^## Integration Points",
+      "^## Architecture Insights"
+    ],
+    "recall": [
+      {
+        "id": "owner-formula",
+        "files": [{ "path": "lib/generation/load-cap.ts", "line": 15, "radius": 30 }],
+        "min_files": 1,
+        "note": "identifies load-cap.ts as the single owner of the max-allowed-load formula"
+      },
+      {
+        "id": "validate-side",
+        "files": [{ "path": "lib/generation/adaptive-context/validation.ts", "line": 309, "radius": 180 }],
+        "min_files": 1,
+        "note": "surfaces the validation side as a load-cap consumer"
+      },
+      {
+        "id": "apply-side",
+        "files": [
+          { "path": "lib/generation/adaptive-application/prescription-math.ts", "line": 170, "radius": 40 },
+          { "path": "lib/generation/adaptive-application/prescription-mutators.ts", "line": 77, "radius": 40 }
+        ],
+        "min_files": 1,
+        "note": "surfaces at least one apply-side (prescription) load-cap consumer — proves it found BOTH sides, not just validation"
+      }
+    ],
+    "frontmatter": {
+      "present": ["status", "topic", "content_hash"]
+    }
+  }
+}
