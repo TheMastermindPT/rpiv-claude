@@ -1,0 +1,5 @@
+# rpiv artifacts (produced by the skills; intentionally untracked)
+.rpiv/
+
+# eval workspace (dev artifacts: run outputs, benchmarks, viewers, audits — not plugin source)
+skill-evals/
