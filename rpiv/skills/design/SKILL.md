@@ -16,16 +16,7 @@ You are tasked with designing how code will be shaped for a feature or change. T
 ## Metadata
 
 ```!
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/now.mjs"
-echo
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/git-context.mjs"
-echo
-echo "### recent (read only in case of empty user input)"
-echo "recent research:"
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/list-recent.mjs" .rpiv/artifacts/research 4
-echo
-echo "recent solutions:"
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/list-recent.mjs" .rpiv/artifacts/solutions 4
+node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/skill-context.mjs" now git recent .rpiv/artifacts/research 4 recent .rpiv/artifacts/solutions 4
 ```
 
 - `now.mjs` (line 1) — `<iso>\t<slug>` tab-separated.

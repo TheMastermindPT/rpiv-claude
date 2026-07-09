@@ -16,9 +16,7 @@ You are tasked with extracting feature intent and requirements through a one-que
 ## Metadata
 
 ```!
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/now.mjs"
-echo
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/git-context.mjs"
+node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/skill-context.mjs" now git
 ```
 
 - `now.mjs` (line 1) — `<iso>\t<slug>` tab-separated.

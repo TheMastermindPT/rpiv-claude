@@ -34,13 +34,7 @@ You are tasked with validating that an implementation plan was correctly execute
 ## Metadata
 
 ```!
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/now.mjs"
-echo
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/git-context.mjs"
-echo
-echo "### recent (read only in case of empty user input)"
-echo "recent plans:"
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/list-recent.mjs" .rpiv/artifacts/plans 10
+node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/skill-context.mjs" now git recent .rpiv/artifacts/plans 10
 ```
 
 ## Steps

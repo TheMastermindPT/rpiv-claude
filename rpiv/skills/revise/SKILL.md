@@ -16,11 +16,7 @@ You are tasked with updating existing implementation plans based on user feedbac
 ## Metadata
 
 ```!
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/now.mjs"
-echo
-echo "### recent (read only in case of empty user input)"
-echo "recent plans:"
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/list-recent.mjs" .rpiv/artifacts/plans 10
+node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/skill-context.mjs" now recent .rpiv/artifacts/plans 10
 ```
 
 - `now.mjs` (line 1) — `<iso>\t<slug>` tab-separated.

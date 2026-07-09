@@ -57,9 +57,7 @@ Synthesis is the load-bearing depth of this skill: the lenses find symptoms in i
 ## Metadata
 
 ```!
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/now.mjs"
-echo
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/git-context.mjs"
+node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/skill-context.mjs" now git
 ```
 
 Copy values verbatim — do not reformat the timezone offset. `now.mjs` line 1 is `<iso>\t<slug>`. Metrics, linter ingestion, and prior-review lookup are LLM-invoked at Steps 2 because they depend on `$ARGUMENTS` and on conversational clarification, which render-time substitution cannot capture.

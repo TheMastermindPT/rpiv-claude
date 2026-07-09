@@ -16,9 +16,7 @@ You are tasked with resuming work from a handoff document through an interactive
 ## Metadata
 
 ```!
-echo "### recent (read only in case of empty user input)"
-echo "recent handoffs:"
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/list-recent.mjs" .rpiv/artifacts/handoffs 10
+node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/skill-context.mjs" recent .rpiv/artifacts/handoffs 10
 ```
 
 ## Flow

@@ -17,9 +17,7 @@ You are tasked with creating git commits for repository changes.
 ## Metadata
 
 ```!
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/git-changes.mjs"
-echo "---recent-subjects---"
-git log --pretty=%s -n 20 2>/dev/null || true
+node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/skill-context.mjs" changes subjects
 ```
 
 `git-changes.mjs` output — `in_repo:` line, then `---status---` (capped `git status --short`), then `---diffstat---` (`git diff HEAD --stat` of staged + unstaged changes; full per-file diff is intentionally NOT included to stay under the output budget).

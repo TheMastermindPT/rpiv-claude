@@ -19,7 +19,7 @@ Two modes: **Fresh** (no existing outline — full discovery and checkpoint) and
 ## Metadata
 
 ```!
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/now.mjs"
+node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/skill-context.mjs" now
 ```
 
 `now.mjs` (line 1) — `<iso>\t<slug>` tab-separated. Use `<iso>` for any `date:` frontmatter bump; copy verbatim.
