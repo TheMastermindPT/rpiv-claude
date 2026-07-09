@@ -61,7 +61,7 @@ The final artifact feeds design or blueprint.
      ```
    - If the indexing returns >200 files, narrow the scope — index only the most relevant subdirectories based on the topic's anchor terms.
    - **Guard: if the indexing returns 0 files** (wrong directory, no matching extensions, empty target), record `indexed: 0 files — scope-tracer and downstream agents will use grep fallback`. Set a flag so downstream agents skip the `ctx_search` preference and fall back to grep immediately — the "exists but empty" FTS5 index is a distinct state from "hasn't been pre-indexed" that neither `stale` nor `hasn't been pre-indexed` checks can detect.
-   - **This step is optional — skip if**: the topic is purely conceptual (no codebase target), the codebase is tiny (<50 source files), or the user explicitly asks to skip indexing. If skipped, agents fall back to grep/read as before — no degradation.
+   - **This step is optional — skip if**: the `ctx_index` tool is not available in this session (context-mode MCP not installed — check your tool list before attempting the call), the topic is purely conceptual (no codebase target), the codebase is tiny (<50 source files), or the user explicitly asks to skip indexing. If skipped, agents fall back to grep/read as before — no degradation.
 
 3. **Structural pre-sweep (tool-gated), then dispatch the scope-tracer agent.** Seed scope-tracer with DIGESTED structural anchors when the tools are present:
    - Probe once: `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/tool-probe.mjs" "."` — read the `ast-grep` / `rg` rows. If BOTH are `absent`, SKIP the pre-sweep (scope-tracer's own grep/find/ls sweep is the fallback — no degradation prompt; research is discovery, not a gated review).
@@ -317,6 +317,7 @@ Findings go into Precedents & Lessons. Otherwise skip and note "git history unav
    ## Historical Context (from `.rpiv/artifacts/`)
    {Links only — one line per doc, no summaries of their contents}
    - `.rpiv/artifacts/something.md` — {one-line description of what this doc covers}
+
    ## Developer Context
    **Q (`file.ext:line`): {Question grounded in specific code reference}**
    A: {Developer's answer}
@@ -327,6 +328,10 @@ Findings go into Precedents & Lessons. Otherwise skip and note "git history unav
    ## Open Questions
    {Only questions NOT resolved during checkpoint}
    ```
+
+3. **Finalization lint**: after the document is fully written, run
+   `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <the research artifact path> --finalizing --stamp`.
+   If it exits non-zero, FIX the reported errors (Edit the artifact) and re-run — the research doc is not final until the lint passes. `--finalizing` runs the frontmatter-schema and no-unfilled-template-token checks even though research uses `status: complete` (not `ready`); this is the same gate `discover` applies to the FRD. On success it stamps `content_hash:` into the frontmatter — this MUST be the last body-affecting action, since the hash pins the finalized body so downstream `design`/`blueprint` can detect an artifact edited after finalization. Research owns no `## Decisions` with `scope: standing`, so there is no decision-ledger promotion step (unlike design/plan).
 
 ### Step 5: Present and Chain
 
@@ -353,6 +358,7 @@ Please review and let me know if you have follow-up questions.
 
 - **Append, never rewrite.** Edit the artifact to add a `## Follow-up Research {ISO 8601 timestamp}` section. Prior content stays immutable.
 - **Bump frontmatter.** Update `last_updated` + `last_updated_by`; set `last_updated_note: "Added follow-up research for <brief description>"`.
+- **Re-stamp after the append.** A follow-up append changes the body, so the finalized `content_hash:` is now stale. After editing, re-run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <the research artifact path> --finalizing --stamp` — the re-stamp is the deliberate re-finalization that keeps the hash matching the (intentionally) extended body, so a downstream consumer's staleness check does not false-trip on your own append.
 - **Re-dispatch narrowly.** Spawn ≤1–2 fresh analysis agents scoped to the new question. Do NOT re-run the full skill.
 - **When to re-invoke instead.** If scope changed materially (different feature surface, different research target), re-run `/rpiv:research` for a fresh artifact. The previous block's `Next step:` stays valid for the existing artifact.
 
@@ -370,5 +376,6 @@ Please review and let me know if you have follow-up questions.
   - ALWAYS wait for all agents to complete (Step 2)
   - ALWAYS run developer checkpoint before writing (Step 3)
   - ALWAYS gather metadata before writing (Step 4)
+  - ALWAYS run the finalization lint + stamp after writing the document (Step 4) — the `content_hash:` stamp must be the last body-affecting action so downstream design/blueprint can detect post-finalization edits
   - NEVER write the document with placeholder values
 - **Frontmatter consistency**: Always include frontmatter, use snake_case fields

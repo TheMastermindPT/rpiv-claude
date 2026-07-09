@@ -1,13 +1,13 @@
 ---
 name: discover
-description: Interview the developer one question at a time to extract feature intent and requirements, reaching mutual consensus, then synthesize into a Feature Requirements Document at .rpiv/artifacts/discover/. The first question is intent-only and runs before any codebase probe; subsequent questions ground in evidence the probe surfaces. Adapts its language to the developer's fluency and glosses jargon into a shared glossary, offers a just-in-time browser visual companion (with ASCII fallback) for spatial/architecture questions, and ends with a teach-back checkpoint that plays the understanding back in the developer's words so both sides confirm the same model. Use as the canonical entry point of the pipeline before research, or to stress-test a feature idea before codebase discovery. The FRD's Decisions block is consumed by `research` and propagates through Developer Context into `design`.
+description: Interview the developer one question at a time to extract feature intent and requirements, reaching mutual consensus, then synthesize into a Feature Requirements Document at .rpiv/artifacts/discover/. The first question is intent-only and runs before any codebase probe; subsequent questions ground in evidence the probe surfaces. Adapts its language to the developer's fluency and glosses jargon into a shared glossary, renders ASCII diagrams inline for spatial/architecture questions, and ends with a teach-back checkpoint that plays the understanding back in the developer's words so both sides confirm the same model. Use as the canonical entry point of the pipeline before research, or to stress-test a feature idea before codebase discovery. The FRD's Decisions block is consumed by `research` and propagates through Developer Context into `design`.
 argument-hint: "[free-text feature description | existing artifact path]"
 shell-timeout: 10
 ---
 
 # Discover
 
-You are tasked with extracting feature intent and requirements through a one-question-at-a-time interview, then writing a Feature Requirements Document (FRD) that downstream skills consume. The deeper goal is **mutual consensus**: by the end, the developer understands the language you used and you understand the idea they want built — both can point at the artifact and agree it is right. Four principles shape the flow: (1) **intent before agents** — the foundational intent question runs before any probe, so stated intent shapes the probe scope; (2) **lazy + confirm** — build the decision tree one layer at a time, and surface evidence-based pre-resolutions for confirmation rather than silently recording them; (3) **adaptive register** — read the developer's own vocabulary and mirror it, glossing any term-of-art the first time so the language is shared, never assumed; (4) **prove the consensus** — before finalizing, play your understanding back in the developer's words (and a visual when it helps) so both sides confirm the same mental model.
+You are tasked with extracting feature intent and requirements through a one-question-at-a-time interview, then writing a Feature Requirements Document (FRD) that downstream skills consume. The deeper goal is **mutual consensus**: by the end, the developer understands the language you used and you understand the idea they want built — both can point at the artifact and agree it is right. Four principles shape the flow: (1) **intent before agents** — the foundational intent question runs before any probe, so stated intent shapes the probe scope; (2) **lazy + confirm** — build the decision tree one layer at a time, and surface evidence-based pre-resolutions for confirmation rather than silently recording them; (3) **adaptive register** — read the developer's own vocabulary and mirror it, glossing any term-of-art the first time so the language is shared, never assumed; (4) **prove the consensus** — before finalizing, play your understanding back in the developer's words (and an ASCII diagram when it helps) so both sides confirm the same mental model.
 
 ## Input
 
@@ -166,7 +166,7 @@ Walk the lazy tree depth-first, parent before child. Expand the next layer (buil
 1. **Classify the question by tier**:
    - **`intent`** — already done in Step 2. Do not re-ask intent in this loop.
    - **`scope`** (goals · non-goals · functional reqs · non-functional reqs · constraints) — recommendation grounded in stated intent. `file:line` citations only when an option references existing code; otherwise state "no codebase precedent" in the option description.
-   - **`shape`** (architectural choice — which seam, which pattern, which integration point) — frame **dialectically**: name the tradeoff axis, not a winner. Each option's `description` MUST state what it optimizes for AND what it sacrifices, in the form "optimizes <X>, loses <Y>" (or "optimizes <X>, costs <Y>"). The lead option still carries `(Recommended)` with a one-line rationale, but the framing forces the developer to pick a side of an explicit tension rather than rubber-stamp a winner. Generate at least 2 candidate options before scoring — never present a single option masquerading as a choice. `file:line` citations required on every option that references existing code. Mirrors the `packages/rpiv-pi/skills/research/SKILL.md:103-142` checkpoint pattern. If no precedent exists, switch to ungrounded mode and label options as "convention A / convention B" with explicit "no codebase precedent" — the dialectic framing (X vs Y tradeoff) still applies.
+   - **`shape`** (architectural choice — which seam, which pattern, which integration point) — frame **dialectically**: name the tradeoff axis, not a winner. Each option's `description` MUST state what it optimizes for AND what it sacrifices, in the form "optimizes <X>, loses <Y>" (or "optimizes <X>, costs <Y>"). The lead option still carries `(Recommended)` with a one-line rationale, but the framing forces the developer to pick a side of an explicit tension rather than rubber-stamp a winner. Generate at least 2 candidate options before scoring — never present a single option masquerading as a choice. `file:line` citations required on every option that references existing code. Mirrors the research skill's developer-checkpoint pattern (grounded options with `file:line` citations, one at a time). If no precedent exists, switch to ungrounded mode and label options as "convention A / convention B" with explicit "no codebase precedent" — the dialectic framing (X vs Y tradeoff) still applies.
 
      **Anti-rescoping**: if the probe finds something that could substitute for the requested build (e.g., feature already exists but isn't wired up), surface as an `intent` question with `file:line` — never silently redirect. Offer both "use what's there" and "build as asked".
    - **`detail`** (acceptance criteria · routine sub-decisions inside any branch) — batchable when 2-4 sibling leaves are independent.
@@ -178,7 +178,7 @@ Walk the lazy tree depth-first, parent before child. Expand the next layer (buil
 3.5 **Communication behaviors — apply to every question in this loop (the two-way-understanding layer):**
    - **Gloss jargon inline + record it.** The first time you must use a term of art (seam, idempotent, non-functional requirement, debounce, RLS, …), define it in one clause in the developer's register, and add it to the running Glossary (Step 6). `plain` register: prefer the everyday word, keep the term in parentheses. `technical`: use the term directly but still log it once. The Glossary is how the developer ends up understanding your language — never skip the log.
    - **Signal your own confidence.** When you are genuinely unsure what the developer meant, say so in the question instead of guessing — lead with "I'm ~60% you mean X rather than Y" and make X and Y the options. Low confidence is a reason to ask, never to silently pick a side.
-   - **Offer a visual just-in-time.** When a question is about architecture / seam / layout / flow / spatial structure and would be clearer shown than told, offer the visual companion — ONCE, as its own message (see the Visual Companion section). If the developer declines or it is unavailable, render an ASCII diagram inline so they still see the structure. Keep `scope` / `detail` / conceptual questions in the terminal — a UI *topic* is not automatically a visual *question*.
+   - **Show structure as ASCII, just-in-time.** When a question is about architecture / seam / layout / flow / spatial structure and would be clearer shown than told, render an ASCII diagram inline with the question. Keep `scope` / `detail` / conceptual questions diagram-free — a UI *topic* is not automatically a visual *question*.
    - **Speak in the current register.** Phrase options and the `(Recommended)` rationale at the level set in Step 2.5, re-assessing as answers reveal more fluency or less.
 
 4. **Critical rules**:
@@ -202,13 +202,13 @@ Walk the lazy tree depth-first, parent before child. Expand the next layer (buil
 
    Do not invent questions to pad the interview. Do NOT ask a final "looks good / want to adjust" rubber-stamp question — chain forward to research is automatic at Step 7.
 
-**Total agent budget across the skill**: 2 (Step 3 initial probe) + N×1 (Step 5 corrections, typically 0-2) = 2-4 agent dispatches per FRD. The communication behaviors (Step 5 / 3.5), the visual companion, and the teach-back (Step 5.5) add **zero** agents.
+**Total agent budget across the skill**: 2 (Step 3 initial probe) + N×1 (Step 5 corrections, typically 0-2) = 2-4 agent dispatches per FRD. The communication behaviors (Step 5 / 3.5) and the teach-back (Step 5.5) add **zero** agents.
 
 ### Step 5.5: Teach-Back Consensus Checkpoint
 
 Once the interview loop terminates (every branch has a Decision or a Deferral), prove the consensus before writing anything. This is the one place discover plays its *own* understanding back to the developer — the mechanism that makes the FRD a shared agreement instead of a one-sided capture.
 
-1. **Play back your model — in the developer's words.** Present a compact restatement of the settled feature: the problem (in their framing from Step 2), the goals/non-goals, the shape you'll recommend, and the key decisions — phrased at the current register, using their nouns, with glossed terms where you introduced any. When the model has structure that is clearer shown than told (a flow, a seam, a layout), accompany it with a visual (companion if active, else an ASCII diagram).
+1. **Play back your model — in the developer's words.** Present a compact restatement of the settled feature: the problem (in their framing from Step 2), the goals/non-goals, the shape you'll recommend, and the key decisions — phrased at the current register, using their nouns, with glossed terms where you introduced any. When the model has structure that is clearer shown than told (a flow, a seam, a layout), accompany it with an ASCII diagram.
 
 2. **Name your residual uncertainty explicitly.** List the points where your confidence is still below certain ("I'm assuming the coach, not the client, initiates this — correct?"). Surfacing your own doubt is the honest half of mutual consensus; do not paper over it to look finished.
 
@@ -237,7 +237,6 @@ Compile interview output into the FRD. The interview's logical order (problem �
 - **Suggested Follow-ups** — related-but-out-of-scope items surfaced during the probe or interview that the developer did NOT add to scope (per the Step 5 scope-creep guardrail). One line per item: what was observed and where (`file:line` when applicable). Omit the section entirely if empty.
 - **Glossary** — every term of art you introduced, paired with the one-line plain-language meaning in the developer's register (from the Step 5 gloss-and-record behavior). Also includes any developer term disambiguated during Step 2 (e.g., "'session' = workout session, not browser session"). This is the shared-language record; it lets the developer re-read the FRD without re-learning your vocabulary. Omit only if no term was ever introduced (rare).
 - **Shared Understanding** — the teach-back outcome from Step 5.5: a short restatement of the agreed model in the developer's words, the points they corrected during teach-back (what changed), and any residual uncertainty they confirmed as acceptable. This section is the consensus proof — it shows both sides agreed, not just that the developer answered questions.
-- **Visual Artifacts** — when the visual companion was used, a one-line reference to each saved mockup/diagram (path under `.superpowers/brainstorm/`). Omit if the session was text-only.
 - **References** — input files, mentioned tickets, related artifacts.
 
 Frontmatter additions for template_version 2: `register:` (`plain` / `mixed` / `technical` — the final level from Step 2.5) and `consensus:` (`confirmed` once the Step 5.5 teach-back is accepted; `partial` if the developer deferred on residual uncertainty).
@@ -280,19 +279,6 @@ Frontmatter additions for template_version 2: `register:` (`plain` / `mixed` / `
 - **No rubber-stamp question.** NEVER ask a final "looks good / want to adjust" question — chain forward to research is automatic at Step 7.
 - **Manual edits are allowed.** If the developer wants a one-off correction without re-running the full interview, they can Edit the FRD directly — the skill does not own follow-up surface area beyond fresh-artifact-per-call.
 
-## Visual Companion
-
-A browser-based companion for showing mockups, diagrams, and side-by-side options during the interview. It is a **just-in-time tool, not a mode** — most of discover stays in the terminal.
-
-**The per-question test:** *would the developer understand this better by seeing it than reading it?* Use the browser only for content that IS visual — layouts, wireframes, architecture/flow diagrams, spatial relationships, side-by-side design comparisons. Keep `scope` / `detail` / conceptual / tradeoff questions in the terminal. A question *about* a UI topic is not automatically a visual question.
-
-**Offering it (just-in-time, once):** Do NOT offer it upfront. The first time a `shape`/layout/flow question would be genuinely clearer shown than told, offer it then, as its own message:
-> "This next part might be clearer if I show you — I can put mockups/diagrams in a browser tab as we go. Want me to open it? (Otherwise I'll sketch it in the terminal.)"
-
-Wait for the answer. If accepted, read `${CLAUDE_PLUGIN_ROOT}/skills/discover/visual-companion.md` for the full protocol and start the server with `${CLAUDE_PLUGIN_ROOT}/skills/discover/scripts/start-server.sh --project-dir <repo-root> --open`. If declined, render an **ASCII diagram inline** instead and don't offer again unless the developer raises it — text-only developers still get the visual aid.
-
-**Windows caveat (this environment):** the server must survive across turns. On Windows the start script switches to foreground, so launch it with `run_in_background: true` on the Bash call, then read `$STATE_DIR/server-info` next turn for the URL. Working files live under `.superpowers/brainstorm/` (gitignored scratch) — remind the developer to add `.superpowers/` to `.gitignore`. The visual companion adds no agents and is fully optional; if it fails to start, fall back to ASCII and continue.
-
 ## Important Notes
 
 These reinforce the critical rules from the steps above — listed here so they don't get lost in step-body detail.
@@ -302,9 +288,9 @@ These reinforce the critical rules from the steps above — listed here so they 
 - **`intent` generates, `scope`/`shape`/`detail` reviews**: Intent is the developer's framing — they generate it. Scope, shape, and detail are proposals — they review them. The "developer reviews a proposal" model does not apply at the intent layer.
 - **Adaptive register shapes HOW, never WHAT**: Step 2.5 sets the level (`plain`/`mixed`/`technical`) from the developer's own words and only changes phrasing. It never reshapes, reorders, or skips a question, and it never precedes the intent question.
 - **Glossary is mandatory, not decorative**: every term of art you introduce gets a one-line plain-language entry the first time. This is the concrete mechanism for "the developer understands the language you used" — an FRD they cannot re-read without you is not consensus.
-- **Teach-back proves consensus; it is not the banned rubber-stamp**: Step 5.5 restates your full model in the developer's words (+ a visual when useful), names your residual uncertainty, and asks for correction on specifics. The forbidden question is the contentless final "looks good / want to adjust?" — the teach-back is its opposite and is required.
+- **Teach-back proves consensus; it is not the banned rubber-stamp**: Step 5.5 restates your full model in the developer's words (+ an ASCII diagram when useful), names your residual uncertainty, and asks for correction on specifics. The forbidden question is the contentless final "looks good / want to adjust?" — the teach-back is its opposite and is required.
 - **Confidence and misunderstanding are surfaced, never swallowed**: when unsure of intent, say "~60% you mean X" and ask; when the developer's rationale contradicts their pick, flag it before recording. Silence on either is how a wrong Decision slips in.
-- **Visuals are just-in-time and optional**: offered only when a question is clearer shown than told, once, with an ASCII fallback. Never a mode; never forced; never upfront.
+- **ASCII diagrams are just-in-time**: render one inline only when a question is clearer shown than told. Never forced; never upfront.
 - **`file:line` is tier-conditional**: `intent` — never. `scope` — only when an option references existing code, otherwise label "no codebase precedent". `shape` — required on every option that references existing code; if no precedent exists, switch to ungrounded "convention A / convention B" mode. `detail` — same rule as `scope`.
 - **Lazy tree, no full-tree pre-build**: Build only root + immediate children in Step 4. Expand each node's children only after the node resolves. Premature full-tree construction biases the dialogue.
 - **Pre-resolutions confirm, never silently record**: Evidence-based nodes are batch-confirmed in Step 4 (or mid-loop if newly surfaced). The developer's confirm/correct is the actual Decision.
@@ -313,20 +299,4 @@ These reinforce the critical rules from the steps above — listed here so they 
 - **Light fan-out only**: Step 3 ≤2 agents (`codebase-locator` + optionally `codebase-analyzer`). Step 5 Corrections ≤1 additional agent per correction event. Breadth discovery (`scope-tracer`, broad sweeps, `integration-scanner`) belongs to `research` — chain forward instead of expanding scope here.
 - **Never write or edit source files**: This skill produces an artifact only. Source-file changes are `implement`'s job, far downstream.
 - **Fresh artifact every invocation**: Each `/rpiv:discover` call writes a NEW timestamp-distinct file. To iterate on a prior FRD, re-invoke or manually Edit the prior file.
-- **Critical ordering** — follow the numbered steps exactly:
-  - ALWAYS read mentioned files before any agent dispatch (Step 1 → Step 2)
-  - ALWAYS ask the `intent` question before probing (Step 2 → Step 3)
-  - ALWAYS read the register AFTER the intent answer, never before — it shapes phrasing only (Step 2.5)
-  - ALWAYS gloss and log a term of art the first time you use it (Step 5 / Glossary)
-  - ALWAYS run the teach-back before synthesis and re-play only the parts the developer corrects (Step 5.5)
-  - ALWAYS shape the probe by stated intent, not the raw input text (Step 3)
-  - ALWAYS batch-confirm pre-resolutions instead of silent auto-record (Step 4)
-  - ALWAYS expand the tree lazily during the interview (Step 5)
-  - ALWAYS re-queue cross-cutting answers under each affected parent (Step 5)
-  - ALWAYS terminate on depth signal, not bucket-fill (Step 5)
-  - ALWAYS synthesize from the interview log, never from memory of the conversation (Step 6)
-  - NEVER skip the developer-facing interview — it's the entire point of this skill
-  - NEVER ask a final contentless "looks good / want to adjust" rubber-stamp question (anti-pattern per `a93e591`) — the Step 5.5 teach-back, which restates the full model and asks for specific corrections, is the allowed and required alternative; do not conflate the two
-  - NEVER skip the teach-back because the feature "seems clear", and never collapse it into a bare "all good?"
-  - NEVER let the register change WHAT you ask — only HOW you phrase it — and never read the register before the intent answer
-  - NEVER dispatch agents before Step 2's `intent` question is answered
+- **Critical ordering** — the enforced step sequence (rationale for each is in the bullets above; this is the order): read mentioned files → ask `intent` (Step 2) → read register (Step 2.5, *after* intent) → probe shaped by stated intent (Step 3) → batch-confirm pre-resolutions (Step 4) → interview loop: lazy-expand the tree, gloss+log terms, re-queue cross-cutters, terminate on depth not bucket-fill (Step 5) → teach-back before synthesis, re-playing only what the developer corrects (Step 5.5) → synthesize from the interview log, never from memory (Step 6). The load-bearing NEVERs: never dispatch an agent before the intent answer; never skip the developer interview or the teach-back (nor collapse the teach-back into a bare "all good?"); never let the register change WHAT you ask, only HOW. The banned move is the contentless final "looks good / want to adjust?" rubber-stamp (anti-pattern `a93e591`) — the teach-back is its required opposite, not the same thing.

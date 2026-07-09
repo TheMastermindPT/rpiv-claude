@@ -91,11 +91,6 @@ last_updated_by: {`author:` from Metadata block}
 
 **Residual uncertainty (accepted):** {points the developer confirmed are acceptable to leave open or assumed — one line each; omit if none.}
 
-## Visual Artifacts
-{Only when the visual companion was used. One line per saved mockup/diagram with its path. Omit the section entirely for text-only sessions.}
-
-- {what it showed — `.superpowers/brainstorm/<session>/content/<file>.html`}
-
 ## References
 - {Input file or ticket}
 - {Related artifact, e.g., `.rpiv/artifacts/research/<YYYY-MM-DD_HH-MM-SS>_<topic>.md`}
