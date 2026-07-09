@@ -78,6 +78,7 @@ CRITICAL: Use EXACTLY this format. Working notes for Steps 2–3 first (one line
 ```
 
 **Row rules**:
+
 - `plan-loc` is always `## <Section Heading> §K` — the heading you treated as the role at Step 1, with the entry's §-index from Step 2.
 - `codebase-loc` is literal `<n/a>` — this agent does not ground findings in live-code locations.
 - `severity ∈ { blocker, concern, suggestion }` — exactly one per row, driven by the Step-4 mapping.
