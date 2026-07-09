@@ -1,0 +1,18 @@
+[
+  {"query": "research how the adaptive-context validation pipeline works before I touch it", "should_trigger": true},
+  {"query": "I need a deep dive into how the plan-generation module integrates with the db layer, with file:line references", "should_trigger": true},
+  {"query": "investigate the codebase around load-cap enforcement — where the formula lives and every consumer", "should_trigger": true},
+  {"query": "answer a bunch of architecture questions I have about the events module before we design changes", "should_trigger": true},
+  {"query": "map out end to end how a workout plan flows from request to persisted result", "should_trigger": true},
+  {"query": "dig into how caching is currently done across the app and where it could drift", "should_trigger": true},
+  {"query": "understand the current substitution logic thoroughly and write it up so I don't have to re-read it", "should_trigger": true},
+  {"query": "help me figure out what feature I even want to build — I'm still fuzzy on the requirements", "should_trigger": false},
+  {"query": "what are the pros and cons of Redis vs in-memory for this cache? compare the options", "should_trigger": false},
+  {"query": "design the new notifications architecture and decompose it into slices", "should_trigger": false},
+  {"query": "turn my design doc into a phased implementation plan", "should_trigger": false},
+  {"query": "just find the file where getMaxAllowedLoadKg is defined", "should_trigger": false},
+  {"query": "review this PR for bugs", "should_trigger": false},
+  {"query": "write test cases for the substitution feature", "should_trigger": false},
+  {"query": "rename this variable across the whole repo", "should_trigger": false},
+  {"query": "is my build passing? run the checks", "should_trigger": false}
+]

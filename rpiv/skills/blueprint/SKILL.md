@@ -1,6 +1,6 @@
 ---
 name: blueprint
-description: Plan complex features by decomposing them into vertical slices (one slice equals one phase) with developer micro-checkpoints between phases, producing an implement-ready phased plan in .rpiv/artifacts/plans/. Use for complex multi-component features touching 6+ files across multiple layers when iterative review between slices is valuable. Requires a research artifact or a solutions artifact (from explore). Prefer blueprint over plan when mid-flight micro-checkpoints matter, and prefer plan when a straightforward phased breakdown is enough.
+description: Go from a research artifact straight to an implement-ready phased plan in ONE pass — design and plan combined — decomposing into vertical slices (one slice = one phase) with developer micro-checkpoints between slices, written to .rpiv/artifacts/plans/. Use when the user wants research turned directly into an executable plan with mid-flight review — e.g. 'from research to a plan in one pass with checkpoints', 'blueprint this feature', 'don't split design and plan, get me to an implement-ready plan with review gates' — for complex features where reviewing each slice as it's generated matters. Requires a research or solutions artifact. Prefer blueprint over the design-then-plan two-step when one combined pass with per-slice checkpoints is wanted. NOT for architecture-only with no plan (design), an EXISTING design doc (plan), or understanding existing code (research).
 argument-hint: "[research artifact path]"
 shell-timeout: 10
 ---

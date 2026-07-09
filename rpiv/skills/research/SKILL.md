@@ -1,6 +1,6 @@
 ---
 name: research
-description: Answer structured research questions about a codebase using targeted parallel analysis agents, then synthesize findings into a research document in .rpiv/artifacts/research/. Internally dispatches the scope-tracer agent to formulate trace-quality research questions, then answers them. Use when the user wants in-depth research on a codebase area, asks to "research X", or needs answers to architecture or behavior questions before designing changes.
+description: Research and answer questions about how existing code works — deep-dive, investigate, trace, or map a codebase area — then synthesize the findings into a research document in .rpiv/artifacts/research/. Use whenever the user wants to understand, investigate, deep-dive, trace, or map an existing system, area, or integration BEFORE changing it — e.g. 'research how X works', 'deep dive into how A integrates with B', 'map how a request flows end to end', 'answer these architecture questions before I change anything'. Internally dispatches scope-tracer to formulate trace-quality questions, then parallel analysis agents to answer them with file:line evidence. NOT for deciding WHAT to build (that's discover), comparing options (explore), reviewing a diff or PR (deep-review), or a trivial single-file lookup.
 argument-hint: "[free-text research prompt]"
 shell-timeout: 10
 ---

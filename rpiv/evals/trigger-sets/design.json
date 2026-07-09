@@ -1,0 +1,17 @@
+[
+  {"query": "design the architecture for the notifications feature from .rpiv/artifacts/research/2026-06-30_notifications.md — I want the code shape before we plan phases", "should_trigger": true},
+  {"query": "decompose this feature into vertical slices with the actual types, layers, and wiring", "should_trigger": true},
+  {"query": "research is done — now architect how the code should be structured, slice by slice", "should_trigger": true},
+  {"query": "focus on the architecture and decomposition of X for now; we'll turn it into phases later", "should_trigger": true},
+  {"query": "shape the implementation of the clamp-audit feature — decisions, file map, slices — from the research doc", "should_trigger": true},
+  {"query": "I want a design artifact with the architectural decisions and per-slice code before I hand it to plan", "should_trigger": true},
+  {"query": "turn my finished design doc at .rpiv/artifacts/designs/X.md into implementation phases", "should_trigger": false},
+  {"query": "I want to go straight from research to an implement-ready plan with checkpoints between each slice, one pass", "should_trigger": false},
+  {"query": "research how the current validation works before I change anything", "should_trigger": false},
+  {"query": "what are the options for storing the audit trail — compare a few approaches", "should_trigger": false},
+  {"query": "I don't have research yet, help me scope out what this feature even needs", "should_trigger": false},
+  {"query": "review the diff on my branch", "should_trigger": false},
+  {"query": "implement phase 2 of the plan", "should_trigger": false},
+  {"query": "just locate all the files related to notifications", "should_trigger": false},
+  {"query": "fix this TypeScript error in service.ts", "should_trigger": false}
+]
