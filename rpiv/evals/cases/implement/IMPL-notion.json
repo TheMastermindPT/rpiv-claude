@@ -1,0 +1,36 @@
+{
+  "id": "IMPL-notion",
+  "skill": "implement",
+  "type": "capability",
+  "summary": "implement must GENERATE src/lib/cms/notion.ts (the mutation-hardened Notion CMS parsing layer) from a code-redacted plan, turning 14 hardened oracle tests green without editing the oracle.",
+  "fixture": {
+    "path": "C:/Users/pedro/Documents/CasaDosCaminhos-evals/wt-notion",
+    "baselineRef": "HEAD",
+    "target": "src/lib/cms/notion.ts",
+    "oracleTest": "test/unit/cms/notion.test.ts",
+    "vitest": "node node_modules/vitest/vitest.mjs"
+  },
+  "plan": ".rpiv/artifacts/plans/2026-07-13_notion-parsing-layer-EVAL.md",
+  "invocation": "/rpiv:implement .rpiv/artifacts/plans/2026-07-13_notion-parsing-layer-EVAL.md Phase 1",
+  "grade": {
+    "oracleAllPass": "vitest exit 0 on oracleTest (all 14 green)",
+    "oracleUnchanged": ["test/unit/cms/notion.test.ts"],
+    "noRegression": "test/unit",
+    "mutationOptional": {
+      "cmd": "node node_modules/@stryker-mutator/core/bin/stryker.js run",
+      "mutate": "src/lib/cms/notion.ts",
+      "note": "Secondary signal that the generated code is real, not a test-passing shim. Expensive; run only on a green result."
+    }
+  },
+  "contaminationControls": {
+    "memoryIsolation": "Fixture path != real repo path, so CasaDosCaminhos project memory (11 files, 5 spoilers) does not load.",
+    "historyIsolation": "Fresh git init; git log -- src/lib/cms/notion.ts shows only the stubbed baseline. Original impl unreachable via git show.",
+    "docsScrubbed": ["design 2026-07-13_15-58-14", "solution 2026-07-13_15-51-38", "validation 2026-07-13_20-40-52", "raw plan 2026-07-13_18-24-55", "docs/decisions/0004-notion-as-cms.md", "src/lib/cms/CLAUDE.md", ".env", ".dev.vars"],
+    "planRedacted": "All implementation code fences stripped; Test Contract + Success Criteria kept verbatim from the real plan's Phase 2+3."
+  },
+  "validated": {
+    "baselineGreen": "14/14 pass on committed notion.ts",
+    "stubRed": "14/14 fail on the fixture stub",
+    "pending": "Whether `claude -p \"/rpiv:implement <plan>\"` fires the skill headless (disable-model-invocation:true) — validate with one cheap run before trusting a full billed run; fall back to an explicit Skill-tool prompt if the slash form no-ops."
+  }
+}
