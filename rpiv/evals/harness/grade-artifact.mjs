@@ -360,6 +360,63 @@ if (checks.max_table_rows != null) {
 	expect(`table body rows <= ${checks.max_table_rows} (over-flagging ceiling)`, n <= checks.max_table_rows, `rows: ${n}`);
 }
 
+// ---------- 7. slice-verifier summary-row grading (capability + restraint) ----------
+// The agent emits working notes then its final summary rows (Decisions / Cross-slice /
+// [Correctness] / Research). We grade the FINAL rows only. To compare a 3-row baseline
+// against the 4-row expanded agent FAIRLY, recall is scored as "caught in ANY row"
+// (capability) — never "in the Correctness row" (that is format/routing, which only the
+// 4-row agent can satisfy; scoring it would penalize the baseline for a format gap, not a
+// missed bug — the exact conflation that made an earlier version misread the baseline).
+// restraint = an out-of-vantage concern must not be promoted to a VIOLATION in any row.
+// no_false_correctness = on a clean slice the Correctness row must carry no VIOLATION (an
+// invented correctness bug); a 3-row agent with no Correctness row passes it trivially, so
+// the check stays arm-fair. Legitimate Decisions/Cross-slice findings on a clean slice are
+// allowed — a living codebase is never zero-finding (the IS-2/ACR-2 lesson). Working notes
+// are excluded so an agent that declines an out-of-vantage concern is not penalized.
+// Case-insensitive: the rows carry the agent's own prose.
+if (checks.slice_rows) {
+	const labels = checks.slice_rows.labels ?? ["Decisions", "Cross-slice", "Correctness", "Research"];
+	const labelRe = new RegExp(`^\\s*-?\\s*(${labels.map((l) => l.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\s*:\\s*(.*)$`);
+	const rowOf = {};
+	for (const line of body.split("\n")) {
+		const m = line.match(labelRe);
+		if (m) rowOf[m[1]] = m[2]; // last occurrence wins -> the final summary row, not a working note
+	}
+	const allRows = labels.map((l) => rowOf[l] ?? "").join("\n");
+	// capability: the defect is caught SOMEWHERE in the final rows (row-agnostic, arm-fair)
+	for (const e of checks.slice_rows.capability ?? []) {
+		const re = new RegExp(e.must_match, "i");
+		const found = re.test(allRows);
+		const where = labels.filter((l) => re.test(rowOf[l] ?? ""));
+		expect(
+			`capability ${e.id}: /${e.must_match}/ caught in some summary row — ${e.note ?? ""}`,
+			found,
+			found ? `caught (under ${where.join("/")})` : "NOT caught in any summary row",
+		);
+	}
+	// restraint: an out-of-vantage concern must not be raised as a VIOLATION in any row
+	for (const r of checks.slice_rows.restraint ?? []) {
+		const re = new RegExp(r.forbid, "i");
+		const flagged = labels.filter((l) => /VIOLATION/i.test(rowOf[l] ?? "") && re.test(rowOf[l] ?? ""));
+		expect(
+			`restraint ${r.id}: /${r.forbid}/ NOT raised as a VIOLATION (out of slice vantage) — ${r.note ?? ""}`,
+			flagged.length === 0,
+			flagged.length ? `OVER-REACH: raised under ${flagged.join("/")}` : "not flagged (correct)",
+		);
+	}
+	// clean-slice false-positive control: the emitted code is correct, so the Correctness
+	// row must carry no VIOLATION. A 3-row agent (no Correctness row) passes trivially.
+	if (checks.slice_rows.no_false_correctness) {
+		const cx = rowOf["Correctness"] ?? "";
+		const invented = /VIOLATION/i.test(cx);
+		expect(
+			"clean slice: Correctness row carries no VIOLATION (no invented correctness bug)",
+			!invented,
+			invented ? `FALSE POSITIVE: "${cx.slice(0, 160)}"` : rowOf["Correctness"] == null ? "no Correctness row (3-row agent) — trivially clean" : "Correctness row clean",
+		);
+	}
+}
+
 finish();
 
 function finish() {

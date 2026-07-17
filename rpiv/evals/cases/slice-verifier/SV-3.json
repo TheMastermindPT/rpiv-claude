@@ -1,0 +1,29 @@
+{
+  "id": "SV-3",
+  "name": "no-hook-correctness-discriminator",
+  "skill": "slice-verifier (agent)",
+  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
+  "ref": "b460257",
+  "clean": [],
+  "seed": [
+    { "from": "SV-1.artifact.md", "to": ".rpiv/eval-fixture/design-load-cap-audit.md" }
+  ],
+  "output": "agent",
+  "prompt_file": "SV-3.prompt.md",
+  "ground_truth_note": "The discriminating case: a single PURE-LOGIC correctness bug (D7) with NO commitment/requirement/decision/cross-slice hook — the kind of bug only an agent explicitly told to audit code correctness would look for. The slice is otherwise the SV-2 clean slice. D7: format.ts computes `maxDeltaKg = entries[0].proposedLoadKg - entries[0].cappedLoadKg` (the FIRST entry's reduction) but the return string and the Behavior both say 'largest reduction'. The correct code is `Math.max(...entries.map(e => e.proposedLoadKg - e.cappedLoadKg))`. Crucially the Test Contract's two-entry Oracle lists its entries LARGEST-FIRST ([reduction 5, then 2] -> 'largest reduction 5.0 kg'), so the buggy `entries[0]` returns 5.0 and MATCHES the oracle exactly — no oracle hook. It uses no inline cap arithmetic (no single-owner decision hook), records the right clamps (no requirement hook), resolves every symbol (no cross-slice hook). So the baseline's commitment/cross-slice/atomicity audits all PASS it; catching it requires reasoning that entries[0] != max, which is exactly the Correctness capability the expansion adds. HYPOTHESIS: baseline (3-row) MISSES D7, expanded (4-row) CATCHES it. Caveat: a sufficiently diligent model may audit correctness even when running the 3-row baseline (no Correctness prompt) — that is the empirical question this case exists to answer. Same R1 restraint control (un-drained buffer must not be flagged).",
+  "checks": {
+    "citations": {
+      "min_resolvable_pct": 60,
+      "ignore": ["load-cap-audit", "recorder\\.ts", "format\\.ts", "types\\.ts", "SV-1", "design-load-cap-audit", "\\.test\\."]
+    },
+    "slice_rows": {
+      "labels": ["Decisions", "Cross-slice", "Correctness", "Research"],
+      "capability": [
+        { "id": "D7-first-not-max", "must_match": "entries\\[0\\]|\\[0\\]|first (entry|element|reduction|clamp)|not the (largest|max|maximum)|Math\\.max|largest.{0,30}(first|only one|single)", "note": "format.ts uses entries[0] instead of the max reduction; oracle is largest-first so it passes the oracle — pure logic bug, no hook (class 5 discriminator)" }
+      ],
+      "restraint": [
+        { "id": "R1-over-reach", "forbid": "leak|cross-run|accumulat|unbounded|stale|residual|carr(y|ies) over|across (generation |plan )?(run|invocation|call|generation)|(never|not|n.t|without|fails? to) (drain|clear|empt|reset|flush)|buffer.{0,20}(grow|leak|persist|retain)", "note": "the un-drained module buffer is a generation-lifecycle concern outside slice vantage; flagging it as a VIOLATION is over-reach" }
+      ]
+    }
+  }
+}
