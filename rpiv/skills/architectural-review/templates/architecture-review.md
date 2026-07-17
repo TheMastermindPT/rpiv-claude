@@ -18,7 +18,7 @@ verification: { verified: {V}, weakened: {W}, falsified: {F} }    # claim-verifi
 interactions: {IX}    # interaction-sweeper compounds, Step 6.5
 clusters_discovered: {K}    # un-anticipated clusters from set-arithmetic, Step 9.5
 drift: { resolved: {R}, regressed: {Rg}, still_open: {S}, new: {N}, net: {+/-Δ} }    # omit keys as 0 on baseline
-slop_by_lens: { duplication: {D}, fragmentation: {C}, god_file: {G}, dead_abstraction: {A}, test_theater: {T}, leaky_boundary: {L}, missing_abstraction: {M}, state_flow: {S}, low_cohesion: {Lc}, feature_envy: {Fe}, temporal_coupling: {Tc} }
+slop_by_lens: { duplication: {D}, fragmentation: {C}, god_file: {G}, dead_abstraction: {A}, test_theater: {T}, leaky_boundary: {L}, missing_abstraction: {M}, state_flow: {S}, low_cohesion: {Lc}, feature_envy: {Fe}, failure_propagation: {Fp}, temporal_coupling: {Tc} }
 status: {in-progress | ready}
 tags: [architecture-review, {target-name}, {relevant components}]
 last_updated: {Same ISO timestamp as date: above; bumped on follow-ups}
@@ -101,7 +101,7 @@ Matched by content-hash fingerprint via `fingerprint.mjs` — survives file rena
 
 | Current ID | Lens | Where | One-line |
 |---|---|---|---|
-| {Gn} | {D/C/G/A/T/L/M/S/Lc/Fe} | `file:line` — `{verbatim line}` | {one line} |
+| {Gn} | {D/C/G/A/T/L/M/S/Lc/Fe/Fp} | `file:line` — `{verbatim line}` | {one line} |
 
 ### Still-open — carried from prior ({S})
 
@@ -234,7 +234,7 @@ Each finding is a level-3 heading `### L<layer>-<seq> — <title>` followed by t
 
 | Field | Meaning |
 |---|---|
-| **Lens** | `D` duplication / `C` fragmentation / `G` god-file / `A` dead-abstraction / `T` test-theater / `L` leaky-boundary / `M` missing-abstraction / `S` state-flow / `Lc` low-cohesion / `Fe` feature-envy / `Tc` temporal-coupling / `IX` interaction-compound / `10dim` (classic dimension sweep) |
+| **Lens** | `D` duplication / `C` fragmentation / `G` god-file / `A` dead-abstraction / `T` test-theater / `L` leaky-boundary / `M` missing-abstraction / `S` state-flow / `Lc` low-cohesion / `Fe` feature-envy / `Fp` failure-propagation / `Tc` temporal-coupling / `IX` interaction-compound / `10dim` (classic dimension sweep) |
 | **Entity / stage** | the System Model coordinate (entity name + style-specific stage, e.g. `Order/EMIT` (event-driven), `WeeklyPlan/PERSIST` (CRUD), `Report/TRANSFORM` (pipeline)) this finding lives in, or `—` when no model |
 | **Fingerprint** | content-hash fingerprint for drift delta matching (survives file renames and line drift). Computed via `fingerprint.mjs` at Step 8 |
 | **Symbol** | the canonical symbol name this finding targets (e.g. `GodFile`, `validateOrder`). Used with `lens` + evidence to construct the fingerprint. Omit only when the finding targets no single named symbol (e.g. co-change pairs) |
@@ -296,7 +296,7 @@ _Principles emerge during Step 5 triage and are captured at Step 7. Patterns tha
 
 ### L0-01 — {short headline}
 
-- **Lens:** {D | C | G | A | T | L | M | S | Lc | Fe | Tc | IX | 10dim}
+- **Lens:** {D | C | G | A | T | L | M | S | Lc | Fe | Fp | Tc | IX | 10dim}
 
 **Evidence**
 

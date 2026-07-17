@@ -1,6 +1,6 @@
 ---
 name: lens-analyst
-description: "Module-scoped slop-lens analyst for architecture reviews. Given one lens rubric (god-file, low-cohesion, duplication, fragmentation, dead-abstraction, test-theater, boundary, security, missing-abstraction, state-ownership, feature-envy, persistence) plus the Slop Map and its seed rows, it reads the target files on disk and emits findings with provisional severity per the rubric. Use for every arch-review lens dispatch. Contrast: codebase-analyzer describes how code works and never judges; lens-analyst exists to judge — against exactly one caller-supplied rubric."
+description: "Module-scoped slop-lens analyst for architecture reviews. Given one lens rubric (god-file, low-cohesion, duplication, fragmentation, dead-abstraction, test-theater, boundary, security, missing-abstraction, state-ownership, feature-envy, failure-propagation, persistence) plus the Slop Map and its seed rows, it reads the target files on disk and emits findings with provisional severity per the rubric. Use for every arch-review lens dispatch. Contrast: codebase-analyzer describes how code works and never judges; lens-analyst exists to judge — against exactly one caller-supplied rubric."
 tools: Read, Grep, Glob
 model: fable
 effort: high

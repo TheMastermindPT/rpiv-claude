@@ -28,6 +28,8 @@
 //   ---co-change-candidates--- fileA -> fileB \t support=N \t conf=R   (hidden coupling, directional; arrow points from the driver)
 //   ---co-change-groups---  g{n} \t files=... \t modules=...   (ripple-groups: connected components of the hidden-coupling edges; the entity-model seed)
 //   ---write-sites---       table:x|rpc:y \t writers=N \t files=...   (S-lens ownership: distinct modules writing each entity; writers>=2 = scattered write path)
+//   ---catch-swallows---    path \t swallows=N   (failure-propagation Fp seed: empty/comment-only catch blocks + empty .catch() handlers)
+//   ---bus-factor---        path \t commits=N \t authors=K \t top_share=R   (knowledge concentration on churn hotspots; a WEIGHT for triage, never findings)
 //
 // The co-change blocks are the temporal-coupling lens' deterministic feed: file PAIRS
 // that change together across history (support = # shared commits; conf = support /
@@ -54,6 +56,8 @@ const OUT_LINE_CAP = 200; // max rows per block
 const OUT_BYTE_CAP = 40 * 1024; // total block-bytes budget
 const CHURN_DAYS = 180;
 const INBOUND_SCAN_CAP = 60; // bound git-grep calls for export-usage
+const BUS_FACTOR_SCAN_CAP = 20; // bound git-log author calls to the hottest churn files
+const BUS_FACTOR_MIN_COMMITS = 4; // author share is meaningless below this many commits
 const CO_CHANGE_CAP_PERCENTILE = 0.95; // adaptive bulk-commit cap = this percentile of THIS repo's commit sizes (a fixed number can't fit repos whose features routinely touch many files)
 const CO_CHANGE_CAP_FLOOR = 15; // ...but never treat a commit this small (or smaller) as bulk — protects young / tiny-commit repos
 const CO_CHANGE_CAP_CEILING = 50; // ...and never count a commit bigger than this — bounds the O(n^2) pair blow-up from giant refactors
@@ -143,6 +147,16 @@ const CONCERN_RULES = [
 	["messaging", /(?:^|[/@.-])(?:amqplib|kafkajs|bullmq|bull|nats|mqtt|rabbitmq|pubsub|sqs|kinesis)/i],
 ];
 
+// Swallowed failures (Fp seed): catch blocks whose body is empty or comment-only,
+// plus promise `.catch()` handlers with an empty body. Deterministic floor ONLY —
+// "logs then continues", error-type erosion, and missing recovery paths are the Fp
+// lens's judgment, not the metric's. A handled catch (any statement) never matches.
+const CATCH_BLOCK_SWALLOW_RE = /\bcatch\b\s*(?:\([^)]*\))?\s*\{(?:\s|\/\/[^\n]*|\/\*[\s\S]*?\*\/)*\}/g;
+const PROMISE_CATCH_SWALLOW_RE = /\.catch\s*\(\s*(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*\{\s*\}\s*\)|\.catch\s*\(\s*function\s*\([^)]*\)\s*\{\s*\}\s*\)/g;
+const countSwallows = (text) =>
+	(text.match(CATCH_BLOCK_SWALLOW_RE) ?? []).length +
+	(text.match(PROMISE_CATCH_SWALLOW_RE) ?? []).length;
+
 const result = {
 	target: "",
 	file_count: 0,
@@ -162,6 +176,8 @@ const result = {
 	godfileCandidates: [],
 	lowCohesion: [],
 	featureEnvy: [],
+	catchSwallows: [],
+	busFactor: [],
 };
 
 const argv = process.argv[2] ?? "";
@@ -486,7 +502,10 @@ for (const f of sourceFiles) {
 	cohByFile.set(f, cohesionScore(text, syms));
 	const envy = envyOf(text, syms);
 	if (envy) result.featureEnvy.push({ f, ...envy });
+	const swallows = countSwallows(text);
+	if (swallows > 0) result.catchSwallows.push({ f, swallows });
 }
+result.catchSwallows.sort((a, b) => b.swallows - a.swallows || a.f.localeCompare(b.f));
 result.featureEnvy.sort((a, b) => b.ratio - a.ratio || b.ext - a.ext);
 // Fe pre-filter: feature-envy requires the envied module to expose BEHAVIOR to misplace.
 // Drop the candidate when the resolved target has NO behavioral top-level symbol — a
@@ -556,6 +575,25 @@ if (churnRaw) {
 		.sort((a, b) => b.c - a.c)
 		.filter((r) => r.c >= 2);
 }
+
+// --- Bus factor (knowledge concentration on churn hotspots) ------------------
+// Author distribution for the hottest files: few authors on a high-churn file =
+// knowledge silo (Conway/ownership dimension). A WEIGHT for triage severity and
+// the Risk Rollup — never findings, and no author names are emitted.
+for (const { f } of result.churnHotspots.slice(0, BUS_FACTOR_SCAN_CAP)) {
+	const raw = safe(["log", `--since=${CHURN_DAYS}.days`, "--format=%an", "--", f]);
+	if (!raw) continue;
+	const byAuthor = new Map();
+	for (const line of raw.split("\n")) {
+		const a = line.trim();
+		if (a) byAuthor.set(a, (byAuthor.get(a) ?? 0) + 1);
+	}
+	const commits = [...byAuthor.values()].reduce((x, y) => x + y, 0);
+	if (commits < BUS_FACTOR_MIN_COMMITS) continue;
+	const top = Math.max(...byAuthor.values());
+	result.busFactor.push({ f, commits, authors: byAuthor.size, topShare: top / commits });
+}
+result.busFactor.sort((a, b) => b.topShare - a.topShare || b.commits - a.commits || a.f.localeCompare(b.f));
 
 // --- Export / usage (speculative-generality signal) -------------------------
 // Count `export`-shaped declarations per file; for files with many exports,
@@ -994,6 +1032,8 @@ function emit() {
 	block("co-change-candidates", result.coChange.map((r) => `${r.from} -> ${r.to}\tsupport=${r.support}\tconf=${r.conf.toFixed(2)}`));
 	block("co-change-groups", result.coGroups.map((r, i) => `g${i + 1}\tfiles=${r.files.join(", ")}\tmodules=${r.modules.join(", ")}`));
 	block("write-sites", result.writeSites.map((r) => `${r.key}\twriters=${r.writers}\tfiles=${r.files.join(", ")}`));
+	block("catch-swallows", result.catchSwallows.map((r) => `${r.f}\tswallows=${r.swallows}`));
+	block("bus-factor", result.busFactor.map((r) => `${r.f}\tcommits=${r.commits}\tauthors=${r.authors}\ttop_share=${r.topShare.toFixed(2)}`));
 
 	process.stdout.write(body);
 	process.exit(0);

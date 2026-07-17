@@ -1,6 +1,6 @@
 ---
 name: architectural-review
-description: Run a deep, anti-slop architecture review of a module or path — quantify structural health, ingest the repo's own linters as ground truth, build a top-down entity/data-flow model, then run the slop lenses linters miss (semantic duplication, concept fragmentation, god-files, dead abstractions, test theater, boundary erosion, missing abstraction, state-ownership, temporal coupling, low-cohesion, feature-envy), verify every finding before triage, and write a phased polish plan to .rpiv/artifacts/architecture-reviews/. Use this whenever the user wants an architecture review, an anti-slop or code-health sweep of a module, a pre-1.0 hardening pass, or a post-refactor cleanup — even if they don't use the words "architectural review". Language-agnostic.
+description: Run a deep, anti-slop architecture review of a module or path — quantify structural health, ingest the repo's own linters as ground truth, build a top-down entity/data-flow model, then run the slop lenses linters miss (semantic duplication, concept fragmentation, god-files, dead abstractions, test theater, boundary erosion, missing abstraction, state-ownership, temporal coupling, low-cohesion, feature-envy, failure propagation), verify every finding before triage, and write a phased polish plan to .rpiv/artifacts/architecture-reviews/. Use this whenever the user wants an architecture review, an anti-slop or code-health sweep of a module, a pre-1.0 hardening pass, or a post-refactor cleanup — even if they don't use the words "architectural review". Language-agnostic.
 argument-hint: "[target path: file, directory, or module — empty auto-picks the densest source root]"
 shell-timeout: 10
 contract:
@@ -113,7 +113,7 @@ The final artifact is blueprint-consumable per phase.
    node "${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/_helpers/metrics.mjs" "<target>"
    ```
 
-   Read the output as authoritative. Hold every block in main context — they are the severity anchors for the whole review. Read `references/metrics-blocks.md` NOW — it is the block-by-block interpretation glossary (loc baselines, size-outliers vs the godfile G gate, low-cohesion Lc, churn, export-usage, test-density, dup-candidates run/tokenSim semantics, co-change Tc pairs + ripple-groups, feature-envy pre-signal, and the single-file-target rule); interpret every block exactly per that file.
+   Read the output as authoritative. Hold every block in main context — they are the severity anchors for the whole review. Read `references/metrics-blocks.md` NOW — it is the block-by-block interpretation glossary (loc baselines, size-outliers vs the godfile G gate, low-cohesion Lc, churn, export-usage, test-density, dup-candidates run/tokenSim semantics, co-change Tc pairs + ripple-groups, feature-envy pre-signal, catch-swallows Fp seed, bus-factor weight, and the single-file-target rule); interpret every block exactly per that file.
 
 2. **Probe + ingest external tools as ground truth** (read-only, portable, suggest-never-install). Run the capability probe:
 
@@ -167,6 +167,14 @@ Layers mirror dependency direction. Higher layers consume lower-layer vocabulary
    For each table in the target's schema layer, capture: top queries by total time, cache miss ratio (`shared_blks_read > 0`), and query frequency (`calls`). Fold into the Slop Map under a `## DB Runtime Evidence` row — one line per table with its most expensive query. This upgrades structural findings ("this table has no index") to 🔴 severity when pg_stat_statements shows the queries hitting it are already slow. Schema findings backed by runtime evidence outrank pure structural ones in the Risk Rollup. If psql or the DB is unavailable, record `DB runtime: unavailable` and proceed — the structural lenses remain the fallback.
 
 3. **Layer-split checkpoint.** Use `ask_user_question`: "Proposed split: {N} top-level layers, {file count} files. L0 — {names/count}; L1 — ...; {sub-layers}. Approve?". Header: "Layers". Options: "Approve (Recommended)"; "Adjust split"; "Reduce scope"; "Specify manually". Loop until approved.
+
+4. **Turn the approved layers into an executable check (layer-rules.mjs).** Until now the layer model only ORDERS the review; this step makes it VALIDATE the code. Write the approved structure to `<scratchpad>/layers.json` — an ordered array `[{ "name": "Layer 0 — {name}", "paths": ["{dir prefix}", ...] }, ...]`, Layer 0 first, sub-layers folded into their parent, cross-cutting-utility files omitted. Then:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/_helpers/layer-rules.mjs" --layers=<scratchpad>/layers.json > <scratchpad>/layer-rules.dependency-cruiser.cjs
+   ```
+
+   Add one `--forbid="<owning-dir>-><forbidden-dir>"` per System-Model ownership boundary worth enforcing (e.g. the write path of an `owner: NONE` entity). When dependency-cruiser is runnable (`configured` OR `installed-unconfigured` — the generated file IS the config), validate from the repo root: `npx depcruise . --config <scratchpad>/layer-rules.dependency-cruiser.cjs --output-type json`, filter violations to the target, and fold each as a 🟡 L-row prefix `LM-` per `references/tool-ingestion.md` (layer-model breach: code contradicting the structure just approved — NOT a repo-rule breach). Keep the generated config — Step 11 offers it as a deliverable. Collision-safe by construction: the generated file lives in the scratchpad and is passed via `--config` explicitly, so the repo's own dependency-cruiser config (if any) is never read, appended to, or replaced by this run — it gets its own separate Step 2 scan. When dependency-cruiser is absent, skip silently (no degradation checkpoint; the layer model still frames the review).
 
 ### Step 4: Create Skeleton Artifact
 
@@ -241,7 +249,7 @@ The Wave 1 sweeper output is lightweight — typically 0-3 compounds. Its findin
 
 #### 5c. Steering Checkpoint (warrant-driven)
 
-The decision to run the expensive cross-cutting wave is driven by the **full deterministic seed surface**, not just the Wave-1 structural findings. This closes a real blind spot: a target can be structurally clean (no god-files, cohesive, no dup) yet carry genuine fragmentation, dead code, scattered writes, or feature-envy that only the cross-cutting lenses find — and the old structural-only gate would skip right past it. (Verified on gymapp: `lib/generation/adaptive-context` — 17 files, G=0 Lc=0 D=0, structurally silent — nonetheless has a real feature-envy finding the old gate skipped.)
+The decision to run the expensive cross-cutting wave is driven by the **full deterministic seed surface**, not just the Wave-1 structural findings. This closes a real blind spot: a target can be structurally clean (no god-files, cohesive, no dup) yet carry genuine fragmentation, dead code, scattered writes, feature-envy, or swallowed failure paths that only the cross-cutting lenses find — and the old structural-only gate would skip right past it. (Verified on gymapp: `lib/generation/adaptive-context` — 17 files, G=0 Lc=0 D=0, structurally silent — nonetheless has a real feature-envy finding the old gate skipped.)
 
 Compute the warrant deterministically. `metrics_out.txt` and `semantic_out.txt` are the Step 2 outputs; `{knip_dead}` is the count of knip dead exports+types whose path is under the target (from the Step 2 knip run — omit the flag when knip was absent); `{owner_none}` is the count of System-Model entities with `owner: NONE` (Step 2.7):
 
@@ -267,13 +275,13 @@ The warrant never overrides a developer choice — on the `full` band the develo
 
 **Fallback:** if `warrant.mjs` is unavailable (missing node, etc.), degrade to the structural heuristic — skip only when Wave 1 found 0–1 findings AND file_count < 100 AND not pre-1.0; otherwise run full — and note "warrant unavailable — structural heuristic" in the artifact.
 
-#### 5d. Wave 2 — Cross-cutting lenses (C, A, T, L, Sec, M, S, Fe, P)
+#### 5d. Wave 2 — Cross-cutting lenses (C, A, T, L, Sec, M, S, Fe, Fp, P)
 
 **Dispatch only the lenses the checkpoint selected.** On the `full` band, dispatch all nine. On the `selective` band, dispatch exactly the warrant's `selectiveWave2` set (the live cross-cutting lenses + always-on M, L, Sec, and P) — skip the rest and note them as "no seed — not dispatched" in the artifact. Below, each lens is described in full; run the subset that applies. Send them in a single multi-Agent message. Each receives the full Slop Map + the Wave 1 findings + IX compounds as context (they CAN see each other's output — Wave 2 lenses run cooperatively, not isolated from Wave 1).
 
 Read `references/wave2-lenses.md` NOW (only on a dispatching band — never when Wave 2 is skipped) and use its nine lens prompts verbatim for the selected subset, plus its `precedent-locator` dispatch in the same message.
 
-Wait for all Wave 2 agents. Collect their findings alongside the Wave 1 findings — together they form the complete **candidate slop findings** set, each keyed to a file and its layer, with a provisional `L<layer>-<seq>` ID and lens tag (G, Lc, D, C, A, T, L, Sec, M, S, Fe, P).
+Wait for all Wave 2 agents. Collect their findings alongside the Wave 1 findings — together they form the complete **candidate slop findings** set, each keyed to a file and its layer, with a provisional `L<layer>-<seq>` ID and lens tag (G, Lc, D, C, A, T, L, Sec, M, S, Fe, Fp, P).
 
 ### Step 6: Verify Gate (anti-slop meta-guard)
 
@@ -386,7 +394,7 @@ Phases are agent-driven (handed to `blueprint` -> `implement`); size by signals 
 2. **Group by leverage:** Foundation (no deps, low risk) / Vocabulary (renames) / Locality (moves) / Structural (file splits, dir restructures) / Behavioural (shape conversions, dispatchers) / Public-API (additive surface, downstream coordination).
 3. **Describe each phase** by agent-relevant signals: Findings (count + IDs), Files touched (count + paths), Blast-radius mix, Coordination, Class mix. Risk-flag phases touching on-disk format, public-API shape, or cross-module coordination.
 4. **Write the Risk Rollup — fix these first:** rank by `severity x blast-radius / effort`, then apply the **compound-risk promotion rule** (load-bearing): when >= 2 findings share an entity/boundary/root cause and combine into an emergent failure (a Step 6.5 `IX` compound, a Step 9.5 discovered cluster, a System Model `owner: NONE` entity, or a theme's root cause), rank the AGGREGATE — not its constituents. The interaction IS the defect: a cluster of three `Med` findings rooted in one bad boundary can top the list above any single `High`. Rank the *theme/IX root cause* as one line, list its constituent IDs beneath, and do NOT also rank the constituents individually. Name the top 3 (promoted aggregates eligible) with one-line ROI rationale. This is the prioritization the old artifacts never gave.
-5. **Draw the ASCII phase dependency graph** + phase scope summary table + final tally.
+5. **Draw the ASCII phase dependency graph** + phase scope summary table + final tally. When Step 3.4 generated a layer-rules config, add an **"Adopt boundary rules"** deliverable to the earliest fitting phase (usually Foundation): inline the generated `.dependency-cruiser.cjs` in the phase body so the approved layer model becomes a permanent CI check — the review's direction findings stop regressing the day the config lands. Adoption mode depends on what exists: repo has NO dependency-cruiser config → place the file at the repo root; repo HAS one → the deliverable is a **merge** (append the generated `forbidden` rules — names are namespaced `no-upward-l*`/`boundary-*` — and drop the generated `no-circular` if one already exists), NEVER a replacement. Weight the Risk Rollup with `---volatile-hubs---` and `---bus-factor---`: a finding on a high `churn x inbound` file outranks the same finding elsewhere, and `top_share≈1.00` on a hot file means single-owner knowledge — call that out so fixes there get the owning developer in the loop.
 6. **Citation-path gate (deterministic, before the flip).** Run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/check-citations.mjs" <the artifact path> --root .`. It exits non-zero and lists every **ambiguous bare-basename** cite (`service.ts:329` in a repo with three `service.ts`) — the un-greppable form the path-discipline prose keeps leaking from dense System-Model stage cells. For each one, grep the repo for the basename, pick the file the surrounding prose means, rewrite the cite repo-relative from the repository root, and re-run until it exits 0. Do NOT flip status while it fails — an ambiguous cite is as broken as a wrong line.
 
 7. **Confirm + flip status** via `ask_user_question` ("{N} phases ({F} findings, {Files} files). Approve?"; Approve / Adjust boundaries / Resequence / Other). On approve: rebuild the `phases:` frontmatter array from the `### Phase N — name` headings (one `{ n, title, depends_on, blast_radius, effort }` per heading, body order), write the final `health_score:` composite verdict (healthy | drifting | degraded — replacing the skeleton's `pending`), then Edit `status: in-progress` -> `status: ready`.
@@ -398,7 +406,7 @@ Architectural review written to:
 `.rpiv/artifacts/architecture-reviews/{filename}.md`
 
 Health:       {health_score} — {file_count} files, median {loc_median} LOC, {outlier_count} outliers
-Slop:         {D} dup · {C} fragmentation · {G} god-file · {A} dead-abstraction · {T} test-theater · {L} leaky-boundary · {M} missing-abstraction · {S} state-flow · {Lc} low-cohesion · {Fe} feature-envy · {Tc} hidden-coupling
+Slop:         {D} dup · {C} fragmentation · {G} god-file · {A} dead-abstraction · {T} test-theater · {L} leaky-boundary · {M} missing-abstraction · {S} state-flow · {Lc} low-cohesion · {Fe} feature-envy · {Fp} failure-propagation · {Tc} hidden-coupling
 Synthesis:    {IX} interaction compounds · {clusters_discovered} clusters discovered · {themes} root-caused themes
 Verification: {V} verified · {W} weakened · {F} falsified (dropped)
 Drift:        Resolved {R} · Regressed {Rg} · Still-open {S} · NEW {N} · Net Δ {+/-Δ}   (or "Baseline review")
@@ -439,13 +447,13 @@ The artifact is blueprint-consumable per phase:
 | Context | Agents |
 |---|---|
 | Step 1 auto-pick / Step 2 metrics | `metrics.mjs` helper (no agent) |
-| Step 2 tool probe + coverage | `tool-probe.mjs` (detect tools→lenses, read-only) + `coverage.mjs` (parse coverage→T) + `semantic.mjs` (ts-morph→S/Fe/A when `configured`, read-only, optional — degrades to regex) — helpers, no agent; external tools (depcruise/knip via `npx`, jscpd v5 Rust binary) run with consent |
+| Step 2 tool probe + coverage | `tool-probe.mjs` (detect tools→lenses, read-only) + `coverage.mjs` (parse coverage→T) + `semantic.mjs` (ts-morph→S/Fe/A when `configured`, read-only, optional — degrades to regex) + `stability.mjs` (SDP violations / cycles / volatile hubs derived from the captured depcruise or madge graph JSON) — helpers, no agent; external tools (depcruise/knip via `npx`, jscpd v5 Rust binary) run with consent |
 | Step 2 prior-review lookup | `artifacts-locator` (1) |
 | Step 2.7 system model | `entity-mapper` (1) — style-aware top-down entity/data-flow map from `co-change-groups` ripple-groups + db/domain type seeds. Auto-detects CRUD / CQRS / event-driven / pipeline / hexagonal per entity |
-| Step 3 layer discovery | `codebase-locator` + `codebase-analyzer` in parallel |
+| Step 3 layer discovery | `codebase-locator` + `codebase-analyzer` in parallel; after approval, `layer-rules.mjs` helper turns the layers into a dependency-cruiser config (validated via `npx depcruise` when runnable — `LM-` rows) |
 | Step 5b Wave 1 (structural) | `lens-analyst` (G, Lc, D), `peer-comparator` (D pair), `integration-scanner` (blast radius) — single parallel message, context-isolated. **Tc (temporal coupling) has NO agent** — metric-only |
 | Step 5b2 Wave 1 sweeper | `interaction-sweeper` (1) — lightweight, G+Lc+D only. Feeds steering checkpoint + Wave 2 context |
-| Step 5d Wave 2 (cross-cutting) | `lens-analyst` (C, A, T, L, Sec, M, S, Fe, P), `precedent-locator` (history) — single parallel message, receives Wave 1 findings + IX compounds as context |
+| Step 5d Wave 2 (cross-cutting) | `lens-analyst` (C, A, T, L, Sec, M, S, Fe, Fp, P), `precedent-locator` (history) — single parallel message, receives Wave 1 findings + IX compounds as context |
 | Step 6 verify gate | `claim-verifier` (1) — verifies all Wave 1 + Wave 2 slop candidates |
 | Step 6.5 full interaction sweep | `interaction-sweeper` (1) — re-joins ALL waves; consumes Wave 1 sweeper's IX compounds + Wave 2 findings over the verified set; emits root-caused `IX` compounds |
 | Step 7.1 deep-file analysis | `codebase-analyzer` (per file or batched) |
@@ -469,7 +477,7 @@ Spawn agents in parallel only when searching for different things. Wave 1 lenses
   - Wave 1 (Step 5b): ALWAYS run G, Lc, D context-isolated — each lens gets the Slop Map + its file list, nothing else. Pasting raw agent dumps causes narrativisation.
   - ALWAYS run the Wave 1 sweeper (Step 5b2) when >= 4 findings span >= 2 files — it surfaces G+Lc+D interactions that inform the steering checkpoint.
   - ALWAYS present the steering checkpoint (Step 5c) BEFORE Wave 2 — the developer decides whether Wave 2 runs, and their choice gates cost.
-  - Wave 2 (Step 5d): C, A, T, L, M, S, Fe receive Wave 1 findings + IX compounds as context. They run cooperatively (not fully isolated) over the full codebase.
+  - Wave 2 (Step 5d): C, A, T, L, M, S, Fe, Fp receive Wave 1 findings + IX compounds as context. They run cooperatively (not fully isolated) over the full codebase.
   - ALWAYS run the verify gate (Step 6) BEFORE the per-layer triage — the developer must never triage a Falsified slop finding.
   - ALWAYS run the full Interaction Sweep (Step 6.5) over the VERIFIED set from BOTH waves (after Step 6, before triage), and ALWAYS run cluster discovery (Step 9.5) BEFORE themes (Step 10) — these two are the systemic-synthesis core.
   - ALWAYS confirm the layer split (Step 3) BEFORE the skeleton (Step 4).
@@ -478,6 +486,6 @@ Spawn agents in parallel only when searching for different things. Wave 1 lenses
   - NEVER skip the per-layer tally (7.6) — it is the visible progress marker.
   - NEVER edit source files during the review — the artifact is the product; implementation is blueprint's job.
 - **Linter ground-truth is portable, not hard-wired** — detect scripts from the manifest; degrade gracefully when absent. Never assume a specific repo's `npm run` names.
-- **Frontmatter consistency**: snake_case multi-word fields; preserve `verification` / `drift` / `slop_by_lens` keys verbatim (`artifacts-locator` greps them). `slop_by_lens` now carries `missing_abstraction`, `state_flow`, `temporal_coupling`, `low_cohesion`, and `feature_envy`; the synthesis counts live in `interactions` and `clusters_discovered`.
+- **Frontmatter consistency**: snake_case multi-word fields; preserve `verification` / `drift` / `slop_by_lens` keys verbatim (`artifacts-locator` greps them). `slop_by_lens` now carries `missing_abstraction`, `state_flow`, `temporal_coupling`, `low_cohesion`, `feature_envy`, and `failure_propagation`; the synthesis counts live in `interactions` and `clusters_discovered`.
 - **Status invariants**: `in-progress` during Steps 1-10; flips to `ready` at Step 11 confirmation.
 - **The artifact is blueprint-consumable per phase** — per-phase blueprint invocations are the supported chaining pattern.

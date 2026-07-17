@@ -280,6 +280,20 @@ const facadeMembers = Array.from({ length: 8 }, (_, i) => `ProviderCatalogResult
 const facadeA = `export type {\n${facadeMembers}\n} from "./alpha-src";\n${Array.from({ length: 8 }, (_, i) => `const ua${i} = alpha(${i});`).join("\n")}\n`;
 const facadeB = `export type {\n${facadeMembers}\n} from "./beta-src";\n${Array.from({ length: 8 }, (_, i) => `const ub${i} = gamma(${i});`).join("\n")}\n`;
 
+// Failure-propagation (Fp) seed: three swallows — empty catch, comment-only catch,
+// empty promise .catch(). The HANDLED catch (returns a fallback) must NOT count.
+const swallowy = [
+	`export async function sync(x) {`,
+	`\ttry { await push(x); } catch {}`,
+	`\ttry { await pull(x); } catch (e) { /* ignore: best-effort */ }`,
+	`\tfetch("/ping").catch(() => {});`,
+	`\treturn x;`,
+	`}`,
+	`export function guard(x) {`,
+	`\ttry { return JSON.parse(x); } catch (e) { return fallback(e); }`,
+	`}`,
+].join("\n");
+
 // --- Build repo, run, assert ------------------------------------------------
 
 const repo = mkdtempSync(join(tmpdir(), "argate-"));
@@ -320,9 +334,32 @@ try {
 	write("src/inventory-write.ts", inventoryConstWrite);
 	// Indented declarations: must be counted as top-level symbols by the `^\s*` regex.
 	write("src/indented-combo.ts", indentedCombo);
+	// Fp seed fixture.
+	write("src/swallowy.ts", swallowy);
+	// Bus-factor fixtures: hot.ts = 5 solo commits by one author (silo, top_share=1.00);
+	// hot2.ts = 4 commits split across two authors; warm.ts = 2 commits (< floor, absent).
+	write("src/hot.ts", `export function hot(x) { return x; }\n`);
+	write("src/hot2.ts", `export function hot2(x) { return x; }\n`);
+	write("src/warm.ts", `export function warm(x) { return x; }\n`);
 
 	git(repo, ["init", "-q"]);
 	git(repo, ["add", "-A"]);
+	// Commit history for churn/bus-factor. Solo-file commits only, so no co-change
+	// pair ever reaches MIN_SUPPORT. Identity is passed per-commit (no global config).
+	const commit = (msg, author) =>
+		git(repo, [
+			"-c", `user.name=${author}`, "-c", "user.email=t@test", "-c", "commit.gpgsign=false",
+			"commit", "-qm", msg,
+		]);
+	commit("initial", "Alice");
+	const touch = (rel, n, author) => {
+		writeFileSync(join(repo, rel), `export function pad${n}() { return ${n}; }\n`, { flag: "a" });
+		git(repo, ["add", rel]);
+		commit(`${rel} ${n}`, author);
+	};
+	for (let i = 0; i < 4; i += 1) touch("src/hot.ts", i, "Alice"); // 5 commits, 1 author
+	for (let i = 0; i < 3; i += 1) touch("src/hot2.ts", i, i % 2 ? "Alice" : "Bob"); // 4 commits, 2 authors
+	touch("src/warm.ts", 0, "Alice"); // 2 commits — below BUS_FACTOR_MIN_COMMITS
 
 	const out = execFileSync("node", [METRICS, "."], { cwd: repo, encoding: "utf-8" });
 
@@ -445,7 +482,40 @@ try {
 		`indented-combo.ts (2-space + tab indented declarations) must be a low-cohesion candidate\n--- output ---\n${out}`,
 	);
 
-	console.log(`OK — ${candidates.length} god-file, ${lowCohesion.length} low-cohesion, ${envy.length} feature-envy, ${dup.length} dup-pair; structural + contiguous-run dup flagged, scattered/name-coincidence ignored; indented declarations detected.`);
+	// 10. Catch-swallows (Fp seed): empty + comment-only + empty .catch() count;
+	//     the handled catch (returns a fallback) must NOT count.
+	const swallows = blockOf("catch-swallows");
+	assert.ok(
+		swallows.some((r) => r === "src/swallowy.ts\tswallows=3"),
+		`swallowy.ts must count exactly 3 swallows (empty, comment-only, empty .catch) — handled catch excluded\n--- output ---\n${out}`,
+	);
+	assert.ok(
+		!swallows.some((r) => r.includes("envious.ts")),
+		`files with no catch must not appear in catch-swallows\n--- output ---\n${out}`,
+	);
+
+	// 11. Bus-factor: author concentration on churn hotspots only. Solo-author hot
+	//     file reads top_share=1.00; the two-author file splits; the 2-commit file
+	//     falls below BUS_FACTOR_MIN_COMMITS and the single-commit corpus never appears.
+	const bus = blockOf("bus-factor");
+	assert.ok(
+		bus.some((r) => r === "src/hot.ts\tcommits=5\tauthors=1\ttop_share=1.00"),
+		`hot.ts (5 solo commits) must read authors=1 top_share=1.00\n--- output ---\n${out}`,
+	);
+	assert.ok(
+		bus.some((r) => r === "src/hot2.ts\tcommits=4\tauthors=2\ttop_share=0.50"),
+		`hot2.ts (4 commits, 2 authors) must read authors=2 top_share=0.50\n--- output ---\n${out}`,
+	);
+	assert.ok(
+		!bus.some((r) => r.includes("warm.ts")),
+		`warm.ts (2 commits) is below BUS_FACTOR_MIN_COMMITS and must be absent\n--- output ---\n${out}`,
+	);
+	assert.ok(
+		!bus.some((r) => /Alice|Bob/.test(r)),
+		`bus-factor must never emit author names\n--- output ---\n${out}`,
+	);
+
+	console.log(`OK — ${candidates.length} god-file, ${lowCohesion.length} low-cohesion, ${envy.length} feature-envy, ${dup.length} dup-pair; structural + contiguous-run dup flagged, scattered/name-coincidence ignored; indented declarations detected; catch-swallows + bus-factor blocks verified.`);
 } finally {
 	rmSync(repo, { recursive: true, force: true });
 }

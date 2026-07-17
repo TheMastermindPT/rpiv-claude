@@ -96,7 +96,7 @@ const empties = (...labels) => labels.map((l) => block(l)).join("");
   const r = warrant(metrics, { knipDead: 0 });
   assert.equal(r.band, "full", "lib → full (258 files ≥ 100)");
   assert.equal(r.prompt, true, "full sweep prompts the developer");
-  assert.deepEqual(r.selectiveWave2, ["C", "A", "T", "L", "M", "S", "Fe"], "full runs all seven Wave-2 lenses");
+  assert.deepEqual(r.selectiveWave2, ["C", "A", "T", "L", "M", "S", "Fe", "Fp"], "full runs all eight Wave-2 lenses");
   assert.ok(r.liveCount >= 4, "multiple lenses live");
 }
 
@@ -148,6 +148,24 @@ const empties = (...labels) => labels.map((l) => block(l)).join("");
   const r = warrant(m, { knipDead: 0 });
   assert.equal(r.lenses.Fe, false, "own=0 constants file is not feature envy");
   assert.equal(r.band, "skip");
+}
+
+// Fp: a lone swallow does not warrant; two swallowing files (or one habitual) do.
+{
+  const empt = empties("godfile-candidates", "low-cohesion", "dup-candidates", "feature-envy-candidates", "export-usage", "write-sites", "co-change-groups", "test-density");
+  const lone = "file_count: 12\n" + empt + block("catch-swallows", ["src/sync.ts\tswallows=1"]);
+  const r1 = warrant(lone, { knipDead: 0 });
+  assert.equal(r1.lenses.Fp, false, "one file, one swallow → Fp stays clean (justified best-effort)");
+  assert.equal(r1.band, "skip");
+
+  const spread = "file_count: 12\n" + empt + block("catch-swallows", ["src/sync.ts\tswallows=1", "src/push.ts\tswallows=1"]);
+  const r2 = warrant(spread, { knipDead: 0 });
+  assert.equal(r2.lenses.Fp, true, ">=2 swallowing files → Fp live");
+  assert.equal(r2.band, "selective");
+  assert.deepEqual(r2.selectiveWave2, ["Fp", "M", "L"], "selective dispatches Fp + always-on M/L");
+
+  const habitual = "file_count: 12\n" + empt + block("catch-swallows", ["src/sync.ts\tswallows=3"]);
+  assert.equal(warrant(habitual, { knipDead: 0 }).lenses.Fp, true, "one habitual file (>=3) → Fp live");
 }
 
 // S: second seed — a System-Model owner:NONE entity warrants S even with writers<2.

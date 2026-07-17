@@ -228,7 +228,7 @@ if (ecosystem === "js-ts") {
 			? (depcruisePresent ? ["note=redundant: dependency-cruiser already reports circular"] : [])
 			: depcruisePresent
 				? ["note=not needed: dependency-cruiser covers cycles"]
-				: ["hint=npm i -D madge (cycle detection; or prefer depcruise)"]);
+				: ["hint=npm i -D madge (fallback module graph for L — cycles + stability.mjs SDP/instability derivations; or prefer depcruise)"]);
 } else if (ecosystem === "unknown") {
 	out.push("(no recognized manifest — no tool registry to probe)");
 } else {
