@@ -2,7 +2,7 @@
 name: codebase-analyzer
 description: Analyzes codebase implementation details. Call the codebase-analyzer agent when you need to find detailed information about specific components. As always, the more detailed your request prompt, the better! :)
 tools: Read, Grep, Glob, mcp__plugin_context-mode_context-mode__ctx_execute_file, mcp__plugin_context-mode_context-mode__ctx_search, mcp__context-mode__ctx_execute_file, mcp__context-mode__ctx_search
-model: sonnet
+model: opus
 effort: high
 ---
 

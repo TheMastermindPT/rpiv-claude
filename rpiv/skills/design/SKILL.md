@@ -1,6 +1,6 @@
 ---
 name: design
-description: Design complex features by decomposing them into vertical slices, generating code slice-by-slice with per-slice verifier dispatch and post-finalization code review delegated to /rpiv:plan, and producing a design artifact (architecture decisions, slice breakdown, file map) in .rpiv/artifacts/designs/. The design feeds the plan or blueprint skill. Use for complex multi-component features touching 6+ files across multiple layers, when the user wants a feature designed before implementation. Requires a research artifact or a solutions artifact (from explore). Prefer design over plan or blueprint when the focus is architecture and decomposition rather than phased execution steps.
+description: Design and architect a complex feature — decide its structure and decompose it into vertical slices with the real code shape (types, layers, wiring) — producing a design artifact (decisions, slice breakdown, file map) in .rpiv/artifacts/designs/ that feeds plan or blueprint. Use whenever the user wants to design, architect, structure, shape, or decompose a feature into slices — e.g. 'design the architecture for X', 'decompose this into vertical slices with the types and wiring', 'shape the implementation', 'research is done, now architect the code shape', 'design it now, we'll break it into phases later'. Being handed a finished research or solutions doc, or its path (e.g. .rpiv/artifacts/research/*.md), is the normal INPUT — design from it, don't re-investigate. NOT for investigating how existing code currently works — that learning/tracing is a separate research step, even when a change or design follows. NOT for sequencing an already-written design into build phases (plan), a one-pass research-to-plan with checkpoints (blueprint), or writing the actual code (implement).
 argument-hint: "[research artifact path]"
 shell-timeout: 10
 ---
@@ -16,16 +16,7 @@ You are tasked with designing how code will be shaped for a feature or change. T
 ## Metadata
 
 ```!
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/now.mjs"
-echo
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/git-context.mjs"
-echo
-echo "### recent (read only in case of empty user input)"
-echo "recent research:"
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/list-recent.mjs" .rpiv/artifacts/research 4
-echo
-echo "recent solutions:"
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/list-recent.mjs" .rpiv/artifacts/solutions 4
+node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/skill-context.mjs" now git recent .rpiv/artifacts/research 4 recent .rpiv/artifacts/solutions 4
 ```
 
 - `now.mjs` (line 1) — `<iso>\t<slug>` tab-separated.
@@ -67,9 +58,8 @@ This is NOT a discovery sweep. Focus on DEPTH (how things work, what patterns to
 1. **Spawn parallel research agents** using the Agent tool:
 
    - Use **codebase-pattern-finder** to find existing implementations to model after — the primary template for code shape
-   - Use **codebase-analyzer** to understand HOW integration points work in detail
-   - Use **integration-scanner** to map the wiring surface — inbound refs, outbound deps, config/DI/event registration
-   - Use **precedent-locator** to find similar past changes in git history — what commits introduced comparable features, what broke, and what lessons apply to this design. Only when `commit` is available (not `no-commit`); otherwise skip and note "git history unavailable" in Verification Notes.
+
+   For integration wiring (inbound refs, outbound deps, config/DI/event registration), use the `## Integration Points` section already extracted from research in Step 1. For precedent context (similar past changes, blast radius, follow-up fixes, lessons), use the `## Precedents & Lessons` section already extracted from research in Step 1. Do NOT dispatch a fresh agent to re-map either surface. **Exception**: when the input is a solutions artifact (from explore) or otherwise lacks those sections, dispatch **integration-scanner** and/or **precedent-locator** to fill exactly the missing surface (precedent-locator only when `commit` is available; otherwise note "git history unavailable" in Verification Notes).
 
    **Novel work** (new libraries, first-time patterns, no existing codebase precedent):
    - Add **web-search-researcher** for external documentation, API references, and community patterns
@@ -77,10 +67,8 @@ This is NOT a discovery sweep. Focus on DEPTH (how things work, what patterns to
 
    Agent prompts should focus on (labeled by target agent):
    - **codebase-pattern-finder**: "Find the implementation pattern I should model after for {feature type}"
-   - **codebase-analyzer**: "How does {integration point} work in detail"
-   - **integration-scanner**: "What connects to {component} — inbound refs, outbound deps, config"
 
-   NOT: "Find all files related to X" — that's discovery's job, upstream of this skill.
+   NOT: "Find all files related to X" — that's discovery's job, upstream of this skill. NOT: "Analyze {component} integration" — the integration surface is in research's `## Integration Points`; if a specific anchor needs deeper inspection, defer to the on-demand `codebase-analyzer` dispatch in Step 4 (correction path) or Step 6.1 (mid-generation gap).
 
 2. **Read all key files identified by agents** into the main context — especially the pattern templates you'll model after.
 
@@ -94,100 +82,11 @@ This is NOT a discovery sweep. Focus on DEPTH (how things work, what patterns to
 
 ### Step 3: Identify Ambiguities — Dimension Sweep
 
-Walk Step 2 findings, inherited research Q/As, and carried Open Questions through six architectural dimensions that map 1:1 to the downstream phased plan's section coverage — the sweep guarantees downstream completeness. Add **migration** as a seventh dimension only if the feature changes persisted schema.
-
-- **Data model** — types, schemas, entities
-- **API surface** — signatures, exports, routes
-- **Integration wiring** — mount points, DI, events, config
-- **Scope** — in / explicitly deferred
-- **Verification** — for each risk-bearing behavior:
-  1. List boundaries (thresholds, ranges, null/empty states)
-  2. List invariants (what must always be true)
-  3. List error surfaces (what can go wrong)
-  4. Flag as high test-risk if 3+ boundaries or 2+ invariants → queue
-     as testing-strategy question for Step 4
-- **Performance** — load paths, caching, N+1 risks
-
-For each dimension, classify findings as **simple decisions** (one valid option, obvious from codebase — record in Decisions with `file:line` evidence, do not ask) or **genuine ambiguities** (multiple valid options, conflicting patterns, scope questions, novel choices — queue for Step 4). Inherited research Q/As land as simple; Open Questions filter by dimension — architectural survives, implementation-detail defers.
-
-**Pre-validate every option** before queuing it against research constraints and runtime code behavior. Eliminate or caveat options that contradict Steps 1-2 evidence. **Coverage check**: every Step 2 file read appears in at least one decision or ambiguity; every dimension is addressed (silently-resolved valid, skipped-unchecked not).
+Run the **Step 3 — Dimension Sweep** section of `${CLAUDE_PLUGIN_ROOT}/skills/_shared/dimension-sweep-and-checkpoint.md` (shared with blueprint). Walk Step 2 findings, inherited research Q/As, and carried Open Questions through the six (+migration) architectural dimensions, classifying each as a simple decision (record with `file:line`, don't ask) or a genuine ambiguity (queue for Step 4). For design, the sweep maps 1:1 to the **downstream phased plan's** section coverage.
 
 ### Step 4: Developer Checkpoint
 
-Use the grounded-questions-one-at-a-time pattern. Use a **❓ Question:** prefix so the developer knows their input is needed. Each question must:
-- Reference real findings with `file:line` evidence
-- Present concrete options (not abstract choices)
-- Pull a DECISION from the developer, not confirm what you already found
-
-**Question patterns by ambiguity type:**
-
-- **Pattern conflict**: "Found 2 patterns for {X}: {pattern A} at `file:line` and {pattern B} at `file:line`. They differ in {specific way}. Which should the new {feature} follow?"
-- **Missing pattern**: "No existing {pattern type} in the codebase. Options: (A) {approach} modeled after {external reference}, (B) {approach} extending {existing code at file:line}. Which fits the project's direction?"
-- **Scope boundary**: "The {research/description} mentions both {feature A} and {feature B}. Should this design cover both, or just {feature A} with {feature B} deferred?"
-- **Integration choice**: "{Feature} can wire into {point A} at `file:line` or {point B} at `file:line`. {Point A} matches the {existing pattern} pattern. Agree, or prefer {point B}?"
-- **Novel approach**: "No existing {X} in the project. Options: (A) {library/pattern} — {evidence/rationale}, (B) {library/pattern} — {evidence/rationale}. Which fits?"
-
-- **Testing strategy** (when the Verification sweep flagged high
-  test-risk behaviors). The agent writes the contract from the code.
-  Only you know whether the contract describes the right thing. A
-  contract that is structurally sound but behaviorally wrong produces
-  tests that pass green and ship bugs — mutation can't catch
-  correctness errors.
-
-  1. Describe what you understand the code should do, in plain
-     English. No Oracle, no syntax — just "when X happens, Y should
-     result." If you're wrong about the behavior, the developer
-     corrects you before a single line of contract is written.
-  2. Ask: "Is this understanding correct, and which of these should
-     the Test Contract prove first?" The selections determine which
-     behaviors anchor foundation slices vs. build on them later.
-  3. Corrections become the canonical behavior list. Approvals become
-     the contract's starting point.
-
-**Critical rules:**
-- Ask ONE question at a time. Wait for the answer before asking the next.
-- Lead with the most architecturally significant ambiguity.
-- Every answer becomes a FIXED decision — no revisiting unless the developer explicitly asks.
-
-**Choosing question format:**
-
-- **`ask_user_question` tool** — when your question has 2-4 concrete options from code analysis (pattern conflicts, integration choices, scope boundaries, priority overrides). The user can always pick "Other" for free-text. Example:
-
-  > Use the `ask_user_question` tool with the following question: "Found 2 mapping approaches — which should new code follow?". Header: "Pattern". Options: "Manual mapping (Recommended)" (Used in OrderService (src/services/OrderService.ts:45) — 8 occurrences); "AutoMapper" (Used in UserService (src/services/UserService.ts:12) — 2 occurrences).
-
-- **Free-text with ❓ Question: prefix** — when the question is open-ended and options can't be predicted (discovery, "what am I missing?", corrections). Example:
-  "❓ Question: Integration scanner found no background job registration for this area. Is that expected, or is there async processing I'm not seeing?"
-
-**Batching**: When you have 2-4 independent questions (answers don't depend on each other), you MAY batch them in a single `ask_user_question` call. Keep dependent questions sequential.
-
-**Classify each response:**
-
-**Decision** (e.g., "use pattern A", "yes, follow that approach"):
-- Record in Developer Context. Fix in Decisions section.
-
-**Correction** (e.g., "no, there's a third option you missed", "check the events module"):
-- Spawn targeted rescan: **codebase-analyzer** on the new area (max 1-2 agents).
-- Merge results. Update ambiguity assessment.
-
-**Scope adjustment** (e.g., "skip the UI, backend only", "include tests"):
-- Record in Developer Context. Adjust scope.
-
-**After all ambiguities are resolved**, present a brief design summary (under 15 lines):
-
-```
-Design: {feature name}
-Approach: {1-2 sentence summary of chosen architecture}
-
-Decisions:
-- {Decision 1}: {choice} — modeled after `file:line`
-- {Decision 2}: {choice}
-- {Decision 3}: {choice}
-
-Scope: {what's in} | Not building: {what's out}
-Files: {N} new, {M} modified
-```
-
-Use the `ask_user_question` tool to confirm before proceeding. Question: "{Summary from design brief above}. Ready to proceed to decomposition?". Header: "Design". Options: "Proceed (Recommended)" (Decompose into vertical slices, then generate code slice-by-slice); "Adjust decisions" (Revisit one or more architectural decisions above); "Change scope" (Add or remove items from the building/not-building lists).
+Run the **Step 4 — Developer Checkpoint** section of `${CLAUDE_PLUGIN_ROOT}/skills/_shared/dimension-sweep-and-checkpoint.md` (shared with blueprint): resolve every queued ambiguity through grounded, one-question-at-a-time developer checkpoints (question patterns, testing-strategy dialogue, format choice, response classification are all in the shared file), then present the design summary and get the `ask_user_question` confirmation before decomposition (Step 5).
 
 ### Step 5: Feature Decomposition
 
@@ -273,27 +172,7 @@ Generate complete, copy-pasteable code AND the slice's `#### Test Contract:` AND
 - **Modified files**: read current file FULLY, generate only the modified/added code scoped to changed sections (no full "Current" block — the original is on disk)
 - **Test Contract** (replaces authoring test-file code at design time — implement writes the actual tests at red time, transcribing this contract): for every behavior this slice introduces or changes, emit one Behavior entry. Pre-written test code tends to mirror the planned implementation (theater at the source); the contract pins the oracle instead so the test author has no freedom to weaken it.
 
-  **Before writing, think like a tester.** A Test Contract that only
-  asserts the happy path with a single fixture value will produce
-  survivors at mutation time — the same gaps you'd catch now at design
-  time, where they cost one sentence instead of a test rewrite plus a
-  3-minute mutation re-run. You are not listing tests. You are proving
-  to yourself that the code actually does what the contract claims.
-
-  1. Boundaries. Every conditional and range check has edges. If
-     `if (remaining > 0)` has three values that matter (-1, 0, 5)
-     but the Oracle only tests 5, you haven't proven the function
-     handles the boundary. The Oracle should pin the edge.
-  2. Invariants. What must always be true? If remainingSets can never
-     go negative but the Oracle never asserts non-negative, a sign
-     flip at mutation time survives undetected. Assert the invariant.
-  3. Error paths. A function that validates and throws on bad input
-     needs an Oracle that asserts the throw. If you only test valid
-     input, every error-path mutant survives. Cover each error surface.
-  4. Branch exhaustiveness. Count the decision points the slice's code
-     makes. Count the Behaviors in the contract. If code has more
-     branches than the contract has Behaviors, some path is untested.
-     Either add a Behavior or tag it TDD-exempt with a reason.
+  **Before writing, think like a tester** — read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/test-contract-authoring.md` and apply its boundary / invariant / error-path / branch-exhaustiveness discipline to this slice's contract. That file is the shared authoring standard for design and blueprint; it exists so the two skills' contract discipline cannot drift. The discipline is the load-bearing part — a contract that only asserts the happy path with one fixture value ships survivors at mutation time.
 
   Format:
 
@@ -472,7 +351,8 @@ Present the design artifact location to the developer:
 
 | Context | Agents Spawned |
 |---|---|
-| Default (research artifact provided) | codebase-pattern-finder, codebase-analyzer, integration-scanner, precedent-locator |
+| Default (research artifact provided) | codebase-pattern-finder |
+| Input lacks Integration Points / Precedents sections (e.g. solutions artifact) | + integration-scanner and/or precedent-locator (fill the missing surface only) |
 | Novel work (new library/pattern) | + web-search-researcher |
 | Step 6.1 mid-generation gap (specific anchor unclear) | targeted codebase-analyzer (max 1) |
 | Step 6.2 per-slice verify (mandatory; sees code + Success Criteria) | slice-verifier |

@@ -1,0 +1,41 @@
+{
+  "id": "BP-1",
+  "name": "clamp-audit-blueprint-from-research",
+  "skill": "blueprint",
+  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
+  "ref": "b460257",
+  "clean": [".rpiv/artifacts/plans"],
+  "seed": [
+    { "from": "../_fixtures/research-load-cap-clamp-audit.md", "to": ".rpiv/artifacts/research/2026-07-08_13-10-00_load-cap-clamp-audit.md" }
+  ],
+  "artifact_glob": ".rpiv/artifacts/plans/*.md",
+  "prompt": "/rpiv:blueprint .rpiv/artifacts/research/2026-07-08_13-10-00_load-cap-clamp-audit.md (Headless non-interactive run: at any approval checkpoint, per-slice micro-checkpoint, or question, ALWAYS pick the recommended option and continue; never wait for user input. Proceed all the way through slice generation, finalization, and the Step 8 reviewer dispatch.)",
+  "ground_truth_note": "Blueprint = design + phased plan in one pass. Consumes the same pinned research fixture as DS-1; produces an implement-ready plan in .rpiv/artifacts/plans/ with per-phase Test Contracts + Success Criteria and a ## Plan Review section (Step 8 dispatches artifact-code-reviewer + artifact-coverage-reviewer — this exercises the FIXED ACR agent in-situ). New files (load-cap-audit/*) don't resolve at HEAD by design — grading uses validate_artifact + required-sections + recall on existing grounding files, NOT citation resolvability.",
+  "checks": {
+    "validate_artifact": true,
+    "required_sections": [
+      "^## Phase 1",
+      "### Test Contract:",
+      "### Success Criteria:",
+      "#### Automated Verification:",
+      "^## Plan Review"
+    ],
+    "recall": [
+      {
+        "id": "reuses-load-cap-owner",
+        "files": [{ "path": "lib/generation/load-cap.ts" }],
+        "min_files": 1,
+        "note": "blueprint grounds on and reuses the load-cap owner module"
+      },
+      {
+        "id": "hooks-validation-seam",
+        "files": [{ "path": "lib/generation/adaptive-context/validation.ts" }],
+        "min_files": 1,
+        "note": "blueprint hooks the clamp recorder into the validation seam"
+      }
+    ],
+    "frontmatter": {
+      "present": ["status", "parent", "phase_count"]
+    }
+  }
+}

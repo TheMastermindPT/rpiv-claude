@@ -1,0 +1,41 @@
+{
+  "id": "DISC-1",
+  "name": "persona-interview-scope-routing",
+  "skill": "discover",
+  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head3",
+  "ref": "b460257",
+  "clean": [".rpiv/artifacts/discover"],
+  "artifact_glob": ".rpiv/artifacts/discover/*.md",
+  "prompt_file": "DISC-1.prompt.md",
+  "ground_truth_note": "Scripted-persona harness: the headless session runs discover AND role-plays 'Sam', a plain-register non-technical gym owner, answering discover's questions in character. This tests the STRUCTURAL interview logic that survives self-play (tier behavior, routing, teach-back, FRD completeness), NOT the adaptive logic (register mirroring / genuine gap discovery are contaminated because the model wrote the persona). Planted behaviors to grade from the FRD (discover records its interview into the artifact by design): (1) SCOPE-CREEP GUARDRAIL — Sam's 'exercise search is slow' aside must land in ## Suggested Follow-ups, never in Goals/Requirements (the strongest single interview-logic test); (2) CONSTRAINT CAPTURE — 'must not block the plan / don't change generation' lands in Constraints; (3) CONSENSUS — register + consensus frontmatter present (classification + teach-back ran), content_hash stamped (finalization lint); (4) FRD COMPLETENESS — all template sections present. Discover uses status: complete (not ready), so validate_artifact:true is NOT usable (same as research). Run in wt-head3 so discover's Step-3 codebase probe hits real GymApp code.",
+  "checks": {
+    "required_sections": [
+      "^## Problem & Intent",
+      "^## Goals",
+      "^## Constraints & Assumptions",
+      "^## Acceptance Criteria",
+      "^## Decisions",
+      "^## Glossary",
+      "^## Shared Understanding",
+      "^## Suggested Follow-ups"
+    ],
+    "frontmatter": {
+      "present": ["status", "topic", "register", "consensus", "content_hash"]
+    },
+    "section_routing": [
+      {
+        "id": "scope-creep-to-followups",
+        "keyword": "exercise search|search.{0,20}slow|slow.{0,20}search",
+        "in_section": "Suggested Follow-ups",
+        "not_in_section": "^Goals|Functional Requirements|Acceptance Criteria",
+        "note": "Sam's slow-exercise-search aside routes to Follow-ups, never into the feature's positive scope (Goals/Requirements/Acceptance). Non-Goals is NOT forbidden — an explicit out-of-scope exclusion there is correct."
+      },
+      {
+        "id": "constraint-captured",
+        "keyword": "block the plan|never block|generation",
+        "in_section": "Constraints",
+        "note": "the 'must not block the plan / don't change generation' constraint is captured in Constraints"
+      }
+    ]
+  }
+}

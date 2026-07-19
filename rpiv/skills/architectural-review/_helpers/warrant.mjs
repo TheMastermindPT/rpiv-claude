@@ -41,10 +41,10 @@
 
 import { readFileSync } from "node:fs";
 
-// The nine lenses the warrant can measure from metrics + semantic + knip. M (missing
+// The ten lenses the warrant can measure from metrics + semantic + knip. M (missing
 // abstraction) and L (leaky boundary) are NOT here: they have no cheap deterministic seed
 // and always run whenever Wave 2 runs at all.
-const CROSS_CUTTING = ["C", "A", "S", "Fe", "T"]; // seed-driven Wave-2 lenses
+const CROSS_CUTTING = ["C", "A", "S", "Fe", "T", "Fp"]; // seed-driven Wave-2 lenses
 const ALWAYS_ON = ["M", "L"]; // run whenever Wave 2 runs (skipped only on band=skip)
 
 // --- flags ---------------------------------------------------------------
@@ -154,6 +154,14 @@ function tLive() {
   return rows("test-density").length >= 1 || toNum(flags["coverage-gaps"]) >= 1;
 }
 
+function fpLive() {
+  // failure propagation: >=2 files swallow failures, or one file does it habitually
+  // (>=3 swallows). A lone empty catch is too often a justified best-effort
+  // suppression to warrant a lens dispatch.
+  const r = rows("catch-swallows");
+  return r.length >= 2 || r.some((x) => toNum(field(x, /swallows=(\d+)/)) >= 3);
+}
+
 const lenses = {
   G: rows("godfile-candidates").length >= 1,
   Lc: rows("low-cohesion").length >= 1,
@@ -164,6 +172,7 @@ const lenses = {
   Fe: feLive(),
   T: tLive(),
   Tc: tcLive(),
+  Fp: fpLive(),
 };
 
 const liveLenses = Object.entries(lenses)
@@ -193,12 +202,12 @@ if (fileCount >= 100 || pre10 || liveCount >= 4) {
 }
 
 // Wave-2 lens set to actually dispatch. Wave 1 (G/Lc/D) has already run by this point.
-// selective = the live cross-cutting lenses + the always-on M/L. full = all seven.
+// selective = the live cross-cutting lenses + the always-on M/L. full = all eight.
 const selectiveWave2 =
   band === "skip"
     ? []
     : band === "full"
-      ? ["C", "A", "T", "L", "M", "S", "Fe"]
+      ? ["C", "A", "T", "L", "M", "S", "Fe", "Fp"]
       : [...liveLenses.filter((l) => CROSS_CUTTING.includes(l)), ...ALWAYS_ON];
 
 process.stdout.write(

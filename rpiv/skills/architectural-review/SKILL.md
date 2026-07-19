@@ -1,6 +1,6 @@
 ---
 name: architectural-review
-description: Run a deep, anti-slop architecture review of a module or path — quantify structural health, ingest the repo's own linters as ground truth, build a top-down entity/data-flow model, then run the slop lenses linters miss (semantic duplication, concept fragmentation, god-files, dead abstractions, test theater, boundary erosion, missing abstraction, state-ownership, temporal coupling, low-cohesion, feature-envy), verify every finding before triage, and write a phased polish plan to .rpiv/artifacts/architecture-reviews/. Use this whenever the user wants an architecture review, an anti-slop or code-health sweep of a module, a pre-1.0 hardening pass, or a post-refactor cleanup — even if they don't use the words "architectural review". Language-agnostic.
+description: Run a deep, anti-slop architecture review of a module or path — quantify structural health, ingest the repo's own linters as ground truth, build a top-down entity/data-flow model, then run the slop lenses linters miss (semantic duplication, concept fragmentation, god-files, dead abstractions, test theater, boundary erosion, missing abstraction, state-ownership, temporal coupling, low-cohesion, feature-envy, failure propagation), verify every finding before triage, and write a phased polish plan to .rpiv/artifacts/architecture-reviews/. Use this whenever the user wants an architecture review, an anti-slop or code-health sweep of a module, a pre-1.0 hardening pass, or a post-refactor cleanup — even if they don't use the words "architectural review". Language-agnostic.
 argument-hint: "[target path: file, directory, or module — empty auto-picks the densest source root]"
 shell-timeout: 10
 contract:
@@ -57,9 +57,7 @@ Synthesis is the load-bearing depth of this skill: the lenses find symptoms in i
 ## Metadata
 
 ```!
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/now.mjs"
-echo
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/git-context.mjs"
+node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/skill-context.mjs" now git
 ```
 
 Copy values verbatim — do not reformat the timezone offset. `now.mjs` line 1 is `<iso>\t<slug>`. Metrics, linter ingestion, and prior-review lookup are LLM-invoked at Steps 2 because they depend on `$ARGUMENTS` and on conversational clarification, which render-time substitution cannot capture.
@@ -70,7 +68,7 @@ Copy values verbatim — do not reformat the timezone offset. `now.mjs` line 1 i
 A. Measure & detect
    1. Identify target -> 2. Metrics + linters + prior review -> 2.7 Build System Model (style-aware entity map)
    -> 3. Plan layers as a view of the model (+ checkpoint)
-   -> 4. Skeleton artifact (Health Scorecard + System Model)
+   -> 4. Skeleton artifact (Health Scorecard + System Model) -> 4.5 LikeC4 model (current-state)
    -> 5a. Wave 1: G + Lc + D (structural, metric-gated) -> 5b. Wave 1 sweeper (lightweight, over G+Lc+D)
    -> 5c. Steering checkpoint (skip/full/narrow Wave 2)
    -> 5d. Wave 2: C + A + T + L + M + S + Fe (cross-cutting, full-scope, informed by Wave 1)
@@ -86,7 +84,7 @@ C. Synthesize
 
 The final artifact is blueprint-consumable per phase.
 
-**References (progressive disclosure — read each file at the step its pointer names, never earlier; resolve paths against this skill's directory, i.e. `${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/`):** `references/metrics-blocks.md` (Step 2.1, after metrics.mjs) · `references/tool-ingestion.md` (Step 2.2, before any external tool runs) · `references/slop-map.md` (Step 5a, map assembly) · `references/wave2-lenses.md` (Step 5d, only when Wave 2 dispatches) · `references/dimension-sweep.md` (Step 7.2, first layer) · `references/drift-fingerprints.md` (Step 8, only when a prior review exists).
+**References (progressive disclosure — read each file at the step its pointer names, never earlier; resolve paths against this skill's directory, i.e. `${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/`):** `references/metrics-blocks.md` (Step 2.1, after metrics.mjs) · `references/tool-ingestion.md` (Step 2.2, before any external tool runs) · `references/likec4-model.md` (Steps 4.5 & 11, only when a System Model exists) · `references/slop-map.md` (Step 5a, map assembly) · `references/wave2-lenses.md` (Step 5d, only when Wave 2 dispatches) · `references/dimension-sweep.md` (Step 7.2, first layer) · `references/drift-fingerprints.md` (Step 8, only when a prior review exists).
 
 ## Steps
 
@@ -115,7 +113,7 @@ The final artifact is blueprint-consumable per phase.
    node "${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/_helpers/metrics.mjs" "<target>"
    ```
 
-   Read the output as authoritative. Hold every block in main context — they are the severity anchors for the whole review. Read `references/metrics-blocks.md` NOW — it is the block-by-block interpretation glossary (loc baselines, size-outliers vs the godfile G gate, low-cohesion Lc, churn, export-usage, test-density, dup-candidates run/tokenSim semantics, co-change Tc pairs + ripple-groups, feature-envy pre-signal, and the single-file-target rule); interpret every block exactly per that file.
+   Read the output as authoritative. Hold every block in main context — they are the severity anchors for the whole review. Read `references/metrics-blocks.md` NOW — it is the block-by-block interpretation glossary (loc baselines, size-outliers vs the godfile G gate, low-cohesion Lc, churn, export-usage, test-density, dup-candidates run/tokenSim semantics, co-change Tc pairs + ripple-groups, feature-envy pre-signal, catch-swallows Fp seed, bus-factor weight, and the single-file-target rule); interpret every block exactly per that file.
 
 2. **Probe + ingest external tools as ground truth** (read-only, portable, suggest-never-install). Run the capability probe:
 
@@ -123,7 +121,7 @@ The final artifact is blueprint-consumable per phase.
    node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/tool-probe.mjs" "<target>"
    ```
 
-   It maps each tool to the **lens it sharpens** and classifies it `configured | installed-unconfigured | absent` — **without running or installing anything**. Then Read `references/tool-ingestion.md` NOW — BEFORE running any external tool — and follow it exactly: the read-only tool contract, the per-tool ingestion instructions (depcruise, knip, jscpd, coverage, stryker, ts-morph, ast-grep/opengrep, CodeScene, SonarQube), the DB ground-truth gates (SQLFluff, Atlas), the per-tool degradation checkpoint, the `## Tool Coverage` section rule, the Deterministic Ground Truth Fold (K- / DC- / DC-orphan- / CS- / AS- / OG- / P- Slop Map entries), and the per-lens tool precedence.
+   It maps each tool to the **lens it sharpens** and classifies it `configured | installed-unconfigured | absent` — **without running or installing anything**. Then Read `references/tool-ingestion.md` NOW — BEFORE running any external tool — and follow it exactly: the read-only tool contract, the per-tool ingestion instructions (depcruise, knip, jscpd, coverage, stryker, ts-morph, ast-grep/opengrep, CodeScene, SonarQube, likec4 declared-model conformance), the DB ground-truth gates (SQLFluff, Atlas), the per-tool degradation checkpoint, the `## Tool Coverage` section rule, the Deterministic Ground Truth Fold (K- / DC- / DC-orphan- / CS- / AS- / OG- / P- / C4- Slop Map entries), and the per-lens tool precedence.
 
    **These outputs are GROUND TRUTH — findings must NOT re-report them.** They define what the tools already cover so the review spends judgment only on the slop they miss. Any tool absent / unconfigured / timed-out routes through the per-tool degradation checkpoint in `references/tool-ingestion.md` — never silently skipped; on **Proceed** it is recorded "{lens} running unaided" and the review continues, on **Pause** the review stops until the user sets it up.
 
@@ -139,14 +137,14 @@ Before planning layers, build the top-down domain-entity / data-flow model the r
 
 **Gate:** SKIP for a single-file target, or when `---co-change-groups---` is empty AND there are no db row-type / domain-contract files to seed entities — note "no system model (insufficient structure)" and proceed to Step 3. Otherwise dispatch ONE `entity-mapper`:
 
-   **Agent — entity-mapper:** "Target: `{target}`. Style: `auto` (detect per entity — use event/CQRS/pipeline/hex signal when present; fall back to CRUD). Build the top-down System Model. Seeds — ripple-groups (`co-change-groups` rows from metrics): {paste rows}. Write-site counts (the `write-sites-semantic` rows when semantic.mjs ran — type-resolved, incl. imported/aliased table names — else the regex `write-sites` rows: table/RPC -> writers=N + files): {paste rows}. Type seeds: the db row-type file(s) (e.g. `lib/db/types.ts`) and domain contracts (`lib/<domain>/*-contracts.ts`). Name the canonical entities from the type/contract seeds, attach the ripple-group files, auto-detect the architecture style per entity, place each entity's files across its style-appropriate lifecycle stages, **judge ownership per the style-specific rule** (CRUD: `writers=1` -> that module owns; `writers>=2` -> `owner: NONE`; event-driven: multiple owners by design, EMIT owns schema, each HANDLE owns side effects; CQRS: WRITE aggregate owns invariant, READ is a projection — no independent owner; pipeline: TRANSFORM stage owns; hexagonal: DOMAIN owns ports, each ADAPTER owns its impl), and record cross-entity edges. Output L0 (Entity | Style | Outbound edges) + per-entity L1 (name each entity, style, stage placement with style-specific stage names, owner per the style's rule, unguarded/split-brain notes). Cite repo-relative `file:line` from the repository root (never bare basenames — `service.ts:34` is un-greppable); emit the model only, no findings."
+   **Agent — entity-mapper:** "Target: `{target}`. Style: `auto` (detect per entity — use event/CQRS/pipeline/hex signal when present; fall back to CRUD). Build the top-down System Model. Seeds — ripple-groups (`co-change-groups` rows from metrics): {paste rows}. Write-site counts (the `write-sites-semantic` rows when semantic.mjs ran — type-resolved, incl. imported/aliased table names — else the regex `write-sites` rows: table/RPC -> writers=N + files): {paste rows}. Type seeds: the db row-type file(s) (e.g. `lib/db/types.ts`) and domain contracts (`lib/<domain>/*-contracts.ts`). Declared-model seeds (only when Step 2.2 ingested a LikeC4 model): the declared elements mapped to this target and their relationships — treat them as CLAIMS to verify against code, never as truth; note where the code diverges. Name the canonical entities from the type/contract seeds, attach the ripple-group files, auto-detect the architecture style per entity, place each entity's files across its style-appropriate lifecycle stages, **judge ownership per the style-specific rule** (CRUD: `writers=1` -> that module owns; `writers>=2` -> `owner: NONE`; event-driven: multiple owners by design, EMIT owns schema, each HANDLE owns side effects; CQRS: WRITE aggregate owns invariant, READ is a projection — no independent owner; pipeline: TRANSFORM stage owns; hexagonal: DOMAIN owns ports, each ADAPTER owns its impl), and record cross-entity edges. Output L0 (Entity | Style | Outbound edges) + per-entity L1 (name each entity, style, stage placement with style-specific stage names, owner per the style's rule, unguarded/split-brain notes). Cite repo-relative `file:line` from the repository root (never bare basenames — `service.ts:34` is un-greppable); emit the model only, no findings."
 
 Hold the returned model. It is written into the skeleton (Step 4) as the `## System Model` section and carried into:
 - **Step 3** — layers are grouped as a *view* of the model's entities/stages.
 - **Step 5** — each lens's Slop Map row gains the entity/stage its file belongs to (so findings can be tagged).
 - **Steps 9.5 / 10 / 11** — entities are a cluster source, `owner: NONE` becomes a first-class theme, and entity-level compounds are promoted in the Risk Rollup.
 
-Record the entity count in frontmatter `entities`. The model is descriptive (what the system IS), not a conformance check against declared architecture.
+Record the entity count in frontmatter `entities`. The model is descriptive (what the system IS) — the conformance check against a DECLARED architecture is separate and deterministic: when the repo carries a LikeC4 model, Step 2.2's `likec4-conformance.mjs` fold owns declared-vs-actual deviations as `C4-` ground truth.
 
 ### Step 3: Plan Layer Structure
 
@@ -170,6 +168,14 @@ Layers mirror dependency direction. Higher layers consume lower-layer vocabulary
 
 3. **Layer-split checkpoint.** Use `ask_user_question`: "Proposed split: {N} top-level layers, {file count} files. L0 — {names/count}; L1 — ...; {sub-layers}. Approve?". Header: "Layers". Options: "Approve (Recommended)"; "Adjust split"; "Reduce scope"; "Specify manually". Loop until approved.
 
+4. **Turn the approved layers into an executable check (layer-rules.mjs).** Until now the layer model only ORDERS the review; this step makes it VALIDATE the code. Write the approved structure to `<scratchpad>/layers.json` — an ordered array `[{ "name": "Layer 0 — {name}", "paths": ["{dir prefix}", ...] }, ...]`, Layer 0 first, sub-layers folded into their parent, cross-cutting-utility files omitted. Then:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/_helpers/layer-rules.mjs" --layers=<scratchpad>/layers.json > <scratchpad>/layer-rules.dependency-cruiser.cjs
+   ```
+
+   Add one `--forbid="<owning-dir>-><forbidden-dir>"` per System-Model ownership boundary worth enforcing (e.g. the write path of an `owner: NONE` entity). When dependency-cruiser is runnable (`configured` OR `installed-unconfigured` — the generated file IS the config), validate from the repo root: `npx depcruise . --config <scratchpad>/layer-rules.dependency-cruiser.cjs --output-type json`, filter violations to the target, and fold each as a 🟡 L-row prefix `LM-` per `references/tool-ingestion.md` (layer-model breach: code contradicting the structure just approved — NOT a repo-rule breach). Keep the generated config — Step 11 offers it as a deliverable. Collision-safe by construction: the generated file lives in the scratchpad and is passed via `--config` explicitly, so the repo's own dependency-cruiser config (if any) is never read, appended to, or replaced by this run — it gets its own separate Step 2 scan. When dependency-cruiser is absent, skip silently (no degradation checkpoint; the layer model still frames the review).
+
 ### Step 4: Create Skeleton Artifact
 
 1. **Read the template** at `${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/templates/architecture-review.md` FULLY.
@@ -180,11 +186,17 @@ Layers mirror dependency direction. Higher layers consume lower-layer vocabulary
    - **Frontmatter** with all template_version 2 fields. Fill `file_count`, `loc_*`, `entities`, and the **Health Scorecard** NOW from Step 2 metrics + linter summary (this is the quantified backbone, available before any finding). Set `prior_review` to the Step 2 path or `none`. Leave `severity`/`verification`/`drift`/`slop_by_lens` as zeros for now, and set frontmatter `health_score: pending` — the composite verdict is written only at the Step 11 ready-flip. An interrupted run must not leave a skeleton carrying a verdict ("healthy") computed before any lens ran; the Scorecard section holds the raw metrics in the meantime.
    - **System Model:** write the `## System Model` section from the Step 2.7 `entity-mapper` output (L0 table + per-entity L1/L2 with style-specific stage bullets). Omit only when Step 2.7 was gate-skipped.
    - **Drift Delta:** placeholder if a prior review exists, else omit the section (scorecard Composite notes "Baseline review").
-   - **Methodology / Slop Inventory / per-layer / themes / polish plan:** empty placeholders; one `## Layer N — {name}` heading per approved layer.
+   - **Methodology / Slop Inventory / per-layer / themes / polish plan:** empty placeholders; one `## Layer N — {name}` heading per approved layer. Each layer section carries its two store-managed sentinel pairs (`<!-- BEGIN store:findings layer=N -->`/`<!-- END store:findings layer=N -->` and the matching `store:tally` pair, N = the layer number verbatim, sub-layers included) with EMPTY interiors — Step 7.5's store refuses to render into a skeleton missing them.
 
-4. **All subsequent writes use the Edit tool.** Never re-Write the whole file — the artifact is the durable checkpoint between sessions.
+4. **All subsequent writes use the Edit tool** — EXCEPT the store-managed sentinel regions (finding blocks + tallies, written only by `store.mjs` at 7.5/7.6) and the Step-11 ready flip (`store finalize`). Never re-Write the whole file — the artifact is the durable checkpoint between sessions — and never hand-Edit between sentinel markers.
 
 5. **Path discipline at write time (applies to EVERY section, every step).** Any `file:line` cite written into the artifact — finding rows, System Model stage cells, layer prose, IX evidence, phase plans, and especially CONDENSED or summarized agent output — carries the repo-relative path from the repository root. Condensing is where paths die: shortening `lib/generation/plan-generation/service.ts:329` to `service.ts:329` makes the cite un-greppable in a repo with three `service.ts` files, and downstream verify/drift tooling treats it as broken. Compress prose, never paths.
+
+### Step 4.5: Emit the LikeC4 Architecture Model (current state)
+
+**Gate:** SKIP when Step 2.7 was gate-skipped (no System Model) — note "LikeC4 model: skipped (no system model)" and proceed. Otherwise read `references/likec4-model.md` NOW and follow it exactly: write the model **project directory** (`<slug>_<target-kebab>-model/` with its own `likec4.config.json` — the config isolates it from any LikeC4 project the target repo already has) next to the artifact, translate the System Model per the translation contract (entities → `entity` elements, stages → nested `stage` children, `owner: NONE` → `#ownerless`, cross-entity edges → relationships, sources as repo-relative metadata), emit the current-state views, and run the `npx likec4 validate --json --no-layout` loop until `filteredErrors` is 0. Then link the model: set frontmatter `likec4_model:` and add the preview pointer line under `## System Model`.
+
+Emission is **additive and non-blocking**: on any CLI unavailability it degrades to a one-line note in the artifact — never a checkpoint, never a pause. The model gets its end-state overlay at Step 11.
 
 ### Step 5: Slop-Lens Wave (two-wave, context-isolated)
 
@@ -243,7 +255,7 @@ The Wave 1 sweeper output is lightweight — typically 0-3 compounds. Its findin
 
 #### 5c. Steering Checkpoint (warrant-driven)
 
-The decision to run the expensive cross-cutting wave is driven by the **full deterministic seed surface**, not just the Wave-1 structural findings. This closes a real blind spot: a target can be structurally clean (no god-files, cohesive, no dup) yet carry genuine fragmentation, dead code, scattered writes, or feature-envy that only the cross-cutting lenses find — and the old structural-only gate would skip right past it. (Verified on gymapp: `lib/generation/adaptive-context` — 17 files, G=0 Lc=0 D=0, structurally silent — nonetheless has a real feature-envy finding the old gate skipped.)
+The decision to run the expensive cross-cutting wave is driven by the **full deterministic seed surface**, not just the Wave-1 structural findings. This closes a real blind spot: a target can be structurally clean (no god-files, cohesive, no dup) yet carry genuine fragmentation, dead code, scattered writes, feature-envy, or swallowed failure paths that only the cross-cutting lenses find — and the old structural-only gate would skip right past it. (Verified on gymapp: `lib/generation/adaptive-context` — 17 files, G=0 Lc=0 D=0, structurally silent — nonetheless has a real feature-envy finding the old gate skipped.)
 
 Compute the warrant deterministically. `metrics_out.txt` and `semantic_out.txt` are the Step 2 outputs; `{knip_dead}` is the count of knip dead exports+types whose path is under the target (from the Step 2 knip run — omit the flag when knip was absent); `{owner_none}` is the count of System-Model entities with `owner: NONE` (Step 2.7):
 
@@ -269,13 +281,13 @@ The warrant never overrides a developer choice — on the `full` band the develo
 
 **Fallback:** if `warrant.mjs` is unavailable (missing node, etc.), degrade to the structural heuristic — skip only when Wave 1 found 0–1 findings AND file_count < 100 AND not pre-1.0; otherwise run full — and note "warrant unavailable — structural heuristic" in the artifact.
 
-#### 5d. Wave 2 — Cross-cutting lenses (C, A, T, L, Sec, M, S, Fe, P)
+#### 5d. Wave 2 — Cross-cutting lenses (C, A, T, L, Sec, M, S, Fe, Fp, P)
 
 **Dispatch only the lenses the checkpoint selected.** On the `full` band, dispatch all nine. On the `selective` band, dispatch exactly the warrant's `selectiveWave2` set (the live cross-cutting lenses + always-on M, L, Sec, and P) — skip the rest and note them as "no seed — not dispatched" in the artifact. Below, each lens is described in full; run the subset that applies. Send them in a single multi-Agent message. Each receives the full Slop Map + the Wave 1 findings + IX compounds as context (they CAN see each other's output — Wave 2 lenses run cooperatively, not isolated from Wave 1).
 
 Read `references/wave2-lenses.md` NOW (only on a dispatching band — never when Wave 2 is skipped) and use its nine lens prompts verbatim for the selected subset, plus its `precedent-locator` dispatch in the same message.
 
-Wait for all Wave 2 agents. Collect their findings alongside the Wave 1 findings — together they form the complete **candidate slop findings** set, each keyed to a file and its layer, with a provisional `L<layer>-<seq>` ID and lens tag (G, Lc, D, C, A, T, L, Sec, M, S, Fe, P).
+Wait for all Wave 2 agents. Collect their findings alongside the Wave 1 findings — together they form the complete **candidate slop findings** set, each keyed to a file and its layer, with a provisional `L<layer>-<seq>` ID and lens tag (G, Lc, D, C, A, T, L, Sec, M, S, Fe, Fp, P).
 
 ### Step 6: Verify Gate (anti-slop meta-guard)
 
@@ -343,10 +355,24 @@ Present each via `ask_user_question`: "L{X}-{YY} ({lens}) — {headline}. Eviden
 - **God-file candidates:** include "Split into `<dir>/` with the proposed decomposition" using the G-lens's named extractable units.
 
 #### 7.5 Persist Each Triaged Finding
-Edit the `## Layer N` section the instant an outcome is chosen. Write the FULL enriched finding block (per the template's Finding shape): Lens, Evidence (+verbatim), Quantified anchor, What it is, Why it's slop, **Remediation** (safe-refactor sequence + Acceptance criteria + Test strategy + Trade-off/alternative — use integration-scanner's consumer list for blast radius and (when Wave 2 ran) precedent-locator for the sequence, or `git log --grep` for the target when Wave 2 was skipped), Severity/Effort/Blast radius/Class, Verify, Status (verbatim from the chosen option: `accepted` / `rejected` / `deferred` / `withdrawn`), Entity/stage (the System Model coordinate this finding lives in, or `—` when no model), Depends on, Cross-cut tag. Maintain `unresolved_finding_count` (increment on file from 7.2, decrement on triage).
+Persist through the findings store the instant an outcome is chosen — never hand-Edit inside the sentinel regions. Build ONE JSON object per finding mapping the template's Finding shape 1:1: `id`, `layer` (the layer number), `lens`, `title`, `evidence` (array of `{path, startLine, endLine, quoted}` — repo-relative paths, verbatim quoted lines per the citation contract), `symbol` (or null), `anchor`, `what`, `why`, `remediation` (`{steps, acceptance, testStrategy, tradeoff}` — use integration-scanner's consumer list for blast radius and (when Wave 2 ran) precedent-locator for the sequence, or `git log --grep` for the target when Wave 2 was skipped), `severity`, `effort`, `blastRadius`, `class`, `entityStage` (the System Model coordinate, or null), `verify`, `status` (verbatim from the chosen option: `accepted` / `rejected` / `deferred` / `withdrawn`), `statusNote` (the chosen option summary), `dependsOn`, `crossCutTag`. Then persist (heredoc keeps quotes/backticks intact):
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/store.mjs" add --artifact <artifact path> --root . <<'EOF'
+   <the finding JSON — one object, verbatim>
+   EOF
+   ```
+
+   One call validates at insert (schema, unique ID, unambiguous evidence paths, content-hash fingerprint) and renders the finding block AND this layer's tally into the sentinel regions. Non-zero exit = rejected: fix the reported field and re-pipe — never bypass with a hand Edit. Maintain frontmatter `unresolved_finding_count` via Edit as before (counters stay Edit-based this iteration).
 
 #### 7.6 Tally
-Append the layer tally table (accepted/rejected/deferred/withdrawn), the **slop lenses fired in this layer** (D/C/G/A/T/L/M/S/Tc/IX/10dim counts), cross-cut tags introduced/reused, and within-layer dependency edges. Batched layers: per-batch tally + a roll-up after all batches.
+Re-render the layer tally from the store — status counts, fired-lens counts (inline code by construction; the backtick discipline is now structural), cross-cut tags introduced/reused, and within-layer dependency edges are ALL derived from the persisted findings:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/store.mjs" render --artifact <artifact path> --layer <N> --tally
+   ```
+
+   Batched layers: run it after each batch (the tally always reflects the full store); the roll-up after all batches is the same command.
 
 ### Step 8: Drift Delta (content-hash fingerprints)
 
@@ -355,6 +381,8 @@ If Step 2 found no prior review: omit the Drift Delta section; the scorecard Com
 Otherwise, match prior review findings against this run's using **content-hash fingerprints** that survive file renames and line-number drift — unlike the old `path#symbol@lens` pattern which breaks when files move.
 
 Read `references/drift-fingerprints.md` NOW (gated — only when a prior review exists) and execute its 8a–8d exactly: fingerprint current + prior findings via `fingerprint.mjs` (count + no-null assertions, abort on either), match inline (no agent), classify `Still-open` / `Resolved` (claim-verifier-verified at HEAD) / `Regressed` / `NEW`, write the Drift Delta section + scorecard row + frontmatter `drift`, and fall back to `path#symbol@lens` matching when the helper is unavailable.
+
+**Model drift (additive).** When BOTH this run and the prior review emitted LikeC4 models (`likec4_model` frontmatter on each), also compute the structural model diff per the "Model drift" section of `references/likec4-model.md` — one extra line in the Drift Delta, orchestrator set-arithmetic, no agent. Skip silently when either side lacks a model.
 
 ### Step 9: Capture Emergent Methodology Principles
 
@@ -388,8 +416,18 @@ Phases are agent-driven (handed to `blueprint` -> `implement`); size by signals 
 2. **Group by leverage:** Foundation (no deps, low risk) / Vocabulary (renames) / Locality (moves) / Structural (file splits, dir restructures) / Behavioural (shape conversions, dispatchers) / Public-API (additive surface, downstream coordination).
 3. **Describe each phase** by agent-relevant signals: Findings (count + IDs), Files touched (count + paths), Blast-radius mix, Coordination, Class mix. Risk-flag phases touching on-disk format, public-API shape, or cross-module coordination.
 4. **Write the Risk Rollup — fix these first:** rank by `severity x blast-radius / effort`, then apply the **compound-risk promotion rule** (load-bearing): when >= 2 findings share an entity/boundary/root cause and combine into an emergent failure (a Step 6.5 `IX` compound, a Step 9.5 discovered cluster, a System Model `owner: NONE` entity, or a theme's root cause), rank the AGGREGATE — not its constituents. The interaction IS the defect: a cluster of three `Med` findings rooted in one bad boundary can top the list above any single `High`. Rank the *theme/IX root cause* as one line, list its constituent IDs beneath, and do NOT also rank the constituents individually. Name the top 3 (promoted aggregates eligible) with one-line ROI rationale. This is the prioritization the old artifacts never gave.
-5. **Draw the ASCII phase dependency graph** + phase scope summary table + final tally.
-6. **Confirm + flip status** via `ask_user_question` ("{N} phases ({F} findings, {Files} files). Approve?"; Approve / Adjust boundaries / Resequence / Other). On approve: rebuild the `phases:` frontmatter array from the `### Phase N — name` headings (one `{ n, title, depends_on, blast_radius, effort }` per heading, body order), write the final `health_score:` composite verdict (healthy | drifting | degraded — replacing the skeleton's `pending`), then Edit `status: in-progress` -> `status: ready`.
+5. **Draw the ASCII phase dependency graph** + phase scope summary table + final tally. When Step 3.4 generated a layer-rules config, add an **"Adopt boundary rules"** deliverable to the earliest fitting phase (usually Foundation): inline the generated `.dependency-cruiser.cjs` in the phase body so the approved layer model becomes a permanent CI check — the review's direction findings stop regressing the day the config lands. Adoption mode depends on what exists: repo has NO dependency-cruiser config → place the file at the repo root; repo HAS one → the deliverable is a **merge** (append the generated `forbidden` rules — names are namespaced `no-upward-l*`/`boundary-*` — and drop the generated `no-circular` if one already exists), NEVER a replacement. Weight the Risk Rollup with `---volatile-hubs---` and `---bus-factor---`: a finding on a high `churn x inbound` file outranks the same finding elsewhere, and `top_share≈1.00` on a hot file means single-owner knowledge — call that out so fixes there get the owning developer in the loop.
+6. **LikeC4 end-state emission (gated).** When Step 4.5 emitted a model, read the "Step 11 — fate tags and end-state views" section of `references/likec4-model.md` and apply it **append-only**: phase tags into `spec.c4`, fates via `extend` (+ `#planned` elements for the G/M-lens units the plan creates) into `model.c4`, the `end-state` and per-phase views into `views.c4`, then re-run the validate loop. This is the visual encoding of the aimed-at architecture; the Step 4.5 blocks are never rewritten. Skip silently when no model was emitted. **Declared-model deliverable** (per the same reference's "Adoption deliverables" section): when Step 2.2 folded `C4-` conformance rows, add an "Update the declared architecture model" deliverable to the fitting phase (append the accepted missing relationships, retire the dead ones, annotate elements with `metadata { dir }` so the next review's mapping is free); when the repo declares NO model, offer "Adopt an architecture model" with the emitted project as the starting point — merge-never-replace, same discipline as the dependency-cruiser deliverable.
+
+7. **Citation-path gate (deterministic, before the flip).** Run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/check-citations.mjs" <the artifact path> --root .`. It exits non-zero and lists every **ambiguous bare-basename** cite (`service.ts:329` in a repo with three `service.ts`) — the un-greppable form the path-discipline prose keeps leaking from dense System-Model stage cells. For each one, grep the repo for the basename, pick the file the surrounding prose means, rewrite the cite repo-relative from the repository root, and re-run until it exits 0. Do NOT flip status while it fails — an ambiguous cite is as broken as a wrong line.
+
+8. **Confirm + flip status** via `ask_user_question` ("{N} phases ({F} findings, {Files} files). Approve?"; Approve / Adjust boundaries / Resequence / Other). On approve: rebuild the `phases:` frontmatter array from the `### Phase N — name` headings via Edit (one `{ n, title, depends_on, blast_radius, effort }` per heading, body order), then finalize through the store — never hand-Edit the flip:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/store.mjs" finalize --artifact <artifact path> --health-score <healthy|drifting|degraded> --root .
+   ```
+
+   It gates (every finding triaged; the verdict is a real enum value, never `pending`; no evidence citation went ambiguous since insert), writes `health_score:`, flips `status: ready` in both the artifact and review.json, and stamps `content_hash:` as the LAST frontmatter field — AR artifacts now carry the same staleness pin research/design/blueprint stamp at their flips. Non-zero exit names the failed gate; resolve and re-run.
 
 ### Step 12: Present and Chain
 
@@ -398,12 +436,13 @@ Architectural review written to:
 `.rpiv/artifacts/architecture-reviews/{filename}.md`
 
 Health:       {health_score} — {file_count} files, median {loc_median} LOC, {outlier_count} outliers
-Slop:         {D} dup · {C} fragmentation · {G} god-file · {A} dead-abstraction · {T} test-theater · {L} leaky-boundary · {M} missing-abstraction · {S} state-flow · {Lc} low-cohesion · {Fe} feature-envy · {Tc} hidden-coupling
+Slop:         {D} dup · {C} fragmentation · {G} god-file · {A} dead-abstraction · {T} test-theater · {L} leaky-boundary · {M} missing-abstraction · {S} state-flow · {Lc} low-cohesion · {Fe} feature-envy · {Fp} failure-propagation · {Tc} hidden-coupling
 Synthesis:    {IX} interaction compounds · {clusters_discovered} clusters discovered · {themes} root-caused themes
 Verification: {V} verified · {W} weakened · {F} falsified (dropped)
 Drift:        Resolved {R} · Regressed {Rg} · Still-open {S} · NEW {N} · Net Δ {+/-Δ}   (or "Baseline review")
 Findings:     {F} reviewed — {A} accepted, {Rj} rejected, {D} deferred, {W} withdrawn
 Plan:         {P} phases across {Files} files
+Model:        {model-dir} — npx likec4 start "{model-dir}" (index = current · end-state · phase views)   (omit when no model emitted)
 
 Fix these first:
 1. {ID} — `file:line` — {headline}
@@ -420,7 +459,7 @@ The artifact is blueprint-consumable per phase:
 ### Step 13: Handle Follow-ups
 
 1. **Append, never rewrite.** Add a `## Follow-up Review {ISO 8601 timestamp}` section; prior content stays immutable. Retired (Falsified) IDs stay retired; new findings take new IDs.
-2. **Bump frontmatter** `last_updated` / `last_updated_by`; set `last_updated_note`.
+2. **Bump frontmatter** `last_updated` / `last_updated_by`; set `last_updated_note`. A follow-up edits the body of a stamped artifact, so re-stamp after the append: `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <artifact path> --stamp` — an unstamped follow-up reads as post-finalization tampering to the content-hash pin.
 3. **Re-dispatch narrowly** — a single `codebase-analyzer` on the area in question (1-2 agents max). For a fresh measurement, re-run `metrics.mjs`.
 4. **Re-invoke instead** when the target materially changed (new files, restructured layers): re-run `/rpiv:architectural-review` for a fresh artifact and a new Drift Delta against this one.
 
@@ -439,16 +478,19 @@ The artifact is blueprint-consumable per phase:
 | Context | Agents |
 |---|---|
 | Step 1 auto-pick / Step 2 metrics | `metrics.mjs` helper (no agent) |
-| Step 2 tool probe + coverage | `tool-probe.mjs` (detect tools→lenses, read-only) + `coverage.mjs` (parse coverage→T) + `semantic.mjs` (ts-morph→S/Fe/A when `configured`, read-only, optional — degrades to regex) — helpers, no agent; external tools (depcruise/knip via `npx`, jscpd v5 Rust binary) run with consent |
+| Step 2 tool probe + coverage | `tool-probe.mjs` (detect tools→lenses, read-only) + `coverage.mjs` (parse coverage→T) + `semantic.mjs` (ts-morph→S/Fe/A when `configured`, read-only, optional — degrades to regex) + `stability.mjs` (SDP violations / cycles / volatile hubs derived from the captured depcruise or madge graph JSON) — helpers, no agent; external tools (depcruise/knip via `npx`, jscpd v5 Rust binary) run with consent |
 | Step 2 prior-review lookup | `artifacts-locator` (1) |
 | Step 2.7 system model | `entity-mapper` (1) — style-aware top-down entity/data-flow map from `co-change-groups` ripple-groups + db/domain type seeds. Auto-detects CRUD / CQRS / event-driven / pipeline / hexagonal per entity |
-| Step 3 layer discovery | `codebase-locator` + `codebase-analyzer` in parallel |
+| Step 3 layer discovery | `codebase-locator` + `codebase-analyzer` in parallel; after approval, `layer-rules.mjs` helper turns the layers into a dependency-cruiser config (validated via `npx depcruise` when runnable — `LM-` rows) |
+| Step 2.2 declared-model conformance | `likec4-conformance.mjs` helper (declared LikeC4 model vs captured depcruise/madge graph → `C4-` ground truth; no agent; silent skip when no model) |
+| Step 4.5 / Step 11 LikeC4 model | orchestrator writes the `.c4` project + `npx likec4 validate --json --no-layout` loop (no agent; non-blocking) |
 | Step 5b Wave 1 (structural) | `lens-analyst` (G, Lc, D), `peer-comparator` (D pair), `integration-scanner` (blast radius) — single parallel message, context-isolated. **Tc (temporal coupling) has NO agent** — metric-only |
 | Step 5b2 Wave 1 sweeper | `interaction-sweeper` (1) — lightweight, G+Lc+D only. Feeds steering checkpoint + Wave 2 context |
-| Step 5d Wave 2 (cross-cutting) | `lens-analyst` (C, A, T, L, Sec, M, S, Fe, P), `precedent-locator` (history) — single parallel message, receives Wave 1 findings + IX compounds as context |
+| Step 5d Wave 2 (cross-cutting) | `lens-analyst` (C, A, T, L, Sec, M, S, Fe, Fp, P), `precedent-locator` (history) — single parallel message, receives Wave 1 findings + IX compounds as context |
 | Step 6 verify gate | `claim-verifier` (1) — verifies all Wave 1 + Wave 2 slop candidates |
 | Step 6.5 full interaction sweep | `interaction-sweeper` (1) — re-joins ALL waves; consumes Wave 1 sweeper's IX compounds + Wave 2 findings over the verified set; emits root-caused `IX` compounds |
 | Step 7.1 deep-file analysis | `codebase-analyzer` (per file or batched) |
+| Steps 7.5 / 7.6 / 11 persistence | `store.mjs` helper (add / render --tally / finalize — no agent; validated insert + deterministic sentinel render) |
 | Step 8 drift delta | `fingerprint.mjs` helper (compute fingerprints for current + prior findings) + `claim-verifier` (1 — verify Resolved claims at HEAD; fallback when fingerprint unavailable). Orchestrator computes the match inline — no agent needed for the matching pass |
 | Step 9.5 cluster discovery | orchestrator set-arithmetic (no agent) |
 | Step 13 follow-up rescan | `codebase-analyzer` (1-2) |
@@ -462,22 +504,23 @@ Spawn agents in parallel only when searching for different things. Wave 1 lenses
 - **All checkpoints are `ask_user_question`** — the tool always offers free-text via "Other"; don't author prose prompts.
 - **References are load-bearing**: read each `references/*.md` at the step its pointer names (see the References index after Flow); apply reference content verbatim — never paraphrase it into a dispatch or the artifact, and never read a gated reference (`wave2-lenses`, `drift-fingerprints`) when its gate did not fire.
 - **Read all in-scope files FULLY in Step 7.1** — selective reads bias findings toward what you happened to load.
-- **Edit the artifact progressively in Step 7.5** — never batch all findings into one final write. The artifact is the durable checkpoint between sessions.
+- **Persist progressively in Step 7.5 via store.mjs** — one `store add` per triaged finding, never batched into one final write. The artifact plus its sibling review.json are the durable checkpoint between sessions.
 - **Critical ordering:**
   - ALWAYS gather metrics + linter ground-truth (Step 2) BEFORE writing the skeleton (Step 4) — the Health Scorecard is the quantified backbone every finding cites.
   - ALWAYS build the System Model (Step 2.7) with `style: auto` BEFORE planning layers (Step 3) — the layers are a *view* of the style-aware model; deriving layers from scratch discards the top-down frame.
   - Wave 1 (Step 5b): ALWAYS run G, Lc, D context-isolated — each lens gets the Slop Map + its file list, nothing else. Pasting raw agent dumps causes narrativisation.
   - ALWAYS run the Wave 1 sweeper (Step 5b2) when >= 4 findings span >= 2 files — it surfaces G+Lc+D interactions that inform the steering checkpoint.
   - ALWAYS present the steering checkpoint (Step 5c) BEFORE Wave 2 — the developer decides whether Wave 2 runs, and their choice gates cost.
-  - Wave 2 (Step 5d): C, A, T, L, M, S, Fe receive Wave 1 findings + IX compounds as context. They run cooperatively (not fully isolated) over the full codebase.
+  - Wave 2 (Step 5d): C, A, T, L, M, S, Fe, Fp receive Wave 1 findings + IX compounds as context. They run cooperatively (not fully isolated) over the full codebase.
   - ALWAYS run the verify gate (Step 6) BEFORE the per-layer triage — the developer must never triage a Falsified slop finding.
   - ALWAYS run the full Interaction Sweep (Step 6.5) over the VERIFIED set from BOTH waves (after Step 6, before triage), and ALWAYS run cluster discovery (Step 9.5) BEFORE themes (Step 10) — these two are the systemic-synthesis core.
   - ALWAYS confirm the layer split (Step 3) BEFORE the skeleton (Step 4).
-  - ALWAYS read every file in a layer (7.1) BEFORE the dimension sweep (7.2); ALWAYS triage via `ask_user_question` (7.4) — never auto-accept; ALWAYS Edit immediately after each outcome (7.5).
+  - ALWAYS read every file in a layer (7.1) BEFORE the dimension sweep (7.2); ALWAYS triage via `ask_user_question` (7.4) — never auto-accept; ALWAYS `store add` immediately after each outcome (7.5) — hand-Edits inside sentinel regions are forbidden.
   - ALWAYS produce the Drift Delta (Step 8) when a prior review exists. Use content-hash fingerprints (survive renames). Re-verify `Resolved` rows at HEAD — a falsely-claimed fix must not hide a regression.
   - NEVER skip the per-layer tally (7.6) — it is the visible progress marker.
   - NEVER edit source files during the review — the artifact is the product; implementation is blueprint's job.
+- **LikeC4 emission is additive and non-blocking** — the model project lives beside the artifact (own `likec4.config.json`, never in the target source tree, never merged into the repo's own LikeC4 project), Step 11 only appends (phase tags, `extend` fates, end-state/phase views), and CLI unavailability degrades to a one-line note — never a checkpoint.
 - **Linter ground-truth is portable, not hard-wired** — detect scripts from the manifest; degrade gracefully when absent. Never assume a specific repo's `npm run` names.
-- **Frontmatter consistency**: snake_case multi-word fields; preserve `verification` / `drift` / `slop_by_lens` keys verbatim (`artifacts-locator` greps them). `slop_by_lens` now carries `missing_abstraction`, `state_flow`, `temporal_coupling`, `low_cohesion`, and `feature_envy`; the synthesis counts live in `interactions` and `clusters_discovered`.
-- **Status invariants**: `in-progress` during Steps 1-10; flips to `ready` at Step 11 confirmation.
+- **Frontmatter consistency**: snake_case multi-word fields; preserve `verification` / `drift` / `slop_by_lens` keys verbatim (`artifacts-locator` greps them). `slop_by_lens` now carries `missing_abstraction`, `state_flow`, `temporal_coupling`, `low_cohesion`, `feature_envy`, and `failure_propagation`; the synthesis counts live in `interactions` and `clusters_discovered`.
+- **Status invariants**: `in-progress` during Steps 1-10; flips to `ready` only via `store finalize` at Step 11 confirmation (which also stamps `content_hash`).
 - **The artifact is blueprint-consumable per phase** — per-phase blueprint invocations are the supported chaining pattern.

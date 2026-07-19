@@ -1,0 +1,20 @@
+[
+  {"query": "I've got a finished design doc at .rpiv/artifacts/designs/2026-06-30_notifications.md — can you break it into implementation phases with success criteria?", "should_trigger": true},
+  {"query": "turn my design into a phase-by-phase plan I can hand to implement", "should_trigger": true},
+  {"query": "sequence the architecture I just designed into atomic steps, and note which phases can run in parallel", "should_trigger": true},
+  {"query": "ok the design is done and approved. next step is the phased implementation plan right? go ahead and make it", "should_trigger": true},
+  {"query": "convert .rpiv/artifacts/designs/webhook-retry.md into a plan with per-phase test contracts and verification", "should_trigger": true},
+  {"query": "I have the design artifact ready, produce the implementation plan from it (straightforward phasing, nothing fancy)", "should_trigger": true},
+  {"query": "take the finished design and lay out the build order for the team, phase by phase", "should_trigger": true},
+  {"query": "make an execution plan out of the design doc — phases, files per phase, success checks", "should_trigger": true},
+  {"query": "help me design the architecture for a new billing module — I haven't figured out the shape yet", "should_trigger": false},
+  {"query": "I don't have a design yet, can you decompose this feature into slices straight from the research doc?", "should_trigger": false},
+  {"query": "quick little plan for a one-file change, I really don't need a whole design step for this", "should_trigger": false},
+  {"query": "what are the different approaches we could take to add rate limiting? weigh the options", "should_trigger": false},
+  {"query": "research how the current adaptive-context validation pipeline works before I change anything", "should_trigger": false},
+  {"query": "review the pending changes on my branch before I open the PR", "should_trigger": false},
+  {"query": "start implementing phase 1 of the plan we made yesterday", "should_trigger": false},
+  {"query": "just interview me about what I actually want to build here, I'm still fuzzy on requirements", "should_trigger": false},
+  {"query": "rename `getMaxAllowedLoad` to `getMaxAllowedLoadKg` everywhere in lib/generation", "should_trigger": false},
+  {"query": "why is my vitest run hanging on the clamp-audit test?", "should_trigger": false}
+]

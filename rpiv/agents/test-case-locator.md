@@ -2,7 +2,7 @@
 name: test-case-locator
 description: "Finds existing manual test cases in .rpiv/test-cases/. Catalogs them by module, extracts frontmatter metadata (id, priority, status, tags), and reports coverage stats. Use before generating new test cases to avoid duplicates, or to audit what test coverage already exists in a project."
 tools: Grep, Glob
-model: haiku
+model: sonnet
 effort: low
 ---
 

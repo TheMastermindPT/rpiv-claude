@@ -2,7 +2,7 @@
 name: diff-auditor
 description: "Row-only mechanical patch auditor. Matches a caller-supplied list of LITERAL patterns (idioms, sink shapes, keywords) against a patch and emits one pipe-delimited row per hit (`file:line | verbatim | pattern-id | note`). Candidates only — no reachability, no confidence, no severity, no cross-file reasoning. Use for cheap recall sweeps whose hits a judgment tier (diff-analyst) or a deterministic gate will confirm. Contrast: diff-analyst reasons about behavior; diff-auditor only matches patterns."
 tools: Read, Grep, Glob
-model: haiku
+model: sonnet
 effort: low
 ---
 

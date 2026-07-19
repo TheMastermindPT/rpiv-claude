@@ -1,0 +1,28 @@
+{
+  "id": "ACR-1",
+  "name": "planted-defects-recall",
+  "skill": "artifact-code-reviewer (agent)",
+  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
+  "ref": "b460257",
+  "clean": [],
+  "output": "agent",
+  "prompt_file": "ACR-1.prompt.md",
+  "ground_truth_note": "Synthetic-but-grounded plan fixture (ACR-1.plan.md) against real lib/generation at b460257. 7 planted defects: (1) Phase 2 imports buildClampAuditEvent but Phase 1 exports buildClampAuditEntry (cross-phase mismatch, blocker — repo's #1 failure class); (2) import from @/lib/generation/telemetry/emit which does not exist at HEAD (blocker); (3) Phase 3 imports getMaxAllowedLoad but load-cap.ts exports getMaxAllowedLoadKg, and the fence's anchor/identifiers contradict validation.ts at HEAD (blocker cluster); (4) Phase 1 re-derives LOAD_EPSILON_KG which load-cap.ts:11-13 explicitly keeps unexported (suggestion/concern); (5) Phase 2 Oracle 'returns a well-formed audit entry' — exact values derivable from the fence (concern, test-contract); (6) Phase 3 TDD-exempt 'wiring only' on a behavior-adding fence (concern, test-contract); (7) Phase 2 catch {} swallows telemetry errors (concern, code-quality). KNOWN UNPLANTED-BUT-REAL fixture defects a strong run may also report (validated against iteration-1 baseline, 2026-07-08): new Date() breaks lib/generation's documented determinism invariant (CLAUDE.md + determinism-guard test); contract test paths co-located under lib/ vs the repo's tests/unit/generation mirror; 'npm run check' is biome not typecheck; module-level entries[] singleton leaks across runs; duplicate loadExceeds import; validate side never caps at HEAD (premise gap); isMeaningfulClamp unused export (knip). These count toward the row ceiling but are legitimate — do not penalize them semantically.",
+  "checks": {
+    "citations": {
+      "min_resolvable_pct": 90,
+      "ignore": ["^\\(", "^[^/]+$", "telemetry/emit"]
+    },
+    "required_sections": [
+      "^\\| *plan-loc *\\| *codebase-loc *\\| *severity *\\| *dimension *\\| *finding *\\| *recommendation *\\|",
+      "\\|[^\\n]*blocker[^\\n]*buildClampAudit",
+      "\\|[^\\n]*blocker[^\\n]*telemetry",
+      "\\|[^\\n]*blocker[^\\n]*getMaxAllowedLoad",
+      "\\|[^\\n]*LOAD_EPSILON_KG",
+      "\\|[^\\n]*Phase 2[^\\n]*[Oo]racle",
+      "\\|[^\\n]*Phase 3[^\\n]*[Ee]xempt",
+      "\\|[^\\n]*recorder\\.ts[^\\n]*code-quality"
+    ],
+    "max_table_rows": 24
+  }
+}

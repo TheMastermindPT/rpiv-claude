@@ -33,6 +33,19 @@ const PROJECT_DIR = process.env.CLAUDE_PROJECT_DIR || process.cwd();
 const ARTIFACTS_DIR = resolve(PROJECT_DIR, ".rpiv", "artifacts");
 const resolved = resolve(filePath);
 if (resolved !== ARTIFACTS_DIR && !resolved.startsWith(ARTIFACTS_DIR + sep)) process.exit(0);
+
+// Store-managed canonical JSON (architecture-reviews/<stem>.json): a manual
+// Edit/Write bypasses store.mjs validate-at-insert — warn, never block. The
+// store CLI itself runs via Bash and never fires this hook; only tool edits do.
+const AR_JSON_DIR = join(ARTIFACTS_DIR, "architecture-reviews");
+if (resolved.endsWith(".json") && resolved.startsWith(AR_JSON_DIR + sep)) {
+  process.stderr.write(
+    `[rpiv-hook] ${resolved} is store-managed (canonical findings record).\n` +
+      `Manual edits bypass validate-at-insert — use skills/_shared/store.mjs (add/render/finalize) instead.\n`,
+  );
+  process.exit(0);
+}
+
 if (!resolved.endsWith(".md")) process.exit(0);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

@@ -1,6 +1,6 @@
 ---
 name: blueprint
-description: Plan complex features by decomposing them into vertical slices (one slice equals one phase) with developer micro-checkpoints between phases, producing an implement-ready phased plan in .rpiv/artifacts/plans/. Use for complex multi-component features touching 6+ files across multiple layers when iterative review between slices is valuable. Requires a research artifact or a solutions artifact (from explore). Prefer blueprint over plan when mid-flight micro-checkpoints matter, and prefer plan when a straightforward phased breakdown is enough.
+description: Go from a research artifact straight to an implement-ready phased plan in ONE pass — design and plan combined — decomposing into vertical slices (one slice = one phase) with developer micro-checkpoints between slices, written to .rpiv/artifacts/plans/. Use when the user wants research turned directly into an executable plan with mid-flight review — e.g. 'from research to a plan in one pass with checkpoints', 'blueprint this feature', 'don't split design and plan, get me to an implement-ready plan with review gates' — for complex features where reviewing each slice as it's generated matters. Requires a research or solutions artifact. Prefer blueprint over the design-then-plan two-step when one combined pass with per-slice checkpoints is wanted. NOT for architecture-only with no plan (design), an EXISTING design doc (plan), or understanding existing code (research).
 argument-hint: "[research artifact path]"
 shell-timeout: 10
 ---
@@ -16,16 +16,7 @@ You are tasked with planning how code will be shaped for a feature or change AND
 ## Metadata
 
 ```!
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/now.mjs"
-echo
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/git-context.mjs"
-echo
-echo "### recent (read only in case of empty user input)"
-echo "recent research:"
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/list-recent.mjs" .rpiv/artifacts/research 4
-echo
-echo "recent solutions:"
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/list-recent.mjs" .rpiv/artifacts/solutions 4
+node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/skill-context.mjs" now git recent .rpiv/artifacts/research 4 recent .rpiv/artifacts/solutions 4
 ```
 
 - `now.mjs` (line 1) — `<iso>\t<slug>` tab-separated.
@@ -68,7 +59,7 @@ This is NOT a discovery sweep. Focus on DEPTH (how things work, what patterns to
 
    - Use **codebase-pattern-finder** to find existing implementations to model after — the primary template for code shape
 
-   For integration wiring (inbound refs, outbound deps, config/DI/event registration), use the `## Integration Points` section already extracted from research in Step 1. For precedent context (similar past changes, blast radius, follow-up fixes, lessons), use the `## Precedents & Lessons` section already extracted from research in Step 1. Do NOT dispatch a fresh agent to re-map either surface.
+   For integration wiring (inbound refs, outbound deps, config/DI/event registration), use the `## Integration Points` section already extracted from research in Step 1. For precedent context (similar past changes, blast radius, follow-up fixes, lessons), use the `## Precedents & Lessons` section already extracted from research in Step 1. Do NOT dispatch a fresh agent to re-map either surface. **Exception**: when the input is a solutions artifact (from explore) or otherwise lacks those sections, dispatch **integration-scanner** and/or **precedent-locator** to fill exactly the missing surface (precedent-locator only when `commit` is available; otherwise note "git history unavailable" in Verification Notes) — the same fallback `design` applies.
 
    **Novel work** (new libraries, first-time patterns, no existing codebase precedent):
    - Add **web-search-researcher** for external documentation, API references, and community patterns
@@ -91,100 +82,11 @@ This is NOT a discovery sweep. Focus on DEPTH (how things work, what patterns to
 
 ### Step 3: Identify Ambiguities — Dimension Sweep
 
-Walk Step 2 findings, inherited research Q/As, and carried Open Questions through six architectural dimensions that map 1:1 to the plan artifact's section coverage — the sweep guarantees downstream completeness. Add **migration** as a seventh dimension only if the feature changes persisted schema.
-
-- **Data model** — types, schemas, entities
-- **API surface** — signatures, exports, routes
-- **Integration wiring** — mount points, DI, events, config
-- **Scope** — in / explicitly deferred
-- **Verification** — for each risk-bearing behavior:
-  1. List boundaries (thresholds, ranges, null/empty states)
-  2. List invariants (what must always be true)
-  3. List error surfaces (what can go wrong)
-  4. Flag as high test-risk if 3+ boundaries or 2+ invariants → queue
-     as testing-strategy question for Step 4
-- **Performance** — load paths, caching, N+1 risks
-
-For each dimension, classify findings as **simple decisions** (one valid option, obvious from codebase — record in Decisions with `file:line` evidence, do not ask) or **genuine ambiguities** (multiple valid options, conflicting patterns, scope questions, novel choices — queue for Step 4). Inherited research Q/As land as simple; Open Questions filter by dimension — architectural survives, implementation-detail defers.
-
-**Pre-validate every option** before queuing it against research constraints and runtime code behavior. Eliminate or caveat options that contradict Steps 1-2 evidence. **Coverage check**: every Step 2 file read appears in at least one decision or ambiguity; every dimension is addressed (silently-resolved valid, skipped-unchecked not).
+Run the **Step 3 — Dimension Sweep** section of `${CLAUDE_PLUGIN_ROOT}/skills/_shared/dimension-sweep-and-checkpoint.md` (shared with design). Walk Step 2 findings, inherited research Q/As, and carried Open Questions through the six (+migration) architectural dimensions, classifying each as a simple decision (record with `file:line`, don't ask) or a genuine ambiguity (queue for Step 4). For blueprint, the sweep maps 1:1 to the **plan artifact's** own section coverage.
 
 ### Step 4: Developer Checkpoint
 
-Use the grounded-questions-one-at-a-time pattern. Use a **❓ Question:** prefix so the developer knows their input is needed. Each question must:
-- Reference real findings with `file:line` evidence
-- Present concrete options (not abstract choices)
-- Pull a DECISION from the developer, not confirm what you already found
-
-**Question patterns by ambiguity type:**
-
-- **Pattern conflict**: "Found 2 patterns for {X}: {pattern A} at `file:line` and {pattern B} at `file:line`. They differ in {specific way}. Which should the new {feature} follow?"
-- **Missing pattern**: "No existing {pattern type} in the codebase. Options: (A) {approach} modeled after {external reference}, (B) {approach} extending {existing code at file:line}. Which fits the project's direction?"
-- **Scope boundary**: "The {research/description} mentions both {feature A} and {feature B}. Should this design cover both, or just {feature A} with {feature B} deferred?"
-- **Integration choice**: "{Feature} can wire into {point A} at `file:line` or {point B} at `file:line`. {Point A} matches the {existing pattern} pattern. Agree, or prefer {point B}?"
-- **Novel approach**: "No existing {X} in the project. Options: (A) {library/pattern} — {evidence/rationale}, (B) {library/pattern} — {evidence/rationale}. Which fits?"
-
-- **Testing strategy** (when the Verification sweep flagged high
-  test-risk behaviors). The agent writes the contract from the code.
-  Only you know whether the contract describes the right thing. A
-  contract that is structurally sound but behaviorally wrong produces
-  tests that pass green and ship bugs — mutation can't catch
-  correctness errors.
-
-  1. Describe what you understand the code should do, in plain
-     English. No Oracle, no syntax — just "when X happens, Y should
-     result." If you're wrong about the behavior, the developer
-     corrects you before a single line of contract is written.
-  2. Ask: "Is this understanding correct, and which of these should
-     the Test Contract prove first?" The selections determine which
-     behaviors anchor foundation slices vs. build on them later.
-  3. Corrections become the canonical behavior list. Approvals become
-     the contract's starting point.
-
-**Critical rules:**
-- Ask ONE question at a time. Wait for the answer before asking the next.
-- Lead with the most architecturally significant ambiguity.
-- Every answer becomes a FIXED decision — no revisiting unless the developer explicitly asks.
-
-**Choosing question format:**
-
-- **`ask_user_question` tool** — when your question has 2-4 concrete options from code analysis (pattern conflicts, integration choices, scope boundaries, priority overrides). The user can always pick "Other" for free-text. Example:
-
-  > Use the `ask_user_question` tool with the following question: "Found 2 mapping approaches — which should new code follow?". Header: "Pattern". Options: "Manual mapping (Recommended)" (Used in OrderService (src/services/OrderService.ts:45) — 8 occurrences); "AutoMapper" (Used in UserService (src/services/UserService.ts:12) — 2 occurrences).
-
-- **Free-text with ❓ Question: prefix** — when the question is open-ended and options can't be predicted (discovery, "what am I missing?", corrections). Example:
-  "❓ Question: Research's `## Integration Points` shows no background job registration for this area. Is that expected, or is there async processing not surfaced in the inbound/outbound sweep?"
-
-**Batching**: When you have 2-4 independent questions (answers don't depend on each other), you MAY batch them in a single `ask_user_question` call. Keep dependent questions sequential.
-
-**Classify each response:**
-
-**Decision** (e.g., "use pattern A", "yes, follow that approach"):
-- Record in Developer Context. Fix in Decisions section.
-
-**Correction** (e.g., "no, there's a third option you missed", "check the events module"):
-- Spawn targeted rescan: **codebase-analyzer** on the new area (max 1-2 agents).
-- Merge results. Update ambiguity assessment.
-
-**Scope adjustment** (e.g., "skip the UI, backend only", "include tests"):
-- Record in Developer Context. Adjust scope.
-
-**After all ambiguities are resolved**, present a brief design summary (under 15 lines):
-
-```
-Design: {feature name}
-Approach: {1-2 sentence summary of chosen architecture}
-
-Decisions:
-- {Decision 1}: {choice} — modeled after `file:line`
-- {Decision 2}: {choice}
-- {Decision 3}: {choice}
-
-Scope: {what's in} | Not building: {what's out}
-Files: {N} new, {M} modified
-```
-
-Use the `ask_user_question` tool to confirm before proceeding. Question: "{Summary from design brief above}. Ready to proceed to decomposition?". Header: "Design". Options: "Proceed (Recommended)" (Decompose into vertical slices, then generate code slice-by-slice); "Adjust decisions" (Revisit one or more architectural decisions above); "Change scope" (Add or remove items from the building/not-building lists).
+Run the **Step 4 — Developer Checkpoint** section of `${CLAUDE_PLUGIN_ROOT}/skills/_shared/dimension-sweep-and-checkpoint.md` (shared with design): resolve every queued ambiguity through grounded, one-question-at-a-time developer checkpoints (question patterns, testing-strategy dialogue, format choice, response classification are all in the shared file), then present the design summary and get the `ask_user_question` confirmation before decomposition (Step 5).
 
 ### Step 5: Feature Decomposition
 
@@ -274,27 +176,7 @@ Generate complete, copy-pasteable code AND the phase's `### Test Contract:` AND 
 - **Modified files**: read current file FULLY, generate only the modified/added code scoped to changed sections (no full "Current" block — the original is on disk)
 - **Test Contract** (replaces authoring test-file code at blueprint time — implement writes the actual tests at red time, transcribing this contract): for every behavior this phase introduces or changes, emit one Behavior entry. Pre-written test code tends to mirror the planned implementation (theater at the source); the contract pins the oracle instead so the test author has no freedom to weaken it.
 
-  **Before writing, think like a tester.** A Test Contract that only
-  asserts the happy path with a single fixture value will produce
-  survivors at mutation time — the same gaps you'd catch now at design
-  time, where they cost one sentence instead of a test rewrite plus a
-  3-minute mutation re-run. You are not listing tests. You are proving
-  to yourself that the code actually does what the contract claims.
-
-  1. Boundaries. Every conditional and range check has edges. If
-     `if (remaining > 0)` has three values that matter (-1, 0, 5)
-     but the Oracle only tests 5, you haven't proven the function
-     handles the boundary. The Oracle should pin the edge.
-  2. Invariants. What must always be true? If remainingSets can never
-     go negative but the Oracle never asserts non-negative, a sign
-     flip at mutation time survives undetected. Assert the invariant.
-  3. Error paths. A function that validates and throws on bad input
-     needs an Oracle that asserts the throw. If you only test valid
-     input, every error-path mutant survives. Cover each error surface.
-  4. Branch exhaustiveness. Count the decision points the slice's code
-     makes. Count the Behaviors in the contract. If code has more
-     branches than the contract has Behaviors, some path is untested.
-     Either add a Behavior or tag it TDD-exempt with a reason.
+  **Before writing, think like a tester** — read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/test-contract-authoring.md` and apply its boundary / invariant / error-path / branch-exhaustiveness discipline to this phase's contract. That file is the shared authoring standard for design and blueprint; it exists so the two skills' contract discipline cannot drift. The discipline is the load-bearing part — a contract that only asserts the happy path with one fixture value ships survivors at mutation time.
 
   Format:
 
@@ -415,70 +297,9 @@ The artifact was created as a skeleton in Step 5 and filled progressively in Ste
 
 After Step 7 finalizes the artifact, dispatch two independent review subagents in parallel — one to walk every Phase code fence, one to walk every verification intent — both against the live codebase at HEAD.
 
-#### 8.1. Dispatch artifact-code-reviewer and artifact-coverage-reviewer in parallel
+#### 8.1–8.4. Dispatch, persist, tally, failure handling
 
-Reuse the exact `file_path` string passed to `Write` at Step 5 — the runtime already resolved it for this platform; do not rebuild it from `pwd`. `ls` to verify it still exists; abort dispatch on miss.
-
-Send both Agent calls in a single assistant message so they run in parallel:
-
-```
-Agent({
-  subagent_type: "artifact-code-reviewer",
-  description: "post-finalization plan code review",
-  prompt: `Plan artifact: {Step-5 Write file_path, ls-verified}
-
-Review the finalized plan against the live codebase at HEAD. Walk every Phase code fence, audit against code-quality / codebase-fit / actionability, emit one severity-tagged row per finding.`
-})
-
-Agent({
-  subagent_type: "artifact-coverage-reviewer",
-  description: "post-finalization plan coverage review",
-  prompt: `Plan artifact: {Step-5 Write file_path, ls-verified}
-
-Review the finalized plan's verification-intent coverage. Walk every ## Verification Notes and ## Precedents & Lessons entry; for each, verify it lands in either a phase's ### Success Criteria: bullet or as a visible code mirror. Emit one severity-tagged row per uncovered entry.`
-})
-```
-
-#### 8.2. Persist the merged review table to the artifact
-
-Each agent returns a markdown table with columns `plan-loc | codebase-loc | severity | dimension | finding | recommendation`. Merge both tables into one section, prepending a `source` column (`code` for artifact-code-reviewer rows, `coverage` for artifact-coverage-reviewer rows) and appending a `resolution` column (initially blank, filled progressively at Step 9):
-
-```markdown
-## Plan Review (Step 8)
-
-_Independent post-finalization review by artifact-code-reviewer and artifact-coverage-reviewer subagents. Findings triaged at Step 9._
-
-| source   | plan-loc          | codebase-loc                | severity   | dimension             | finding   | recommendation   | resolution         |
-| -------- | ----------------- | --------------------------- | ---------- | --------------------- | --------- | ---------------- | ------------------ |
-| code     | {plan-loc}        | {codebase-loc}              | {severity} | {dimension}           | {finding} | {recommendation} | (filled at Step 9) |
-| coverage | {plan-loc}        | <n/a>                       | {severity} | verification-coverage | {finding} | {recommendation} | (filled at Step 9) |
-| ...      |                   |                             |            |                       |           |                  |                    |
-```
-
-Sort merged rows by severity first (blocker → concern → suggestion), then by source (`code` before `coverage` for stable ordering within a severity). Within a `(severity, source)` bucket, preserve each agent's own emitted order — do not re-sort across source spaces (the two agents key on different artifact loci: `Phase N §M` for code, `## Verification Notes §K` for coverage).
-
-If both agents emit zero rows, still emit the section with a single line: `_No findings — both reviewers cleared the artifact._`. Persistence is mandatory regardless of finding count — the section is the durable audit trail.
-
-#### 8.3. Tally findings for Step 9's prompt
-
-Count merged rows by severity. Store the counts in main context for Step 9's developer prompt:
-
-```
-{B} blockers, {C} concerns, {S} suggestions
-```
-
-Do NOT auto-apply any finding. The orchestrator never makes the apply / defer / dismiss judgment alone — that lives with the developer at Step 9. The reviewers' role is to surface; the developer's role is to triage.
-
-#### 8.4. Failure handling
-
-Per-agent: if one reviewer errors out (subprocess crash, malformed output, timeout) and the other succeeds, persist the successful agent's rows and append a one-line failure note for the missing source. If both fail, append the failure note alone.
-
-- Successful side: persist its rows as in 8.2.
-- Failed side: append `_Step 8 {code|coverage} review failed: {one-line cause}._` under the `## Plan Review (Step 8)` heading.
-- Record any failure in `## Developer Context`: `Step 8 {code|coverage} review unavailable; proceeded to developer review without {agent-name} findings.`
-- Proceed to Step 9 regardless.
-
-The 8-column header is retained when only one source returns; only rows from the failing agent are absent. Step 9 triage iterates whatever rows are present.
+Run the shared reviewer-dispatch protocol in `${CLAUDE_PLUGIN_ROOT}/skills/_shared/artifact-review-dispatch.md` (identical for plan and blueprint). Substitute: **write-step = Step 5** (reuse that `Write` `file_path`), **review-step = Step 8** (heading `## Plan Review (Step 8)`), **triage-step = Step 9**. It covers the parallel `artifact-code-reviewer` + `artifact-coverage-reviewer` dispatch, the merged `## Plan Review` table format + sort rules, the severity tally, and per-agent failure handling. Do NOT auto-apply any finding — triage is the developer's call at Step 9.
 
 ### Step 9: Review & Iterate
 
@@ -555,6 +376,7 @@ The 8-column header is retained when only one source returns; only rows from the
 | Context | Agents Spawned |
 |---|---|
 | Default (research artifact provided) | codebase-pattern-finder |
+| Input lacks Integration Points / Precedents sections (e.g. solutions artifact) | + integration-scanner and/or precedent-locator (fill the missing surface only) |
 | Novel work (new library/pattern) | + web-search-researcher |
 | Step 4 correction path (developer flags missed area) | targeted codebase-analyzer (max 1-2) |
 | Step 6 pre-slice-1 template fetch | codebase-pattern-finder (one per slice needing its own template) |

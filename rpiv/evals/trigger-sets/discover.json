@@ -1,0 +1,18 @@
+[
+  {"query": "I've got a fuzzy idea for a feature — coaches leaving notes for clients — but I honestly haven't nailed down what it needs to do. help me figure out the requirements", "should_trigger": true},
+  {"query": "interview me one question at a time to pin down what I actually want to build here", "should_trigger": true},
+  {"query": "before we write any code, let's capture the intent and constraints for this new export feature into a proper requirements doc", "should_trigger": true},
+  {"query": "stress-test my feature idea and surface the requirements I haven't thought about", "should_trigger": true},
+  {"query": "I want to scope a new feature but I'm not sure of the requirements or edge cases yet — walk me through it", "should_trigger": true},
+  {"query": "turn this vague notion in my head into a clear spec both of us agree on", "should_trigger": true},
+  {"query": "help me define the problem and success criteria for X before anyone starts building", "should_trigger": true},
+  {"query": "research how the current authentication flow works in this codebase", "should_trigger": false},
+  {"query": "what are the different approaches we could take for rate limiting — weigh the trade-offs", "should_trigger": false},
+  {"query": "design the architecture for the notifications module from the research doc", "should_trigger": false},
+  {"query": "turn the research into an implementation plan", "should_trigger": false},
+  {"query": "review the pending changes on my branch", "should_trigger": false},
+  {"query": "just tell me which file has the getUser function", "should_trigger": false},
+  {"query": "I already know exactly what I want — a POST endpoint at /api/notes that stores a note — just plan the build", "should_trigger": false},
+  {"query": "fix the failing clamp-audit test in lib/generation", "should_trigger": false},
+  {"query": "write me a commit message for these staged changes", "should_trigger": false}
+]

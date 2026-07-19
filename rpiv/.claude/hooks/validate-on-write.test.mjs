@@ -174,3 +174,37 @@ const artifactPath = (repo) => join(repo, ".rpiv", "artifacts", "reviews", "t.md
     console.log("OK — empty stdin: silent exit.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
+
+// --- Test 8: store-managed review.json — warns (never blocks), validator not run ---
+
+{
+  const repo = mkdtempSync(join(tmpdir(), "vow-storejson-"));
+  try {
+    const explode = mkValidator(repo, `process.stderr.write("must not run\\n"); process.exit(1);\n`);
+    const { stderr, status } = runHook(repo, {
+      tool_name: "Edit",
+      tool_input: { file_path: join(repo, ".rpiv", "artifacts", "architecture-reviews", "2026-07-19_x.json") },
+    }, explode);
+    assert.equal(status, 0, "store json: exit 0 (never blocks)");
+    assert.match(stderr, /store-managed/, "store json: warns it is store-managed");
+    assert.match(stderr, /store\.mjs \(add\/render\/finalize\)/, "store json: points at the store CLI");
+    assert.doesNotMatch(stderr, /must not run/, "store json: the .md validator is never spawned");
+    console.log("OK — store-managed review.json: warns with the store-CLI pointer, validator not invoked.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}
+
+// --- Test 9: JSON in a sibling artifacts dir — stays silent (guard scoped to AR) ---
+
+{
+  const repo = mkdtempSync(join(tmpdir(), "vow-plansjson-"));
+  try {
+    const explode = mkValidator(repo, `process.stderr.write("must not run\\n"); process.exit(1);\n`);
+    const { stderr, status } = runHook(repo, {
+      tool_name: "Write",
+      tool_input: { file_path: join(repo, ".rpiv", "artifacts", "plans", "x.json") },
+    }, explode);
+    assert.equal(status, 0, "plans json: exit 0");
+    assert.equal(stderr, "", "plans json: byte-empty stderr (guard scoped to architecture-reviews/)");
+    console.log("OK — sibling-dir JSON: silent (store guard does not over-match).");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}

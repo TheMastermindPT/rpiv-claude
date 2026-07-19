@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Convert a design artifact into a phased implementation plan with parallelized atomic phases and explicit success criteria, written to .rpiv/artifacts/plans/. Use after the design skill when the user wants a design turned into an actionable, phase-by-phase plan to hand to the implement skill. Prefer plan when a straightforward phased breakdown is sufficient, and prefer blueprint when iterative vertical-slice micro-checkpoints between phases are needed.
+description: Sequence an EXISTING design artifact (.rpiv/artifacts/designs/*.md) into a phased, implement-ready plan — parallelized atomic phases with per-phase test contracts and success criteria — written to .rpiv/artifacts/plans/. Use when the user already has a finished design and wants it turned into build order, execution steps, or implementation phases to hand to implement — e.g. 'turn my design into phases', 'sequence the design into atomic steps', 'make an execution plan from the design doc'. Requires a design artifact as input. Prefer plan over blueprint for a straightforward phased breakdown when the design already exists. NOT for creating the architecture from scratch (design), a research-to-plan one-pass (blueprint), or understanding existing code (research).
 argument-hint: "[design artifact path]"
 shell-timeout: 10
 ---
@@ -16,9 +16,7 @@ You are tasked with creating phased implementation plans from design artifacts. 
 ## Metadata
 
 ```!
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/now.mjs"
-echo
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/git-context.mjs"
+node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/skill-context.mjs" now git
 ```
 
 - `now.mjs` (line 1) — `<iso>\t<slug>` tab-separated.
@@ -198,7 +196,7 @@ last_updated_by: {`author:` from Metadata block}
 {Empty at skeleton write; Step 4.4 fallback notes and any post-write developer interactions land here.}
 
 ## References
-```
+
 - Design: `.rpiv/artifacts/designs/{file}.md`
 - Research: `.rpiv/artifacts/research/{file}.md`
 - Original ticket: `thoughts/me/tickets/{file}.md`
@@ -206,76 +204,15 @@ last_updated_by: {`author:` from Metadata block}
 
 ### Step 4: Independent Plan Review
 
-After Step 3 finalizes the artifact, dispatch two independent review subagents in parallel — one to walk every Phase code fence, one to walk every verification intent — both against the live codebase at HEAD. This is the single post-finalization quality gate for the entire `design → plan` pipeline: code review was deliberately deferred from design to here, where code + Success Criteria + phasing are all visible in one artifact for joint review (blueprint-equivalent topology). Repeat this (agents dispatched → results → fix) process at maximum of 3 times. 
+After Step 3 finalizes the artifact, dispatch two independent review subagents in parallel — one to walk every Phase code fence, one to walk every verification intent — both against the live codebase at HEAD. This is the single post-finalization quality gate for the entire `design → plan` pipeline: code review was deliberately deferred from design to here, where code + Success Criteria + phasing are all visible in one artifact for joint review (blueprint-equivalent topology). The reviewers surface findings once; applying them is Step 5's developer-triaged work. Re-dispatch the pair only if Step 5 triage applied fixes so substantial that the reviewed artifact no longer resembles what the reviewers saw (at most 2 re-dispatches).
 
 #### 4.0. Flip status to in-review
 
 Before dispatching the reviewers, Edit frontmatter `status: in-progress` → `status: in-review` (Step 5 flips to `ready` after triage — keeps consumers off an artifact still being edited).
 
-#### 4.1. Dispatch artifact-code-reviewer and artifact-coverage-reviewer in parallel
+#### 4.1–4.4. Dispatch, persist, tally, failure handling
 
-Reuse the exact `file_path` string passed to `Write` at Step 3 — the runtime already resolved it for this platform; do not rebuild it from `pwd`. `ls` to verify it still exists; abort dispatch on miss.
-
-Send both Agent calls in a single assistant message so they run in parallel:
-
-```
-Agent({
-  subagent_type: "artifact-code-reviewer",
-  description: "post-finalization plan code review",
-  prompt: `Plan artifact: {Step-3 Write file_path, ls-verified}
-
-Review the finalized plan against the live codebase at HEAD. Walk every Phase code fence, audit against code-quality / codebase-fit / actionability, emit one severity-tagged row per finding.`
-})
-
-Agent({
-  subagent_type: "artifact-coverage-reviewer",
-  description: "post-finalization plan coverage review",
-  prompt: `Plan artifact: {Step-3 Write file_path, ls-verified}
-
-Review the finalized plan's verification-intent coverage. Walk every ## Verification Notes and ## Precedents & Lessons entry; for each, verify it lands in either a phase's ### Success Criteria: bullet or as a visible code mirror. Emit one severity-tagged row per uncovered entry.`
-})
-```
-
-#### 4.2. Persist the merged review table to the artifact
-
-Each agent returns a markdown table with columns `plan-loc | codebase-loc | severity | dimension | finding | recommendation`. Merge both tables into one section, prepending a `source` column (`code` for artifact-code-reviewer rows, `coverage` for artifact-coverage-reviewer rows) and appending a `resolution` column (initially blank, filled progressively at Step 5):
-
-```markdown
-## Plan Review (Step 4)
-
-_Independent post-finalization review by artifact-code-reviewer and artifact-coverage-reviewer subagents. Findings triaged at Step 5._
-
-| source   | plan-loc          | codebase-loc                | severity   | dimension             | finding   | recommendation   | resolution         |
-| -------- | ----------------- | --------------------------- | ---------- | --------------------- | --------- | ---------------- | ------------------ |
-| code     | {plan-loc}        | {codebase-loc}              | {severity} | {dimension}           | {finding} | {recommendation} | (filled at Step 5) |
-| coverage | {plan-loc}        | <n/a>                       | {severity} | verification-coverage | {finding} | {recommendation} | (filled at Step 5) |
-| ...      |                   |                             |            |                       |           |                  |                    |
-```
-
-Sort merged rows by severity first (blocker → concern → suggestion), then by source (`code` before `coverage` for stable ordering within a severity). Within a `(severity, source)` bucket, preserve each agent's own emitted order — do not re-sort across source spaces (the two agents key on different artifact loci: `Phase N §M` for code, `## Verification Notes §K` for coverage).
-
-If both agents emit zero rows, still emit the section with a single line: `_No findings — both reviewers cleared the artifact._`. Persistence is mandatory regardless of finding count — the section is the durable audit trail.
-
-#### 4.3. Tally findings for Step 5's prompt
-
-Count merged rows by severity. Store the counts in main context for Step 5's developer prompt:
-
-```
-{B} blockers, {C} concerns, {S} suggestions
-```
-
-Do NOT auto-apply any finding. The orchestrator never makes the apply / defer / dismiss judgment alone — that lives with the developer at Step 5. The reviewers' role is to surface; the developer's role is to triage.
-
-#### 4.4. Failure handling
-
-Per-agent: if one reviewer errors out (subprocess crash, malformed output, timeout) and the other succeeds, persist the successful agent's rows and append a one-line failure note for the missing source. If both fail, append the failure note alone.
-
-- Successful side: persist its rows as in 4.2.
-- Failed side: append `_Step 4 {code|coverage} review failed: {one-line cause}._` under the `## Plan Review (Step 4)` heading.
-- Record any failure in `## Developer Context`: `Step 4 {code|coverage} review unavailable; proceeded to developer review without {agent-name} findings.`
-- Proceed to Step 5 regardless.
-
-The 8-column header is retained when only one source returns; only rows from the failing agent are absent. Step 5 triage iterates whatever rows are present.
+Run the shared reviewer-dispatch protocol in `${CLAUDE_PLUGIN_ROOT}/skills/_shared/artifact-review-dispatch.md` (identical for plan and blueprint). Substitute: **write-step = Step 3** (reuse that `Write` `file_path`), **review-step = Step 4** (heading `## Plan Review (Step 4)`), **triage-step = Step 5**. It covers the parallel `artifact-code-reviewer` + `artifact-coverage-reviewer` dispatch, the merged `## Plan Review` table format + sort rules, the severity tally, and per-agent failure handling. Do NOT auto-apply any finding — triage is the developer's call at Step 5.
 
 ### Step 5: Review & Iterate
 

@@ -10,7 +10,7 @@
   "ground_truth_note": "At ref 96e3553 this target contains human-validated slop (fixes were implemented in later commits): M1 load-cap formula duplicated across apply+validate, M3 snapshot projection duplicated, D1 exact-vs-family clamp fork, A4 dead export in note-signals.ts. Recall items derive from .rpiv ground-truth JSON ar-lib-generation-96e3553.json.",
   "checks": {
     "validate_artifact": true,
-    "citations": { "min_resolvable_pct": 95, "verbatim": true },
+    "citations": { "min_resolvable_pct": 95, "verbatim": true, "ignore": ["load-cap\\.ts"], "_ignore_note": "load-cap.ts does not exist at ref 96e3553 — it is the FIX the polish plan recommends merging from a parallel branch; mentioning a planned/future file is not a bad citation" },
     "recall": [
       {
         "id": "M1-loadcap-dup",

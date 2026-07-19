@@ -1,0 +1,18 @@
+{
+  "id": "ACR-2",
+  "name": "clean-plan-restraint",
+  "skill": "artifact-code-reviewer (agent)",
+  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
+  "ref": "b460257",
+  "clean": [],
+  "output": "agent",
+  "prompt_file": "ACR-2.prompt.md",
+  "ground_truth_note": "Clean-plan restraint fixture (ACR-2.plan.md, fixture v2): two NEW leaf modules under lib/generation at b460257, cross-phase symbols match character-for-character, all import paths resolve, oracles pin exact values, no bogus exemptions. Fixture v2 (2026-07-08) incorporated real repo conventions the v1 baseline legitimately flagged: tests live in tests/unit/generation/ (dependency-cruiser no-dev-deps-in-runtime-code + knip entries), integer-aware kg formatting mirroring formatNumber, npm run typecheck (check is biome), and the adapter filters unclamped pairs. Per the IS-2 negative-control lesson this is a restraint cap, not exactly-zero: <=3 rows tolerated, zero blocker rows allowed. Table-header check doubles as the zero-findings determinism probe (baseline agent def leaves the zero-case undefined).",
+  "checks": {
+    "required_sections": [
+      "^\\| *plan-loc *\\| *codebase-loc *\\| *severity *\\| *dimension *\\| *finding *\\| *recommendation *\\|"
+    ],
+    "forbidden_vocab": "\\|\\s*blocker\\s*\\|",
+    "max_table_rows": 3
+  }
+}

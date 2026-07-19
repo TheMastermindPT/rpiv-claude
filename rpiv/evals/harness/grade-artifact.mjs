@@ -16,9 +16,11 @@
 // the script trustworthy: a check either greps or it doesn't.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { citesIn, fileIndex, resolveInIndex } from "../../skills/_shared/citation-grammar.mjs";
 
 // ---------- CLI ----------
 const args = {};
@@ -41,23 +43,11 @@ const body = fmMatch?.[2] ?? text;
 expect("produced artifact exists", true, artifact);
 
 // ---------- worktree file index ----------
-// Skip anything that is not the source tree: dot-dirs (.git, .stryker-tmp — a full
-// sandbox COPY of the sources that a T-lens mutation run leaves behind, .rpiv, ...),
-// dependency/build/report output. Otherwise every real path resolves ambiguously.
-// Exception: .github IS source tree (CI workflows are legitimate citation targets —
-// a review's blast-radius rows cite them; iteration-4 DR-2 false-failed without this).
-const SKIP_DIRS = new Set(["node_modules", "coverage", "reports", "playwright-report", "dist", "build", "out"]);
-function walk(dir, acc, base) {
-	for (const e of readdirSync(dir)) {
-		if ((e.startsWith(".") && e !== ".github") || SKIP_DIRS.has(e)) continue;
-		const p = join(dir, e);
-		const rel = base ? `${base}/${e}` : e;
-		if (statSync(p).isDirectory()) walk(p, acc, rel);
-		else acc.push(rel);
-	}
-	return acc;
-}
-const tree = repo ? walk(repo, [], "") : [];
+// fileIndex/resolveInIndex are single-sourced in skills/_shared/citation-grammar.mjs
+// (shared with check-citations + store): same skip rules (dep/build/report output +
+// dot-dirs except .github — CI workflows are cited), same exact-or-unique-suffix
+// resolution. resolveRel adds only the interpretable why (ambiguous vs missing).
+const tree = repo ? fileIndex(repo) : [];
 const fileCache = new Map();
 function fileLines(rel) {
 	if (!fileCache.has(rel)) {
@@ -67,31 +57,21 @@ function fileLines(rel) {
 	return fileCache.get(rel);
 }
 function resolveRel(tok) {
-	tok = tok.replace(/\\/g, "/").replace(/^\.\//, "");
-	if (tree.includes(tok)) return tok;
-	const suffix = tree.filter((p) => p.endsWith("/" + tok));
-	if (suffix.length === 1) return suffix[0];
-	// Ambiguous or missing both stay unresolved — an ambiguous basename is a bad
-	// citation (un-greppable) — but report which, so failures are interpretable.
-	resolveRel.why?.set(tok, suffix.length > 1 ? `ambiguous: ${suffix.length} matches` : "no such file");
+	const rel = resolveInIndex(tok, tree);
+	if (rel) return rel;
+	// Ambiguous vs missing — report which, so citation failures stay interpretable.
+	const norm = tok.replace(/\\/g, "/").replace(/^\.\//, "");
+	const suffix = tree.filter((p) => p.endsWith("/" + norm));
+	resolveRel.why?.set(norm, suffix.length > 1 ? `ambiguous: ${suffix.length} matches` : "no such file");
 	return null;
 }
 resolveRel.why = new Map();
 
 // ---------- citation extraction from the produced document ----------
-const CITE_RE = /([\w@$()./\\-]+\.(?:tsx?|mjs|cjs|jsx?|sql|css|scss|json|ya?ml|toml|md))(?::(\d+)(?:-(\d+))?)?/g;
-// Exempt: artifact self-paths, URLs, glob/pattern fragments (`*-commands.ts` leaves a
-// leading `-` after the regex skips `*`), template tokens, and the plugin's own helper
-// scripts which artifacts cite as tool provenance ("from metrics.mjs"), not as code.
-const EXEMPT_RE = /(^|\/)\.rpiv\/|^https?:|node_modules|\{|\}|^-|\*|^(metrics|semantic|mutation|coverage|fingerprint|warrant|now|review-range|validate-artifact|git-context)\.mjs$/;
-function citesIn(chunk) {
-	const out = [];
-	for (const m of chunk.matchAll(CITE_RE)) {
-		if (EXEMPT_RE.test(m[1])) continue;
-		out.push({ raw: m[0], tok: m[1], line: m[2] ? Number(m[2]) : null, end: m[3] ? Number(m[3]) : null });
-	}
-	return out;
-}
+// CITE_RE / EXEMPT_RE / citesIn are single-sourced in skills/_shared/
+// citation-grammar.mjs (shared with check-citations.mjs and store.mjs). The
+// union EXEMPT_RE also exempts check-citations/store/citation-grammar provenance
+// mentions — previously only the gate's copy exempted check-citations.
 
 // ---------- 0. finalization state (always-on for review artifacts) ----------
 // A run killed mid-flight (session limit, crash) leaves a plausible-looking skeleton:
@@ -125,7 +105,12 @@ if (checks.citations) {
 	const all = citesIn(body);
 	const bad = [];
 	let checked = 0;
+	// Per-case exemptions: tokens that are format artifacts, not codebase citations
+	// (e.g. an agent-table's plan-loc column holds bare `(file.ext)` names by contract,
+	// and a dead-import finding legitimately cites the nonexistent path it reports).
+	const ignore = (checks.citations.ignore ?? []).map((r) => new RegExp(r, "i"));
 	for (const c of all) {
+		if (ignore.some((re) => re.test(c.raw) || re.test(c.tok))) continue;
 		const rel = resolveRel(c.tok);
 		if (!rel) { bad.push(`${c.raw} (${resolveRel.why.get(c.tok.replace(/\\/g, "/").replace(/^\.\//, "")) ?? "no such file"})`); checked++; continue; }
 		checked++;
@@ -250,6 +235,33 @@ for (const sec of checks.required_sections ?? []) {
 	const ok = new RegExp(sec, "m").test(body);
 	expect(`output contains required section /${sec}/`, ok, ok ? "present" : "MISSING");
 }
+// ---------- section routing (which `## Section` a keyword lands in) ----------
+// Tests an artifact's routing logic (e.g. discover puts a scope-creep aside under
+// `## Suggested Follow-ups`, NOT `## Goals`). Splits the body on `## ` headings.
+if (checks.section_routing?.length) {
+	const sections = {};
+	let cur = "(preamble)";
+	sections[cur] = [];
+	for (const line of body.split("\n")) {
+		const h = line.match(/^##\s+(.*)$/);
+		if (h) { cur = h[1].trim(); sections[cur] = sections[cur] ?? []; }
+		else sections[cur].push(line);
+	}
+	const sectionText = (reStr) => {
+		const re = new RegExp(reStr, "i");
+		return Object.entries(sections).filter(([h]) => re.test(h)).map(([, b]) => b.join("\n")).join("\n");
+	};
+	for (const spec of checks.section_routing) {
+		const kw = new RegExp(spec.keyword, "i");
+		const inHit = kw.test(sectionText(spec.in_section));
+		const notHit = spec.not_in_section ? kw.test(sectionText(spec.not_in_section)) : false;
+		expect(
+			`routing ${spec.id}: /${spec.keyword}/ under /${spec.in_section}/${spec.not_in_section ? ` and NOT under /${spec.not_in_section}/` : ""} — ${spec.note ?? ""}`,
+			inHit && !notHit,
+			`in-section: ${inHit ? "yes" : "NO"}${spec.not_in_section ? `; forbidden-section: ${notHit ? "PRESENT (leaked)" : "clean"}` : ""}`,
+		);
+	}
+}
 if (checks.expected_entities) {
 	const missing = checks.expected_entities.filter((e) => !new RegExp(e.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(body));
 	expect(
@@ -318,6 +330,71 @@ if (checks.require_rejection_reasoning) {
 if (checks.max_findings != null) {
 	const n = (body.match(/^(?:### |\| ?)(?:🔴|🟡|I\d|S\d|Q\d)/gm) ?? []).length;
 	expect(`total flagged findings <= ${checks.max_findings} (over-flagging ceiling on a clean diff)`, n <= checks.max_findings, `found ${n}`);
+}
+if (checks.max_table_rows != null) {
+	// Row-format agents (one markdown table, one row per finding): count body rows —
+	// every `|` line minus the header and separator. The max_findings marker regex
+	// (🔴/I\d/...) never matches these tables, so this is their over-flagging ceiling.
+	const rows = body.split("\n").filter((l) => /^\|/.test(l.trim())).length;
+	const n = Math.max(0, rows - 2);
+	expect(`table body rows <= ${checks.max_table_rows} (over-flagging ceiling)`, n <= checks.max_table_rows, `rows: ${n}`);
+}
+
+// ---------- 7. slice-verifier summary-row grading (capability + restraint) ----------
+// The agent emits working notes then its final summary rows (Decisions / Cross-slice /
+// [Correctness] / Research). We grade the FINAL rows only. To compare a 3-row baseline
+// against the 4-row expanded agent FAIRLY, recall is scored as "caught in ANY row"
+// (capability) — never "in the Correctness row" (that is format/routing, which only the
+// 4-row agent can satisfy; scoring it would penalize the baseline for a format gap, not a
+// missed bug — the exact conflation that made an earlier version misread the baseline).
+// restraint = an out-of-vantage concern must not be promoted to a VIOLATION in any row.
+// no_false_correctness = on a clean slice the Correctness row must carry no VIOLATION (an
+// invented correctness bug); a 3-row agent with no Correctness row passes it trivially, so
+// the check stays arm-fair. Legitimate Decisions/Cross-slice findings on a clean slice are
+// allowed — a living codebase is never zero-finding (the IS-2/ACR-2 lesson). Working notes
+// are excluded so an agent that declines an out-of-vantage concern is not penalized.
+// Case-insensitive: the rows carry the agent's own prose.
+if (checks.slice_rows) {
+	const labels = checks.slice_rows.labels ?? ["Decisions", "Cross-slice", "Correctness", "Research"];
+	const labelRe = new RegExp(`^\\s*-?\\s*(${labels.map((l) => l.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\s*:\\s*(.*)$`);
+	const rowOf = {};
+	for (const line of body.split("\n")) {
+		const m = line.match(labelRe);
+		if (m) rowOf[m[1]] = m[2]; // last occurrence wins -> the final summary row, not a working note
+	}
+	const allRows = labels.map((l) => rowOf[l] ?? "").join("\n");
+	// capability: the defect is caught SOMEWHERE in the final rows (row-agnostic, arm-fair)
+	for (const e of checks.slice_rows.capability ?? []) {
+		const re = new RegExp(e.must_match, "i");
+		const found = re.test(allRows);
+		const where = labels.filter((l) => re.test(rowOf[l] ?? ""));
+		expect(
+			`capability ${e.id}: /${e.must_match}/ caught in some summary row — ${e.note ?? ""}`,
+			found,
+			found ? `caught (under ${where.join("/")})` : "NOT caught in any summary row",
+		);
+	}
+	// restraint: an out-of-vantage concern must not be raised as a VIOLATION in any row
+	for (const r of checks.slice_rows.restraint ?? []) {
+		const re = new RegExp(r.forbid, "i");
+		const flagged = labels.filter((l) => /VIOLATION/i.test(rowOf[l] ?? "") && re.test(rowOf[l] ?? ""));
+		expect(
+			`restraint ${r.id}: /${r.forbid}/ NOT raised as a VIOLATION (out of slice vantage) — ${r.note ?? ""}`,
+			flagged.length === 0,
+			flagged.length ? `OVER-REACH: raised under ${flagged.join("/")}` : "not flagged (correct)",
+		);
+	}
+	// clean-slice false-positive control: the emitted code is correct, so the Correctness
+	// row must carry no VIOLATION. A 3-row agent (no Correctness row) passes trivially.
+	if (checks.slice_rows.no_false_correctness) {
+		const cx = rowOf["Correctness"] ?? "";
+		const invented = /VIOLATION/i.test(cx);
+		expect(
+			"clean slice: Correctness row carries no VIOLATION (no invented correctness bug)",
+			!invented,
+			invented ? `FALSE POSITIVE: "${cx.slice(0, 160)}"` : rowOf["Correctness"] == null ? "no Correctness row (3-row agent) — trivially clean" : "Correctness row clean",
+		);
+	}
 }
 
 finish();

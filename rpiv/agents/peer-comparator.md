@@ -2,7 +2,7 @@
 name: peer-comparator
 description: "Pairwise peer-invariant comparator. Given `(new_file, peer_file)` pairs, tags each peer invariant Mirrored / Missing / Diverged / Intentionally-absent against the new file. Use when an entity parallels an existing sibling (aggregate, service, handler, reducer, repository) and the new file must be checked against the peer's public surface."
 tools: Read, Grep, Glob
-model: sonnet
+model: opus
 effort: medium
 ---
 

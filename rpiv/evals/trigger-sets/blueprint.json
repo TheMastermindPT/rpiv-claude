@@ -1,0 +1,17 @@
+[
+  {"query": "take this research doc and give me an implement-ready phased plan, but let me review each slice as you go", "should_trigger": true},
+  {"query": "I want to go from research straight to a final plan in one pass, with checkpoints between phases", "should_trigger": true},
+  {"query": "blueprint this feature — do the design and the phased plan together, don't split it into two steps", "should_trigger": true},
+  {"query": "decompose X into vertical slices with mid-flight review and produce the implement-ready plan directly", "should_trigger": true},
+  {"query": "mid-size feature from .rpiv/artifacts/research/webhook.md — one combined design+plan pass with per-slice micro-checkpoints", "should_trigger": true},
+  {"query": "I don't want a separate design and plan step — just get me to an executable plan from research with review gates", "should_trigger": true},
+  {"query": "just design the architecture for now, I'll turn it into a plan myself later", "should_trigger": false},
+  {"query": "turn my existing design artifact at .rpiv/artifacts/designs/X.md into phases", "should_trigger": false},
+  {"query": "research how the plan-generation pipeline works before I change it", "should_trigger": false},
+  {"query": "what are the different approaches to this — lay out the options", "should_trigger": false},
+  {"query": "help me figure out the requirements for this feature first", "should_trigger": false},
+  {"query": "review my pending changes before I commit", "should_trigger": false},
+  {"query": "start implementing the first phase now", "should_trigger": false},
+  {"query": "where is the load-cap formula defined?", "should_trigger": false},
+  {"query": "regenerate the changelog for the unreleased section", "should_trigger": false}
+]
