@@ -136,11 +136,17 @@ export function checkEvidenceGrounding(finding, root) {
 			errors.push(`evidence[${i}].startLine ${ev.startLine} exceeds ${rel} length (${lines.length} lines)`);
 			return;
 		}
-		const window = lines.slice(Math.max(0, ev.startLine - 4), ev.startLine + 3).map(normWs);
+		const normLines = lines.map(normWs);
+		const window = normLines.slice(Math.max(0, ev.startLine - 4), ev.startLine + 3);
 		for (const q of ev.quoted) {
 			const want = normWs(q).replace(/\s*(\.\.\.|…)$/, "");
 			if (!window.some((w) => w.includes(want) || (want.includes(w) && w.length > 5))) {
-				errors.push(`evidence[${i}].quoted not found at ${rel}:${ev.startLine} (±3): "${q.slice(0, 50)}"`);
+				// Actionable: if the quote IS in the file, name the real line(s) so the
+				// caller fixes startLine (or splits the evidence) instead of guessing.
+				const at = [];
+				if (want) normLines.forEach((w, idx) => { if (w.includes(want)) at.push(idx + 1); });
+				const hint = at.length ? ` (found at line${at.length > 1 ? "s" : ""} ${at.slice(0, 5).join(", ")})` : "";
+				errors.push(`evidence[${i}].quoted not found at ${rel}:${ev.startLine} (±3)${hint}: "${q.slice(0, 50)}"`);
 			}
 		}
 	});

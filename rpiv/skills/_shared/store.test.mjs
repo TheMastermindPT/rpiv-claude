@@ -523,6 +523,17 @@ const GOLDEN_FINDING_BLOCK = [
 	console.log("OK — grounding: quote not matching the cited line rejected.");
 }
 
+// 23. a quote that IS in the file but at a different line names the actual line (actionable).
+{
+	const fx = mkFixture({ seed: { "lib/x/f.ts": "a\nb\nc\nd\nTARGET_LINE\n" } });
+	const finding = { ...VALID_FINDING, evidence: [{ path: "lib/x/f.ts", startLine: 1, endLine: null, quoted: ["TARGET_LINE"] }] };
+	const r = runAdd(fx, finding);
+	assert.equal(r.status, 1, "wrong-line quote must exit 1");
+	assert.match(r.stderr, /not found at lib\/x\/f\.ts:1 \(±3\) \(found at line 5\)/, "names where the quote actually is");
+	rmSync(fx.tmp, { recursive: true, force: true });
+	console.log("OK — grounding: a quote found elsewhere reports its actual line (actionable hint).");
+}
+
 // ---- Phase 8: finalize body-lint -------------------------------------------
 
 // 22. a {token}-dirty body prose blocks finalize — nothing flipped.
