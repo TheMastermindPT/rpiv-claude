@@ -2,7 +2,7 @@
 name: precedent-locator
 description: "Finds similar past changes in git history: commits, blast radius, follow-up fixes, and lessons from related .rpiv/artifacts/ docs. Use when planning a change and you need to know what went wrong last time something similar was done."
 tools: Read, Grep, Glob, Bash
-model: sonnet
+model: opus
 effort: medium
 ---
 

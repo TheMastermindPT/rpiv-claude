@@ -2,7 +2,7 @@
 name: codebase-locator
 description: Locates files, directories, and components relevant to a feature or task. Call `codebase-locator` with a human-language prompt describing what you're looking for. A "super grep/find/ls" tool. Reach for it when you would otherwise reach for grep, find, or ls more than once.
 tools: Grep, Glob, mcp__plugin_context-mode_context-mode__ctx_search, mcp__context-mode__ctx_search
-model: haiku
+model: sonnet
 effort: low
 ---
 

@@ -2,7 +2,7 @@
 name: integration-scanner
 description: "Finds what connects to a given component or area: inbound references, outbound dependencies, config registrations, event subscriptions. The reverse-reference counterpart to codebase-locator. Use when you need to understand what calls, depends on, or wires into a component."
 tools: Grep, Glob, mcp__plugin_context-mode_context-mode__ctx_search, mcp__context-mode__ctx_search
-model: sonnet
+model: opus
 effort: high
 ---
 
