@@ -15,6 +15,12 @@
 // path with a `/` is already disambiguated; a new/nonexistent path (0 matches) is out of
 // scope here (that is a hallucination check, graded elsewhere). Matching the grader's
 // exact "ambiguous" definition keeps this safe to run on any review artifact.
+//
+// The `:line` suffix is OPTIONAL, exactly as in the grader's CITE_RE: a line-less
+// mention (`service.ts` in a ripple-group cell or risk-rollup prose) is counted as a
+// citation by the grader and is equally un-greppable when ambiguous — requiring the
+// line here (as this gate originally did) let those sail through the Step-11 gate and
+// then fail grading (the AR-1 88%-resolvable class: `types.ts`/`service.ts` mentions).
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -47,7 +53,7 @@ function walk(dir) {
 walk(root);
 
 // ---- cite extraction (mirrors the grader's CITE_RE / EXEMPT_RE) ----
-const CITE_RE = /([\w@$()./\\-]+\.(?:tsx?|mjs|cjs|jsx?|sql|css|scss|json|ya?ml|toml|md)):(\d+)(?:-\d+)?/g;
+const CITE_RE = /([\w@$()./\\-]+\.(?:tsx?|mjs|cjs|jsx?|sql|css|scss|json|ya?ml|toml|md))(?::(\d+)(?:-\d+)?)?/g;
 const EXEMPT_RE = /(^|\/)\.rpiv\/|^https?:|node_modules|\{|\}|^-|\*|^(metrics|semantic|mutation|coverage|fingerprint|warrant|now|review-range|validate-artifact|check-citations|git-context)\.mjs$/;
 
 let failed = 0;

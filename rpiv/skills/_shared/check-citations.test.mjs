@@ -49,5 +49,19 @@ writeFileSync(exempt, "## Findings\n- see `.rpiv/artifacts/foo.md:3`\n- template
 const r3 = run(exempt);
 assert.equal(r3.status, 0, ".rpiv/ self-paths, template tokens, and URLs are exempt");
 
+// 4. line-less ambiguous MENTION -> FAIL (the grader's CITE_RE counts mentions without
+// :line, so the gate must too — the AR-1 88%-resolvable class)
+const badMention = join(tmp, "bad-mention.md");
+writeFileSync(badMention, "## System Model\n- ripple-group g1 (`service.ts`, `loadcap.ts`)\n");
+const r4 = run(badMention);
+assert.equal(r4.status, 1, "ambiguous line-less `service.ts` mention must fail");
+assert.match(r4.stderr, /2 files named service\.ts/, "reports the mention's ambiguity count");
+
+// 5. line-less UNIQUE mention stays fine
+const okMention = join(tmp, "ok-mention.md");
+writeFileSync(okMention, "## Notes\n- the `loadcap.ts` helper owns the cap\n- qualified `a/service.ts` mention\n");
+const r5 = run(okMention);
+assert.equal(r5.status, 0, "unique / qualified line-less mentions must pass");
+
 rmSync(tmp, { recursive: true, force: true });
 console.log("OK");
