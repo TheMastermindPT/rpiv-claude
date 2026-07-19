@@ -16,11 +16,11 @@
 // the script trustworthy: a check either greps or it doesn't.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { citesIn } from "../../skills/_shared/citation-grammar.mjs";
+import { citesIn, fileIndex, resolveInIndex } from "../../skills/_shared/citation-grammar.mjs";
 
 // ---------- CLI ----------
 const args = {};
@@ -43,23 +43,11 @@ const body = fmMatch?.[2] ?? text;
 expect("produced artifact exists", true, artifact);
 
 // ---------- worktree file index ----------
-// Skip anything that is not the source tree: dot-dirs (.git, .stryker-tmp — a full
-// sandbox COPY of the sources that a T-lens mutation run leaves behind, .rpiv, ...),
-// dependency/build/report output. Otherwise every real path resolves ambiguously.
-// Exception: .github IS source tree (CI workflows are legitimate citation targets —
-// a review's blast-radius rows cite them; iteration-4 DR-2 false-failed without this).
-const SKIP_DIRS = new Set(["node_modules", "coverage", "reports", "playwright-report", "dist", "build", "out"]);
-function walk(dir, acc, base) {
-	for (const e of readdirSync(dir)) {
-		if ((e.startsWith(".") && e !== ".github") || SKIP_DIRS.has(e)) continue;
-		const p = join(dir, e);
-		const rel = base ? `${base}/${e}` : e;
-		if (statSync(p).isDirectory()) walk(p, acc, rel);
-		else acc.push(rel);
-	}
-	return acc;
-}
-const tree = repo ? walk(repo, [], "") : [];
+// fileIndex/resolveInIndex are single-sourced in skills/_shared/citation-grammar.mjs
+// (shared with check-citations + store): same skip rules (dep/build/report output +
+// dot-dirs except .github — CI workflows are cited), same exact-or-unique-suffix
+// resolution. resolveRel adds only the interpretable why (ambiguous vs missing).
+const tree = repo ? fileIndex(repo) : [];
 const fileCache = new Map();
 function fileLines(rel) {
 	if (!fileCache.has(rel)) {
@@ -69,13 +57,12 @@ function fileLines(rel) {
 	return fileCache.get(rel);
 }
 function resolveRel(tok) {
-	tok = tok.replace(/\\/g, "/").replace(/^\.\//, "");
-	if (tree.includes(tok)) return tok;
-	const suffix = tree.filter((p) => p.endsWith("/" + tok));
-	if (suffix.length === 1) return suffix[0];
-	// Ambiguous or missing both stay unresolved — an ambiguous basename is a bad
-	// citation (un-greppable) — but report which, so failures are interpretable.
-	resolveRel.why?.set(tok, suffix.length > 1 ? `ambiguous: ${suffix.length} matches` : "no such file");
+	const rel = resolveInIndex(tok, tree);
+	if (rel) return rel;
+	// Ambiguous vs missing — report which, so citation failures stay interpretable.
+	const norm = tok.replace(/\\/g, "/").replace(/^\.\//, "");
+	const suffix = tree.filter((p) => p.endsWith("/" + norm));
+	resolveRel.why?.set(norm, suffix.length > 1 ? `ambiguous: ${suffix.length} matches` : "no such file");
 	return null;
 }
 resolveRel.why = new Map();
