@@ -11,6 +11,7 @@ layer_count: {N}
 entities: {N domain entities from the System Model}
 file_count: {N source files, from metrics.mjs}
 prior_review: {relative path of the prior review for this target | none}
+likec4_model: {repo-relative path of the emitted LikeC4 model directory, Step 4.5 | none}
 health_score: {composite verdict — healthy | drifting | degraded}
 unresolved_finding_count: {U}    # increments on file, decrements on triage; should be 0 before Step 8
 severity: { high: {H}, med: {M}, low: {L} }
@@ -345,7 +346,7 @@ _Principles emerge during Step 5 triage and are captured at Step 7. Patterns tha
 | deferred | {D} |
 | withdrawn | {W} |
 
-Slop lenses fired in this layer: {D: N; C: N; G: N; A: N; T: N; L: N; M: N; S: N; Lc: N; Fe: N; 10dim: N}.
+Slop lenses fired in this layer: `{D: N; C: N; G: N; A: N; T: N; L: N; M: N; S: N; Lc: N; Fe: N; 10dim: N}` (keep the backticks — bare brace prose trips the finalization token lint).
 Cross-cutting tags introduced: {list}. Reused: {list}.
 
 Dependency edges within Layer 0:

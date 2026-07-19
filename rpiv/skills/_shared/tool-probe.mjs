@@ -306,6 +306,17 @@ row("atlas", "Db/P", atlasStatus,
 	atlasStatus === "installed" ? [`bin=${atlasBin}`, "hint=add migrations/ directory or ORM config"] :
 	["hint=install atlas (atlasgo.io — schema migration management)"]);
 
+// likec4 -> L/A + drift (declared architecture-as-code model). Detection is the MODEL's
+// presence, not the CLI's: tracked *.c4/*.likec4 files via git ls-files (respects
+// .gitignore, so untracked sandbox copies — e.g. .stryker-tmp mirrors — never count).
+// The CLI itself is npx-resolvable on demand, so no install detection is needed.
+const c4Files = safe(["ls-files", "*.c4", "*.likec4"]).split("\n").filter(Boolean);
+const c4Cfg = firstFile(["likec4.config.json", "likec4.config.ts", "likec4.config.js", "likec4.config.mjs", ".likec4rc"]);
+row("likec4", "L/A/drift", c4Files.length > 0 ? "configured" : "absent",
+	c4Files.length > 0
+		? [`files=${c4Files.length}`, `first=${toPosix(c4Files[0])}`, ...(c4Cfg ? [`config=${c4Cfg}`] : [])]
+		: ["hint=declare the architecture in a .c4 model (likec4.dev) to enable declared-vs-actual conformance"]);
+
 // rg (ripgrep) -> search. No project config by convention (config is the RIPGREP_CONFIG_PATH
 // env var, not a tracked file) -> installed | absent only. Orchestrator prefers rg over literal grep/find.
 const rgBin = binAvailable(["rg"]);
