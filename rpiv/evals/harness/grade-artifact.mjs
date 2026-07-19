@@ -20,6 +20,8 @@ import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from "
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { citesIn } from "../../skills/_shared/citation-grammar.mjs";
+
 // ---------- CLI ----------
 const args = {};
 for (let i = 2; i < process.argv.length; i += 2) args[process.argv[i]?.replace(/^--/, "")] = process.argv[i + 1];
@@ -79,19 +81,10 @@ function resolveRel(tok) {
 resolveRel.why = new Map();
 
 // ---------- citation extraction from the produced document ----------
-const CITE_RE = /([\w@$()./\\-]+\.(?:tsx?|mjs|cjs|jsx?|sql|css|scss|json|ya?ml|toml|md))(?::(\d+)(?:-(\d+))?)?/g;
-// Exempt: artifact self-paths, URLs, glob/pattern fragments (`*-commands.ts` leaves a
-// leading `-` after the regex skips `*`), template tokens, and the plugin's own helper
-// scripts which artifacts cite as tool provenance ("from metrics.mjs"), not as code.
-const EXEMPT_RE = /(^|\/)\.rpiv\/|^https?:|node_modules|\{|\}|^-|\*|^(metrics|semantic|mutation|coverage|fingerprint|warrant|now|review-range|validate-artifact|git-context)\.mjs$/;
-function citesIn(chunk) {
-	const out = [];
-	for (const m of chunk.matchAll(CITE_RE)) {
-		if (EXEMPT_RE.test(m[1])) continue;
-		out.push({ raw: m[0], tok: m[1], line: m[2] ? Number(m[2]) : null, end: m[3] ? Number(m[3]) : null });
-	}
-	return out;
-}
+// CITE_RE / EXEMPT_RE / citesIn are single-sourced in skills/_shared/
+// citation-grammar.mjs (shared with check-citations.mjs and store.mjs). The
+// union EXEMPT_RE also exempts check-citations/store/citation-grammar provenance
+// mentions — previously only the gate's copy exempted check-citations.
 
 // ---------- 0. finalization state (always-on for review artifacts) ----------
 // A run killed mid-flight (session limit, crash) leaves a plausible-looking skeleton:

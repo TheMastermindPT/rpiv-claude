@@ -235,7 +235,7 @@ Each finding is a level-3 heading `### L<layer>-<seq> — <title>` followed by t
 
 | Field | Meaning |
 |---|---|
-| **Lens** | `D` duplication / `C` fragmentation / `G` god-file / `A` dead-abstraction / `T` test-theater / `L` leaky-boundary / `M` missing-abstraction / `S` state-flow / `Lc` low-cohesion / `Fe` feature-envy / `Fp` failure-propagation / `Tc` temporal-coupling / `IX` interaction-compound / `10dim` (classic dimension sweep) |
+| **Lens** | `D` duplication / `C` fragmentation / `G` god-file / `A` dead-abstraction / `T` test-theater / `L` leaky-boundary / `Sec` module-security / `M` missing-abstraction / `S` state-flow / `Lc` low-cohesion / `Fe` feature-envy / `Fp` failure-propagation / `Tc` temporal-coupling / `P` persistence-health / `IX` interaction-compound / `10dim` (classic dimension sweep) |
 | **Entity / stage** | the System Model coordinate (entity name + style-specific stage, e.g. `Order/EMIT` (event-driven), `WeeklyPlan/PERSIST` (CRUD), `Report/TRANSFORM` (pipeline)) this finding lives in, or `—` when no model |
 | **Fingerprint** | content-hash fingerprint for drift delta matching (survives file renames and line drift). Computed via `fingerprint.mjs` at Step 8 |
 | **Symbol** | the canonical symbol name this finding targets (e.g. `GodFile`, `validateOrder`). Used with `lens` + evidence to construct the fingerprint. Omit only when the finding targets no single named symbol (e.g. co-change pairs) |
@@ -295,9 +295,12 @@ _Principles emerge during Step 5 triage and are captured at Step 7. Patterns tha
 
 {Optional preamble: 1-2 paragraphs on what the layer owns + any ripple-ins from prior decisions in the same review.}
 
+<!-- BEGIN store:findings layer=0 -->
+<!-- store-managed region: store.mjs `add` renders every finding block between these markers. The skeleton copies the marker pair EMPTY; the L0-01 example below documents the emitted shape. Never hand-edit inside. -->
+
 ### L0-01 — {short headline}
 
-- **Lens:** {D | C | G | A | T | L | M | S | Lc | Fe | Fp | Tc | IX | 10dim}
+- **Lens:** {D | C | G | A | T | L | Sec | M | S | Lc | Fe | Fp | Tc | P | IX | 10dim}
 
 **Evidence**
 
@@ -337,6 +340,10 @@ _Principles emerge during Step 5 triage and are captured at Step 7. Patterns tha
 
 {Repeat for L0-02, L0-03, ...}
 
+<!-- END store:findings layer=0 -->
+
+<!-- BEGIN store:tally layer=0 -->
+
 ### Layer 0 — tally
 
 | Status | Count |
@@ -346,18 +353,20 @@ _Principles emerge during Step 5 triage and are captured at Step 7. Patterns tha
 | deferred | {D} |
 | withdrawn | {W} |
 
-Slop lenses fired in this layer: `{D: N; C: N; G: N; A: N; T: N; L: N; M: N; S: N; Lc: N; Fe: N; 10dim: N}` (keep the backticks — bare brace prose trips the finalization token lint).
+Slop lenses fired in this layer: `{D: N; C: N; ...}` (rendered by store.mjs — inline code by construction; the counts, cross-cut tags, and dependency edges below are all derived from the store).
 Cross-cutting tags introduced: {list}. Reused: {list}.
 
 Dependency edges within Layer 0:
 
-- L0-XX depends on L0-YY (...)
+- L0-XX depends on L0-YY ({dep title})
+
+<!-- END store:tally layer=0 -->
 
 ---
 
 ## Layer 1 — {layer name}
 
-{Same structure as Layer 0.}
+{Same structure as Layer 0 — including its own `store:findings layer=1` / `store:tally layer=1` sentinel pairs.}
 
 {... repeat per layer ...}
 

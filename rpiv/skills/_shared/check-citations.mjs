@@ -22,8 +22,10 @@
 // line here (as this gate originally did) let those sail through the Step-11 gate and
 // then fail grading (the AR-1 88%-resolvable class: `types.ts`/`service.ts` mentions).
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
+import { basenameCounts, CITE_RE, EXEMPT_RE } from "./citation-grammar.mjs";
 
 const args = process.argv.slice(2);
 const rootIdx = args.indexOf("--root");
@@ -34,27 +36,8 @@ if (paths.length === 0) {
 	process.exit(2);
 }
 
-// ---- repo file index (basename -> count) ----
-// Skip dependency/build/output and dot-dirs (except .github — CI workflows are cited).
-const SKIP = new Set(["node_modules", "coverage", "reports", "playwright-report", "dist", "build", "out", ".stryker-tmp"]);
-const basenameCount = new Map();
-function walk(dir) {
-	let entries;
-	try { entries = readdirSync(dir); } catch { return; }
-	for (const e of entries) {
-		if ((e.startsWith(".") && e !== ".github") || SKIP.has(e)) continue;
-		const p = join(dir, e);
-		let st;
-		try { st = statSync(p); } catch { continue; }
-		if (st.isDirectory()) walk(p);
-		else basenameCount.set(e, (basenameCount.get(e) ?? 0) + 1);
-	}
-}
-walk(root);
-
-// ---- cite extraction (mirrors the grader's CITE_RE / EXEMPT_RE) ----
-const CITE_RE = /([\w@$()./\\-]+\.(?:tsx?|mjs|cjs|jsx?|sql|css|scss|json|ya?ml|toml|md))(?::(\d+)(?:-\d+)?)?/g;
-const EXEMPT_RE = /(^|\/)\.rpiv\/|^https?:|node_modules|\{|\}|^-|\*|^(metrics|semantic|mutation|coverage|fingerprint|warrant|now|review-range|validate-artifact|check-citations|git-context)\.mjs$/;
+// ---- repo file index + grammar (single-sourced in citation-grammar.mjs) ----
+const basenameCount = basenameCounts(root);
 
 let failed = 0;
 for (const artifactPath of paths) {
