@@ -70,3 +70,32 @@ export function isAmbiguous(tok, counts) {
 	if (tok.includes("/") || tok.includes("\\")) return false;
 	return (counts.get(tok) ?? 0) >= 2;
 }
+
+/** Full POSIX relative-path index of the repo, skipping SKIP dirs and dot-dirs
+ * except .github — the resolvable-path universe for evidence grounding. */
+export function fileIndex(root) {
+	const files = [];
+	(function walk(dir, base) {
+		let entries;
+		try { entries = readdirSync(dir); } catch { return; }
+		for (const e of entries) {
+			if ((e.startsWith(".") && e !== ".github") || SKIP.has(e)) continue;
+			const p = join(dir, e);
+			const rel = base ? `${base}/${e}` : e;
+			let st;
+			try { st = statSync(p); } catch { continue; }
+			if (st.isDirectory()) walk(p, rel);
+			else files.push(rel);
+		}
+	})(root, "");
+	return files;
+}
+
+/** Resolve a cited path against the index: exact match, else unique suffix match,
+ * else null (missing or ambiguous). Mirrors the grader's resolveRel semantics. */
+export function resolveInIndex(path, files) {
+	const norm = path.replace(/\\/g, "/").replace(/^\.\//, "");
+	if (files.includes(norm)) return norm;
+	const suffix = files.filter((f) => f.endsWith(`/${norm}`));
+	return suffix.length === 1 ? suffix[0] : null;
+}

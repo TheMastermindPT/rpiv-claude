@@ -19,9 +19,9 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { basenameCounts, isAmbiguous } from "./citation-grammar.mjs";
+import { basenameCounts, fileIndex, isAmbiguous, resolveInIndex } from "./citation-grammar.mjs";
 import { splitFrontmatter } from "./regen-decisions-index.mjs";
-import { stampArtifact } from "./validate-artifact.mjs";
+import { stampArtifact, validateArtifact } from "./validate-artifact.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FINGERPRINT = join(HERE, "..", "architectural-review", "_helpers", "fingerprint.mjs");
@@ -111,6 +111,39 @@ export function validateFinding(f, counts, priorIds = new Set()) {
 	for (const k of OPTIONAL_NULLABLE) {
 		if (f[k] != null && typeof f[k] !== "string") errors.push(`${k} must be a string or null`);
 	}
+	return errors;
+}
+
+// ---- evidence grounding (against the real repo at --root) --------------------
+
+const normWs = (s) => s.replace(/\s+/g, " ").trim();
+
+/** Ground every evidence entry against the repo: the path resolves to a real file,
+ * startLine is within it, and each quoted line greps at path:startLine (±3,
+ * whitespace-normalized — the grader's verbatim rule, enforced upstream at insert).
+ * Returns [] when clean, else every grounding error found. */
+export function checkEvidenceGrounding(finding, root) {
+	const errors = [];
+	const files = fileIndex(root);
+	finding.evidence.forEach((ev, i) => {
+		const rel = resolveInIndex(ev.path, files);
+		if (!rel) {
+			errors.push(`evidence[${i}].path does not resolve to a repo file: ${ev.path} (cite it repo-relative from the root)`);
+			return;
+		}
+		const lines = readFileSync(join(root, rel), "utf-8").split("\n");
+		if (ev.startLine > lines.length) {
+			errors.push(`evidence[${i}].startLine ${ev.startLine} exceeds ${rel} length (${lines.length} lines)`);
+			return;
+		}
+		const window = lines.slice(Math.max(0, ev.startLine - 4), ev.startLine + 3).map(normWs);
+		for (const q of ev.quoted) {
+			const want = normWs(q).replace(/\s*(\.\.\.|…)$/, "");
+			if (!window.some((w) => w.includes(want) || (want.includes(w) && w.length > 5))) {
+				errors.push(`evidence[${i}].quoted not found at ${rel}:${ev.startLine} (±3): "${q.slice(0, 50)}"`);
+			}
+		}
+	});
 	return errors;
 }
 
@@ -351,6 +384,13 @@ export function finalizeReview(artifactPath, root, healthScore) {
 	if (ambiguous.length > 0) {
 		throw new Error(`evidence went ambiguous since insert (repo gained same-named files): ${ambiguous.join("; ")}`);
 	}
+	// Body-prose gate: the store's finalize now runs the same prose scan the .md lint
+	// does (unfilled {tokens}, TODO/TBD/FIXME, empty fences) so a token-dirty body
+	// cannot flip to ready. verifyHash:false — content_hash is stamped later, below.
+	const lint = validateArtifact(artifactPath, root, { finalizing: true, verifyHash: false });
+	if (lint.errors.length > 0) {
+		throw new Error(`body fails the finalization lint (resolve before finalizing):\n${lint.errors.map((e) => `  ${e}`).join("\n")}`);
+	}
 	let text = readFileSync(artifactPath, "utf-8");
 	const { fm } = splitFrontmatter(text);
 	if (fm.status === "ready") throw new Error("artifact already ready — re-stamp via validate-artifact.mjs --stamp");
@@ -378,6 +418,8 @@ export function addFinding(artifactPath, root, finding) {
 	const counts = basenameCounts(root);
 	const errors = validateFinding(finding, counts, new Set(store.findings.map((x) => x.id)));
 	if (errors.length > 0) throw new Error(errors.map((e) => `invalid finding: ${e}`).join("\n"));
+	const grounding = checkEvidenceGrounding(finding, root);
+	if (grounding.length > 0) throw new Error(grounding.map((e) => `invalid finding: ${e}`).join("\n"));
 	const record = { ...finding, fp: computeFingerprint(finding) };
 	store.findings.push(record);
 	const text = renderLayerText(readFileSync(artifactPath, "utf-8"), store, record.layer);

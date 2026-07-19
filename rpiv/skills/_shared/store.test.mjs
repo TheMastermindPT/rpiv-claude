@@ -26,7 +26,7 @@ const VALID_FINDING = {
 	layer: 0,
 	lens: "G",
 	title: "god-file service.ts",
-	evidence: [{ path: "lib/x/service.ts", startLine: 320, endLine: 340, quoted: ["export class PlanService {"] }],
+	evidence: [{ path: "lib/x/service.ts", startLine: 1, endLine: null, quoted: ["export const x = 1;"] }],
 	symbol: "PlanService",
 	anchor: "1178 LOC = 11.9x median",
 	what: "Central service accretes planning, validation, and IO.",
@@ -56,13 +56,13 @@ const pair = (kind, n) => `<!-- BEGIN store:${kind} layer=${n} -->\n<!-- END sto
 const layerRegions = (n) => `${pair("findings", n)}\n\n${pair("tally", n)}`;
 const DEFAULT_BODY = `# Review\n\n## Layer 0\n\n${layerRegions(0)}\n\n## Layer 1\n\n${layerRegions(1)}\n`;
 
-/** Build a throwaway artifact: seeds `seed` files under the root, writes review.md. */
-function mkFixture({ seed = ["lib/x/service.ts"], target = "lib/x", body = DEFAULT_BODY } = {}) {
+/** Build a throwaway artifact: seeds `seed` (path->content map) under the root, writes review.md. */
+function mkFixture({ seed = { "lib/x/service.ts": "export const x = 1;\n" }, target = "lib/x", body = DEFAULT_BODY } = {}) {
 	const tmp = mkdtempSync(join(tmpdir(), "store-"));
-	for (const rel of seed) {
+	for (const [rel, content] of Object.entries(seed)) {
 		const p = join(tmp, rel);
 		mkdirSync(dirname(p), { recursive: true });
-		writeFileSync(p, "export const x = 1;\n");
+		writeFileSync(p, content);
 	}
 	const artifact = join(tmp, "review.md");
 	writeFileSync(artifact, `---\ntarget: ${target}\nstatus: in-progress\n---\n${body}`);
@@ -79,12 +79,12 @@ function regionContent(text, kind, n) {
 
 /** A finalize-ready fixture: review.md at a real architecture-reviews path, carrying
  * all six CORE_REQUIRED fields + the kind extras + health_score + the sentinels. */
-function mkReviewFixture({ seed = ["lib/x/service.ts"], health = "pending" } = {}) {
+function mkReviewFixture({ seed = { "lib/x/service.ts": "export const x = 1;\n" }, health = "pending" } = {}) {
 	const tmp = mkdtempSync(join(tmpdir(), "store-fin-"));
-	for (const rel of seed) {
+	for (const [rel, content] of Object.entries(seed)) {
 		const p = join(tmp, rel);
 		mkdirSync(dirname(p), { recursive: true });
-		writeFileSync(p, "export const x = 1;\n");
+		writeFileSync(p, content);
 	}
 	const dir = join(tmp, ".rpiv", "artifacts", "architecture-reviews");
 	mkdirSync(dir, { recursive: true });
@@ -138,7 +138,7 @@ function fpDirect({ id, lens, quoted, symbol }) {
 	assert.equal(store.artifact, "review.md", "artifact basename");
 	assert.equal(store.target, "lib/x", "target from frontmatter");
 	assert.equal(store.findings.length, 1, "one finding appended");
-	const expectedFp = fpDirect({ id: "L0-01", lens: "G", quoted: ["export class PlanService {"], symbol: "PlanService" });
+	const expectedFp = fpDirect({ id: "L0-01", lens: "G", quoted: ["export const x = 1;"], symbol: "PlanService" });
 	assert.equal(store.findings[0].fp, expectedFp, "fp equals the direct fingerprint.mjs subprocess output");
 	rmSync(fx.tmp, { recursive: true, force: true });
 	console.log("OK — add valid finding: appended with computed fp; envelope lazy-created from frontmatter.");
@@ -160,7 +160,7 @@ function fpDirect({ id, lens, quoted, symbol }) {
 
 // 3. an ambiguous bare-basename evidence path is rejected at insert.
 {
-	const fx = mkFixture({ seed: ["a/service.ts", "b/service.ts"] });
+	const fx = mkFixture({ seed: { "a/service.ts": "export const x = 1;\n", "b/service.ts": "export const x = 1;\n" } });
 	const finding = { ...VALID_FINDING, evidence: [{ ...VALID_FINDING.evidence[0], path: "service.ts" }] };
 	const r = runAdd(fx, finding);
 	assert.equal(r.status, 1, "ambiguous bare basename must exit 1");
@@ -172,7 +172,7 @@ function fpDirect({ id, lens, quoted, symbol }) {
 
 // 4. evidence that normalises away yields fp:null and is rejected with the helper's own error.
 {
-	const fx = mkFixture();
+	const fx = mkFixture({ seed: { "lib/x/service.ts": "// just a comment\n" } });
 	const finding = { ...VALID_FINDING, id: "L0-02", evidence: [{ ...VALID_FINDING.evidence[0], quoted: ["// just a comment"] }] };
 	const r = runAdd(fx, finding);
 	assert.equal(r.status, 1, "fp:null must exit 1");
@@ -355,7 +355,7 @@ const GOLDEN_FINDING_BLOCK = [
 
 // 11. quoted lines with backticks render code-span-safe while the JSON stays verbatim.
 {
-	const fx = mkFixture();
+	const fx = mkFixture({ seed: { "lib/x/tpl.ts": "a\nb\nc\nd\nconst s = `x`;\n" } });
 	const finding = { ...VALID_FINDING, evidence: [{ path: "lib/x/tpl.ts", startLine: 5, endLine: null, quoted: ["const s = `x`;"] }] };
 	assert.equal(runAdd(fx, finding).status, 0, "add succeeds");
 	assert.ok(readFileSync(fx.artifact, "utf-8").includes("`lib/x/tpl.ts:5` — `const s =...`"), "evidence line is code-span-safe");
@@ -438,7 +438,7 @@ const GOLDEN_FINDING_BLOCK = [
 
 // 16. the citation re-check catches evidence that went ambiguous AFTER insert.
 {
-	const fx = mkReviewFixture({ seed: ["only.ts"] });
+	const fx = mkReviewFixture({ seed: { "only.ts": "export const x = 1;\n" } });
 	const finding = { ...VALID_FINDING, evidence: [{ path: "only.ts", startLine: 1, endLine: null, quoted: ["export const x = 1;"] }] };
 	assert.equal(runAdd(fx, finding).status, 0, "insert while unique succeeds");
 	mkdirSync(join(fx.root, "second"), { recursive: true });
@@ -483,6 +483,62 @@ const GOLDEN_FINDING_BLOCK = [
 	assert.match(store.findings[0].fp, /^[0-9a-f]{16}$/, "the record's hash lives under `fp`");
 	rmSync(fx.tmp, { recursive: true, force: true });
 	console.log("OK — field-name distinctness: content_hash never a finding field; fp is the only record hash.");
+}
+
+// ---- Phase 7: insert-time evidence grounding --------------------------------
+
+// 19. an evidence path that resolves to no repo file is rejected at insert.
+{
+	const fx = mkFixture();
+	const finding = { ...VALID_FINDING, evidence: [{ path: "lib/x/ghost.ts", startLine: 1, endLine: null, quoted: ["export const x = 1;"] }] };
+	const r = runAdd(fx, finding);
+	assert.equal(r.status, 1, "non-resolving evidence path must exit 1");
+	assert.match(r.stderr, /evidence\[0\]\.path does not resolve to a repo file: lib\/x\/ghost\.ts/, "names the unresolved path");
+	assert.equal(existsSync(fx.storePath), false, "review.json NOT created");
+	rmSync(fx.tmp, { recursive: true, force: true });
+	console.log("OK — grounding: non-resolving evidence path rejected at insert.");
+}
+
+// 20. a startLine beyond the file length is rejected.
+{
+	const fx = mkFixture({ seed: { "lib/x/service.ts": "a\nb\nc" } });
+	const finding = { ...VALID_FINDING, evidence: [{ path: "lib/x/service.ts", startLine: 99, endLine: null, quoted: ["a"] }] };
+	const r = runAdd(fx, finding);
+	assert.equal(r.status, 1, "out-of-bounds startLine must exit 1");
+	assert.match(r.stderr, /startLine 99 exceeds lib\/x\/service\.ts length \(3 lines\)/, "names the line overrun");
+	assert.equal(existsSync(fx.storePath), false, "nothing written");
+	rmSync(fx.tmp, { recursive: true, force: true });
+	console.log("OK — grounding: startLine beyond file length rejected.");
+}
+
+// 21. a quoted line that does not appear at the cited path:line (±3) is rejected.
+{
+	const fx = mkFixture(); // lib/x/service.ts line 1 = export const x = 1;
+	const finding = { ...VALID_FINDING, evidence: [{ path: "lib/x/service.ts", startLine: 1, endLine: null, quoted: ["export const NOPE = 999;"] }] };
+	const r = runAdd(fx, finding);
+	assert.equal(r.status, 1, "mismatched quote must exit 1");
+	assert.match(r.stderr, /evidence\[0\]\.quoted not found at lib\/x\/service\.ts:1 \(±3\)/, "names the missing quote");
+	assert.equal(existsSync(fx.storePath), false, "nothing written");
+	rmSync(fx.tmp, { recursive: true, force: true });
+	console.log("OK — grounding: quote not matching the cited line rejected.");
+}
+
+// ---- Phase 8: finalize body-lint -------------------------------------------
+
+// 22. a {token}-dirty body prose blocks finalize — nothing flipped.
+{
+	const fx = mkReviewFixture();
+	assert.equal(runAdd(fx, VALID_FINDING).status, 0, "add accepted finding");
+	// inject an unfilled template token into the body prose (outside any code span)
+	writeFileSync(fx.artifact, readFileSync(fx.artifact, "utf-8").replace("# Review", "# Review\n\nPhase 1 {Files: , }"));
+	const r = runFinalize(fx, "drifting");
+	assert.equal(r.status, 1, "token-dirty body must block finalize");
+	assert.match(r.stderr, /body fails the finalization lint/, "names the lint failure");
+	assert.match(r.stderr, /unfilled template token in prose: \{Files: , \}/, "surfaces the token");
+	assert.match(readFileSync(fx.artifact, "utf-8"), /^status: in-progress$/m, "status NOT flipped");
+	assert.notEqual(JSON.parse(readFileSync(fx.storePath, "utf-8")).status, "ready", "envelope not flipped to ready");
+	rmSync(fx.tmp, { recursive: true, force: true });
+	console.log("OK — finalize body-lint: a {token}-dirty body cannot flip to ready.");
 }
 
 console.log("OK");
