@@ -86,114 +86,132 @@ const KNOWN_KEYS = new Set([
 	"fix", "alt", // kind:"dr" only (Slice 8)
 ]);
 
-/** Validate one finding against the schema + the shared ambiguity rule. Shared
- * core (id/title/evidence/severity/status) applies to both kinds; the AR-extra
- * fields are gated on kind:"ar". severity's VALUE SET is kind-dependent. The
- * kind:"dr" arm's remaining specifics (DR lenses, per-tier field degradation,
- * emoji/verify mapping) land in Slice 8; until then a dr finding gets shared-core
- * validation only — inert because no dr finding is inserted before Slice 8.
- * Returns [] when clean, else every error found (all-at-once, never first-only). */
-export function validateFinding(f, counts, priorIds = new Set()) {
+// ═══ Slice 1: validateFinding decomposition ═══
+
+// Added near :88 (after KNOWN_KEYS) — shared field predicates + DR tier-Sets.
+// Reused by later slices wherever the same compound-conditional shape appears.
+const isNonEmptyStr = (x) => typeof x === "string" && x.trim().length > 0;
+const isNonEmptyStrArray = (x) => Array.isArray(x) && x.length > 0 && x.every(isNonEmptyStr);
+const isPositiveInt = (x) => Number.isInteger(x) && x >= 1;
+const isStringArray = (x) => Array.isArray(x) && x.every((s) => typeof s === "string");
+const isPlainObject = (x) => typeof x === "object" && x !== null && !Array.isArray(x);
+const isLayerId = (x) => /^\d+(\.\d+)?$/.test(String(x ?? ""));
+// A nullable field is invalid only when PRESENT and failing its validator — the recurring
+// "x != null && !ok(x)" shape, hoisted so the per-field checks stay single-branch.
+const invalidWhenPresent = (x, ok) => x != null && !ok(x);
+const DR_NEEDS_WHY = new Set(["critical", "important", "discuss"]);
+const DR_NEEDS_FIX = new Set(["critical", "important", "suggestion"]);
+
+// Replaces validateFinding :89-198 — the parent + 8 partial-array helpers. Each helper
+// ACCUMULATES every error it finds (never first-only short-circuits — P1.2 asserts the
+// 5-at-once surface). The parent spreads them in source order.
+
+/** kind enum + unknown fields + required strings + dup-id (append-only). */
+function validateShape(f, kind, priorIds) {
 	const errors = [];
-	if (typeof f !== "object" || f === null || Array.isArray(f)) return ["finding must be a JSON object"];
-	const kind = f.kind ?? "ar";
 	if (!KINDS.includes(kind)) errors.push(`kind must be one of ${KINDS.join(" | ")} (got: ${f.kind})`);
 	for (const k of Object.keys(f)) if (!KNOWN_KEYS.has(k)) errors.push(`unknown field: ${k}`);
-	for (const k of SHARED_REQUIRED_STRINGS) {
-		if (typeof f[k] !== "string" || !f[k].trim()) errors.push(`missing or empty field: ${k}`);
-	}
-	if (typeof f.id === "string" && priorIds.has(f.id)) {
-		errors.push(`duplicate id: ${f.id} (IDs are append-only, never reused)`);
-	}
+	for (const k of SHARED_REQUIRED_STRINGS) if (!isNonEmptyStr(f[k])) errors.push(`missing or empty field: ${k}`);
+	if (typeof f.id === "string" && priorIds.has(f.id)) errors.push(`duplicate id: ${f.id} (IDs are append-only, never reused)`);
+	return errors;
+}
+
+/** Shared enums + the kind-dependent severity value set. severity is guarded by
+ *  KINDS.includes(kind) so an unknown kind ("xr") skips it → single enum error (P1.1). */
+function validateSharedEnums(f, kind) {
+	const errors = [];
 	for (const [k, allowed] of Object.entries(SHARED_ENUMS)) {
 		if (!allowed.includes(f[k])) errors.push(`${k} must be one of ${allowed.join(" | ")} (got: ${f[k]})`);
 	}
-	// severity — shared core, kind-dependent value set; validated for BOTH kinds.
-	if (KINDS.includes(kind)) {
-		const allowedSev = SEVERITIES[kind];
-		if (!allowedSev.includes(f.severity)) {
-			errors.push(`severity must be one of ${allowedSev.join(" | ")} (got: ${f.severity})`);
-		}
+	if (KINDS.includes(kind) && !SEVERITIES[kind].includes(f.severity)) {
+		errors.push(`severity must be one of ${SEVERITIES[kind].join(" | ")} (got: ${f.severity})`);
 	}
-	// evidence structure — shared (both kinds cite a location + verbatim lines).
-	if (!Array.isArray(f.evidence) || f.evidence.length === 0) {
-		errors.push("evidence must be a non-empty array");
-	} else {
-		f.evidence.forEach((ev, i) => {
-			if (typeof ev?.path !== "string" || !ev.path.trim()) {
-				errors.push(`evidence[${i}].path missing`);
-			} else if (isAmbiguous(ev.path, counts)) {
-				errors.push(
-					`evidence[${i}].path is an ambiguous bare basename: ${ev.path} (rewrite repo-relative from the repository root)`,
-				);
-			}
-			if (!Number.isInteger(ev?.startLine) || ev.startLine < 1) {
-				errors.push(`evidence[${i}].startLine must be a positive integer`);
-			}
-			if (ev?.endLine != null && (!Number.isInteger(ev.endLine) || ev.endLine < ev.startLine)) {
-				errors.push(`evidence[${i}].endLine must be an integer >= startLine`);
-			}
-			if (!Array.isArray(ev?.quoted) || ev.quoted.length === 0 || ev.quoted.some((q) => typeof q !== "string" || !q.trim())) {
-				errors.push(`evidence[${i}].quoted must be a non-empty array of verbatim lines`);
-			}
-		});
+	return errors;
+}
+
+/** One evidence entry: path (resolvable, non-ambiguous), startLine, endLine, quoted. */
+function validateEvidenceEntry(ev, i, counts) {
+	const { path, startLine, endLine, quoted } = ev ?? {};
+	const errors = [];
+	if (!isNonEmptyStr(path)) errors.push(`evidence[${i}].path missing`);
+	else if (isAmbiguous(path, counts)) errors.push(`evidence[${i}].path is an ambiguous bare basename: ${path} (rewrite repo-relative from the repository root)`);
+	if (!isPositiveInt(startLine)) errors.push(`evidence[${i}].startLine must be a positive integer`);
+	if (invalidWhenPresent(endLine, (e) => Number.isInteger(e) && e >= startLine)) errors.push(`evidence[${i}].endLine must be an integer >= startLine`);
+	if (!isNonEmptyStrArray(quoted)) errors.push(`evidence[${i}].quoted must be a non-empty array of verbatim lines`);
+	return errors;
+}
+
+/** Evidence structure — shared (both kinds cite a location + verbatim lines). */
+function validateEvidence(f, counts) {
+	if (!Array.isArray(f.evidence) || f.evidence.length === 0) return ["evidence must be a non-empty array"];
+	return f.evidence.flatMap((ev, i) => validateEvidenceEntry(ev, i, counts));
+}
+
+/** remediation object shape (AR-only). */
+function validateRemediation(r) {
+	if (!isPlainObject(r)) return ["remediation must be an object"];
+	const errors = [];
+	for (const k of ["steps", "acceptance"]) {
+		if (!isNonEmptyStrArray(r[k])) errors.push(`remediation.${k} must be a non-empty string array`);
 	}
-	// AR-only fields — gated on kind:"ar".
-	if (kind === "ar") {
-		for (const k of AR_REQUIRED_STRINGS) {
-			if (typeof f[k] !== "string" || !f[k].trim()) errors.push(`missing or empty field: ${k}`);
-		}
-		if (!/^\d+(\.\d+)?$/.test(String(f.layer ?? ""))) errors.push(`layer must be N or N.M (got: ${f.layer})`);
-		if (!LENSES.includes(f.lens)) errors.push(`lens must be one of ${LENSES.join("/")} (got: ${f.lens})`);
-		for (const [k, allowed] of Object.entries(AR_ENUMS)) {
-			if (!allowed.includes(f[k])) errors.push(`${k} must be one of ${allowed.join(" | ")} (got: ${f[k]})`);
-		}
-		// blastRadius — OPEN, MULTI-VALUE: a non-empty array of non-empty strings.
-		// Recommended vocabulary is BLAST_RADII (incl. "other"), but values are NOT
-		// restricted to it (developer decision — blast can span multiple dimensions).
-		if (!Array.isArray(f.blastRadius) || f.blastRadius.length === 0 || f.blastRadius.some((b) => typeof b !== "string" || !b.trim())) {
-			errors.push("blastRadius must be a non-empty array of strings (recommended: internal | public-API | on-disk | cross-module | other; free-form allowed)");
-		}
-		const r = f.remediation;
-		if (typeof r !== "object" || r === null || Array.isArray(r)) {
-			errors.push("remediation must be an object");
-		} else {
-			for (const k of ["steps", "acceptance"]) {
-				if (!Array.isArray(r[k]) || r[k].length === 0 || r[k].some((s) => typeof s !== "string" || !s.trim())) {
-					errors.push(`remediation.${k} must be a non-empty string array`);
-				}
-			}
-			for (const k of ["testStrategy", "tradeoff"]) {
-				if (typeof r[k] !== "string" || !r[k].trim()) errors.push(`remediation.${k} missing`);
-			}
-		}
-		if (!Array.isArray(f.dependsOn) || f.dependsOn.some((d) => typeof d !== "string")) {
-			errors.push("dependsOn must be a string array (may be empty)");
-		}
-	} else if (kind === "dr") {
-		// DR validation arm (Slice 8). Shared severity already validated f.severity ∈
-		// SEVERITIES.dr; evidence + quoted are shared-required (every DR finding is
-		// fingerprintable — per-tier degradation is a RENDER concern, not storage).
-		if (!DR_LENSES.includes(f.lens)) errors.push(`lens must be one of ${DR_LENSES.join("/")} for kind:dr (got: ${f.lens})`);
-		const sev = f.severity;
-		if ((sev === "critical" || sev === "important" || sev === "discuss") && (typeof f.why !== "string" || !f.why.trim())) errors.push(`kind:dr ${sev} finding requires a why`);
-		if ((sev === "critical" || sev === "important" || sev === "suggestion") && (typeof f.fix !== "string" || !f.fix.trim())) errors.push(`kind:dr ${sev} finding requires a fix`);
-		if (f.alt != null && (typeof f.alt !== "string" || !f.alt.trim())) errors.push("alt must be a non-empty string or null (kind:dr)");
-		if (f.verify != null && !AR_ENUMS.verify.includes(f.verify)) errors.push(`verify must be one of ${AR_ENUMS.verify.join(" | ")} (got: ${f.verify})`);
+	for (const k of ["testStrategy", "tradeoff"]) if (!isNonEmptyStr(r[k])) errors.push(`remediation.${k} missing`);
+	return errors;
+}
+
+/** AR-only fields (gated on kind:"ar" by the parent). */
+function validateArFields(f) {
+	const errors = [];
+	for (const k of AR_REQUIRED_STRINGS) if (!isNonEmptyStr(f[k])) errors.push(`missing or empty field: ${k}`);
+	if (!isLayerId(f.layer)) errors.push(`layer must be N or N.M (got: ${f.layer})`);
+	if (!LENSES.includes(f.lens)) errors.push(`lens must be one of ${LENSES.join("/")} (got: ${f.lens})`);
+	for (const [k, allowed] of Object.entries(AR_ENUMS)) {
+		if (!allowed.includes(f[k])) errors.push(`${k} must be one of ${allowed.join(" | ")} (got: ${f[k]})`);
 	}
-	// drift fields — optional, validated when present (either kind).
-	if (f.baselineState != null && !BASELINE_STATES.includes(f.baselineState)) {
-		errors.push(`baselineState must be one of ${BASELINE_STATES.join(" | ")} (got: ${f.baselineState})`);
+	if (!isNonEmptyStrArray(f.blastRadius)) {
+		errors.push("blastRadius must be a non-empty array of strings (recommended: internal | public-API | on-disk | cross-module | other; free-form allowed)");
 	}
-	if (f.driftClass != null && !DRIFT_CLASSES.includes(f.driftClass)) {
-		errors.push(`driftClass must be one of ${DRIFT_CLASSES.join(" | ")} (got: ${f.driftClass})`);
-	}
-	for (const k of ["priorFp", "priorId", "verifyNote"]) {
-		if (f[k] != null && (typeof f[k] !== "string" || !f[k].trim())) errors.push(`${k} must be a non-empty string or null`);
-	}
-	for (const k of OPTIONAL_NULLABLE) {
-		if (f[k] != null && typeof f[k] !== "string") errors.push(`${k} must be a string or null`);
-	}
+	errors.push(...validateRemediation(f.remediation));
+	if (!isStringArray(f.dependsOn)) errors.push("dependsOn must be a string array (may be empty)");
+	return errors;
+}
+
+/** DR-only fields (gated on kind:"dr" by the parent). */
+function validateDrFields(f) {
+	const errors = [];
+	const sev = f.severity;
+	if (!DR_LENSES.includes(f.lens)) errors.push(`lens must be one of ${DR_LENSES.join("/")} for kind:dr (got: ${f.lens})`);
+	if (DR_NEEDS_WHY.has(sev) && !isNonEmptyStr(f.why)) errors.push(`kind:dr ${sev} finding requires a why`);
+	if (DR_NEEDS_FIX.has(sev) && !isNonEmptyStr(f.fix)) errors.push(`kind:dr ${sev} finding requires a fix`);
+	if (invalidWhenPresent(f.alt, isNonEmptyStr)) errors.push("alt must be a non-empty string or null (kind:dr)");
+	if (invalidWhenPresent(f.verify, (v) => AR_ENUMS.verify.includes(v))) errors.push(`verify must be one of ${AR_ENUMS.verify.join(" | ")} (got: ${f.verify})`);
+	return errors;
+}
+
+/** Drift fields — optional, validated when present (either kind). */
+function validateDriftFields(f) {
+	const errors = [];
+	if (invalidWhenPresent(f.baselineState, (v) => BASELINE_STATES.includes(v))) errors.push(`baselineState must be one of ${BASELINE_STATES.join(" | ")} (got: ${f.baselineState})`);
+	if (invalidWhenPresent(f.driftClass, (v) => DRIFT_CLASSES.includes(v))) errors.push(`driftClass must be one of ${DRIFT_CLASSES.join(" | ")} (got: ${f.driftClass})`);
+	for (const k of ["priorFp", "priorId", "verifyNote"]) if (invalidWhenPresent(f[k], isNonEmptyStr)) errors.push(`${k} must be a non-empty string or null`);
+	for (const k of OPTIONAL_NULLABLE) if (invalidWhenPresent(f[k], (v) => typeof v === "string")) errors.push(`${k} must be a string or null`);
+	return errors;
+}
+
+/** Validate one finding against the schema + the shared ambiguity rule. Parent keeps the
+ *  object-guard early return (the ONLY early return), the kind derivation, and the AR/DR
+ *  dispatch; helpers return partial arrays spread in source order. Returns [] when clean,
+ *  else every error found (all-at-once, never first-only). */
+export function validateFinding(f, counts, priorIds = new Set()) {
+	if (!isPlainObject(f)) return ["finding must be a JSON object"];
+	const kind = f.kind ?? "ar";
+	const errors = [
+		...validateShape(f, kind, priorIds),
+		...validateSharedEnums(f, kind),
+		...validateEvidence(f, counts),
+	];
+	if (kind === "ar") errors.push(...validateArFields(f));
+	else if (kind === "dr") errors.push(...validateDrFields(f));
+	errors.push(...validateDriftFields(f));
 	return errors;
 }
 
@@ -201,10 +219,34 @@ export function validateFinding(f, counts, priorIds = new Set()) {
 
 const normWs = (s) => s.replace(/\s+/g, " ").trim();
 
-/** Ground every evidence entry against the repo: the path resolves to a real file,
- * startLine is within it, and each quoted line greps at path:startLine (±3,
- * whitespace-normalized — the grader's verbatim rule, enforced upstream at insert).
- * Returns [] when clean, else every grounding error found. */
+// ═══ Slice 5: finalizeReview + checkEvidenceGrounding pure cores ═══
+
+// -- checkEvidenceGrounding --
+
+/** A normalized window line matches a quote — exact, or a long-enough prefix/suffix. */
+const matchesQuote = (w, want) => w.includes(want) || (want.includes(w) && w.length > 5);
+
+/** Match each quoted line against the ±3 window at ev.startLine (whitespace-normalized),
+ *  returning an actionable error (naming the real line if the quote is elsewhere) per miss.
+ *  Pure — operates on already-read file lines. normWs stays module-level. */
+function groundQuoteInLines(lines, ev, i, rel) {
+	const errors = [];
+	const normLines = lines.map(normWs);
+	const window = normLines.slice(Math.max(0, ev.startLine - 4), ev.startLine + 3);
+	for (const q of ev.quoted) {
+		const want = normWs(q).replace(/\s*(\.\.\.|…)$/, "");
+		if (!window.some((w) => matchesQuote(w, want))) {
+			const at = [];
+			if (want) normLines.forEach((w, idx) => { if (w.includes(want)) at.push(idx + 1); });
+			const hint = at.length ? ` (found at line${at.length > 1 ? "s" : ""} ${at.slice(0, 5).join(", ")})` : "";
+			errors.push(`evidence[${i}].quoted not found at ${rel}:${ev.startLine} (±3)${hint}: "${q.slice(0, 50)}"`);
+		}
+	}
+	return errors;
+}
+
+/** Ground every evidence entry against the repo: path resolves, startLine in range, and each
+ *  quoted line greps at path:startLine (±3). Returns [] when clean, else every grounding error. */
 export function checkEvidenceGrounding(finding, root) {
 	const errors = [];
 	const files = fileIndex(root);
@@ -219,19 +261,7 @@ export function checkEvidenceGrounding(finding, root) {
 			errors.push(`evidence[${i}].startLine ${ev.startLine} exceeds ${rel} length (${lines.length} lines)`);
 			return;
 		}
-		const normLines = lines.map(normWs);
-		const window = normLines.slice(Math.max(0, ev.startLine - 4), ev.startLine + 3);
-		for (const q of ev.quoted) {
-			const want = normWs(q).replace(/\s*(\.\.\.|…)$/, "");
-			if (!window.some((w) => w.includes(want) || (want.includes(w) && w.length > 5))) {
-				// Actionable: if the quote IS in the file, name the real line(s) so the
-				// caller fixes startLine (or splits the evidence) instead of guessing.
-				const at = [];
-				if (want) normLines.forEach((w, idx) => { if (w.includes(want)) at.push(idx + 1); });
-				const hint = at.length ? ` (found at line${at.length > 1 ? "s" : ""} ${at.slice(0, 5).join(", ")})` : "";
-				errors.push(`evidence[${i}].quoted not found at ${rel}:${ev.startLine} (±3)${hint}: "${q.slice(0, 50)}"`);
-			}
-		}
+		errors.push(...groundQuoteInLines(lines, ev, i, rel));
 	});
 	return errors;
 }
@@ -277,26 +307,35 @@ function renderLayerSection(layer) {
 	return [heading, "", f.begin, f.end, "", t.begin, t.end].join("\n");
 }
 
-/** Explicit init: build the review.json envelope AND emit the per-layer skeleton
- * sections into the .md's store:layers region (replaces the Edit-based Step-4
- * skeleton). Refuses to clobber an existing store. Reads spec { target, layers:
- * [{ n, name }] }. */
+// ═══ Slice 4: initStore pure normalizeInitSpec ═══
+
+/** Normalize one layer spec ({ n, name }) or throw on a bad layer id. Pure. */
+function normalizeLayer(l) {
+	if (!isLayerId(l?.n)) throw new Error(`init: layer.n must be N or N.M (got: ${l?.n})`);
+	return { n: String(l.n), name: typeof l.name === "string" ? l.name.trim() : "" };
+}
+
+/** Validate + normalize the init spec (pure — no IO). Returns { target, layers } or throws. */
+function normalizeInitSpec(spec) {
+	if (!isNonEmptyStr(spec?.target)) throw new Error("init: spec.target (non-empty string) is required");
+	if (!Array.isArray(spec.layers) || spec.layers.length === 0) throw new Error("init: spec.layers must be a non-empty array");
+	return { target: spec.target.trim(), layers: spec.layers.map(normalizeLayer) };
+}
+
+/** Explicit init: build the review.json envelope AND emit the per-layer skeleton sections into
+ *  the .md's store:layers region. Refuses to clobber an existing store. Reads spec { target,
+ *  layers: [{ n, name }] }. */
 export function initStore(artifactPath, spec) {
 	const storePath = deriveStorePath(artifactPath);
 	if (existsSync(storePath)) throw new Error(`store already initialized: ${storePath} (delete it to re-init)`);
 	if (!existsSync(artifactPath)) throw new Error(`artifact not found: ${artifactPath}`);
-	if (!spec || typeof spec.target !== "string" || !spec.target.trim()) throw new Error("init: spec.target (non-empty string) is required");
-	if (!Array.isArray(spec.layers) || spec.layers.length === 0) throw new Error("init: spec.layers must be a non-empty array");
-	const layers = spec.layers.map((l) => {
-		if (!/^\d+(\.\d+)?$/.test(String(l?.n ?? ""))) throw new Error(`init: layer.n must be N or N.M (got: ${l?.n})`);
-		return { n: String(l.n), name: typeof l.name === "string" ? l.name.trim() : "" };
-	});
+	const { target, layers } = normalizeInitSpec(spec);
 	const sections = layers.map(renderLayerSection).join("\n\n---\n\n");
 	const text = spliceRegion(readFileSync(artifactPath, "utf-8"), LAYERS_REGION, sections);
 	const store = {
 		schema: 1,
 		artifact: basename(artifactPath),
-		target: spec.target.trim(),
+		target,
 		createdAt: new Date().toISOString(),
 		layers,
 		findings: [],
@@ -441,6 +480,9 @@ export function renderTally(store, layer) {
 	return lines.join("\n");
 }
 
+/** The begin/end sentinels are both present and correctly ordered. */
+const sentinelPairFound = (bi, ei) => bi !== -1 && ei !== -1 && bi <= ei;
+
 /** Idempotent sentinel splice: replace the region between begin/end. Sentinels
  * ABSENT is an error — the skeleton owns marker placement; the store never
  * guesses an insertion point (regen-decisions-index applyBlock precedent,
@@ -448,9 +490,7 @@ export function renderTally(store, layer) {
 export function spliceRegion(text, { begin, end }, content) {
 	const bi = text.indexOf(begin);
 	const ei = text.indexOf(end);
-	if (bi === -1 || ei === -1 || ei < bi) {
-		throw new Error(`sentinel pair not found in artifact: ${begin}`);
-	}
+	if (!sentinelPairFound(bi, ei)) throw new Error(`sentinel pair not found in artifact: ${begin}`);
 	return `${text.slice(0, bi + begin.length)}\n${content}\n${text.slice(ei)}`;
 }
 
@@ -487,43 +527,51 @@ function setFrontmatterField(text, key, value) {
 	return head.replace(re, `${key}: ${value}`) + text.slice(fmEnd);
 }
 
-/** Step-11 ready flip: gates (every finding triaged; health verdict is a real
- * enum value, never `pending`; no evidence citation went ambiguous since insert;
- * not already finalized), then health_score + status flip in the .md, mirrored
- * envelope fields in review.json, and the content_hash stamp LAST — the same
- * "last body-affecting action" invariant research/design/blueprint artifacts
- * already carry (stampArtifact appends content_hash as the final fm field). */
+// -- finalizeReview --
+
+/** Ids of untriaged (status:"open") findings — the finalize gate. Pure. */
+function openIds(store) {
+	return store.findings.filter((f) => f.status === "open").map((f) => f.id);
+}
+
+/** "id: path" for every evidence citation that is ambiguous under the current repo basename
+ *  counts (a finding went ambiguous since insert). Pure. */
+function ambiguousEvidence(findings, counts) {
+	const out = [];
+	for (const f of findings) {
+		for (const ev of f.evidence) if (isAmbiguous(ev.path, counts)) out.push(`${f.id}: ${ev.path}`);
+	}
+	return out;
+}
+
+/** Finalize gate — every finding triaged, no evidence went ambiguous since insert, body lint
+ *  clean. Throws on the first failing gate; runs entirely BEFORE any write. */
+function finalizeGate(artifactPath, store, root) {
+	const open = openIds(store);
+	if (open.length > 0) throw new Error(`untriaged findings remain: ${open.join(", ")}`);
+	const ambiguous = ambiguousEvidence(store.findings, basenameCounts(root));
+	if (ambiguous.length > 0) {
+		throw new Error(`evidence went ambiguous since insert (repo gained same-named files): ${ambiguous.join("; ")}`);
+	}
+	const lint = validateArtifact(artifactPath, root, { finalizing: true, verifyHash: false });
+	if (lint.errors.length > 0) {
+		throw new Error(`body fails the finalization lint (resolve before finalizing):\n${lint.errors.map((e) => `  ${e}`).join("\n")}`);
+	}
+}
+
+/** Step-11 ready flip: the gates (via finalizeGate), then health_score + status flip in the
+ *  .md, mirrored envelope fields, and the content_hash stamp LAST. */
 export function finalizeReview(artifactPath, root, healthScore) {
 	if (!HEALTH.includes(healthScore)) {
 		throw new Error(`--health-score must be one of ${HEALTH.join(" | ")} (got: ${healthScore ?? "none"})`);
 	}
 	const { storePath, store } = loadStore(artifactPath);
-	const open = store.findings.filter((f) => f.status === "open").map((f) => f.id);
-	if (open.length > 0) throw new Error(`untriaged findings remain: ${open.join(", ")}`);
-	const counts = basenameCounts(root);
-	const ambiguous = [];
-	for (const f of store.findings) {
-		for (const ev of f.evidence) if (isAmbiguous(ev.path, counts)) ambiguous.push(`${f.id}: ${ev.path}`);
-	}
-	if (ambiguous.length > 0) {
-		throw new Error(`evidence went ambiguous since insert (repo gained same-named files): ${ambiguous.join("; ")}`);
-	}
-	// Body-prose gate: the store's finalize now runs the same prose scan the .md lint
-	// does (unfilled {tokens}, TODO/TBD/FIXME, empty fences) so a token-dirty body
-	// cannot flip to ready. verifyHash:false — content_hash is stamped later, below.
-	const lint = validateArtifact(artifactPath, root, { finalizing: true, verifyHash: false });
-	if (lint.errors.length > 0) {
-		throw new Error(`body fails the finalization lint (resolve before finalizing):\n${lint.errors.map((e) => `  ${e}`).join("\n")}`);
-	}
+	finalizeGate(artifactPath, store, root);
 	let text = readFileSync(artifactPath, "utf-8");
 	const { fm } = splitFrontmatter(text);
 	if (fm.status === "ready") throw new Error("artifact already ready — re-stamp via validate-artifact.mjs --stamp");
 	text = setFrontmatterField(text, "health_score", healthScore);
 	text = setFrontmatterField(text, "status", "ready");
-	// Hybrid-state write order: .md flip, envelope mirror, stamp. A crash between
-	// writes leaves a detectable half-state (validate-artifact flags a ready
-	// artifact without a matching stamp only after content_hash exists — the
-	// pilot accepts this window; the store is still the findings authority).
 	writeFileSync(artifactPath, text);
 	store.status = "ready";
 	store.healthScore = healthScore;
@@ -567,50 +615,68 @@ const DEMOTE = {
 	dr: { critical: "important", important: "suggestion", suggestion: "discuss", discuss: "discuss" },
 };
 
-/** Apply a verify verdict to an existing stored finding, in place, then re-render its
- * layer. Verified: stands. Weakened: demote one severity tier (requires a verifyNote —
- * "narrower than first stated"). Falsified: retire-not-delete — the record STAYS
- * (append-only) but status flips to "withdrawn" (requires a verifyNote). An explicit
- * status/statusNote in the patch overrides. Returns the updated record. */
-export function updateFinding(artifactPath, root, patch) {
-	if (!patch || typeof patch.id !== "string" || !patch.id.trim()) throw new Error("update: patch.id (string) is required");
+// ═══ Slice 2: updateFinding void in-place arms ═══
+// DEMOTE stays module-level (unchanged) — declarative house-style const.
+
+/** A DR demotion across a tier that requires a why/fix the finding lacks is a hard error
+ *  the re-validate can't repair — guard it here (no-op for AR or a same-tier floor). */
+function assertDemotionAllowed(f, kind, demoted) {
+	if (kind !== "dr" || demoted === f.severity) return;
+	if (DR_NEEDS_WHY.has(demoted) && !isNonEmptyStr(f.why)) throw new Error(`update: cannot Weaken ${f.id} to ${demoted} — that tier requires a \`why\` this finding lacks`);
+	if (DR_NEEDS_FIX.has(demoted) && !isNonEmptyStr(f.fix)) throw new Error(`update: cannot Weaken ${f.id} to ${demoted} — that tier requires a \`fix\` this finding lacks`);
+}
+
+/** Weakened: demote one severity tier (requires a verifyNote). VOID — mutates f in place
+ *  (f is a reference into store.findings; saveStore persists it). */
+function applyWeakened(f, kind, patch) {
+	if (!isNonEmptyStr(patch.verifyNote)) {
+		throw new Error("update: Weakened requires a verifyNote (why it is narrower than first stated)");
+	}
+	f.verifyNote = patch.verifyNote.trim();
+	const demoted = (DEMOTE[kind] ?? DEMOTE.ar)[f.severity] ?? f.severity;
+	assertDemotionAllowed(f, kind, demoted);
+	f.severity = demoted;
+}
+
+/** Falsified: retire-not-delete — status flips to "withdrawn" (requires a verifyNote).
+ *  VOID — mutates f in place. */
+function applyFalsified(f, patch) {
+	if (!isNonEmptyStr(patch.verifyNote)) {
+		throw new Error("update: Falsified requires a verifyNote (why the claim does not hold)");
+	}
+	f.verifyNote = patch.verifyNote.trim();
+	f.status = "withdrawn"; // retire-not-delete — the record stays (append-only)
+}
+
+/** patch shape gate — id (string) + verify ∈ {Verified, Weakened, Falsified}. */
+function assertUpdatablePatch(patch) {
+	if (!isNonEmptyStr(patch?.id)) throw new Error("update: patch.id (string) is required");
 	if (!["Verified", "Weakened", "Falsified"].includes(patch.verify)) {
 		throw new Error(`update: verify must be one of Verified | Weakened | Falsified (got: ${patch.verify})`);
 	}
+}
+
+/** Re-validate the mutated record (the demoted severity must stay a valid tier, etc.). */
+function revalidateAfterUpdate(f, root) {
+	const errors = validateFinding(f, basenameCounts(root), new Set());
+	if (errors.length > 0) throw new Error(errors.map((e) => `invalid finding after update: ${e}`).join("\n"));
+}
+
+/** Apply a verify verdict to an existing stored finding, in place, then re-render its layer.
+ *  Verified: stands. Weakened: demote one tier. Falsified: retire (status→withdrawn). An
+ *  explicit status/statusNote in the patch overrides. Returns the updated record. */
+export function updateFinding(artifactPath, root, patch) {
+	assertUpdatablePatch(patch);
 	const { storePath, store } = loadStore(artifactPath);
 	const f = store.findings.find((x) => x.id === patch.id);
 	if (!f) throw new Error(`update: no finding with id ${patch.id}`);
 	const kind = f.kind ?? "ar";
 	f.verify = patch.verify;
-	if (patch.verify === "Weakened") {
-		if (typeof patch.verifyNote !== "string" || !patch.verifyNote.trim()) {
-			throw new Error("update: Weakened requires a verifyNote (why it is narrower than first stated)");
-		}
-		f.verifyNote = patch.verifyNote.trim();
-		const demoted = (DEMOTE[kind] ?? DEMOTE.ar)[f.severity] ?? f.severity;
-		// DR tiers require different fields (discuss needs `why`, suggestion needs `fix`);
-		// demoting across that boundary would fail the re-validate below with a message the
-		// patch can't satisfy. Guard with a clear error instead. [plan-local guard; design
-		// follow-up: DEMOTE.dr × DR-arm tier-field interaction]
-		if (kind === "dr" && demoted !== f.severity) {
-			const needsWhy = demoted === "critical" || demoted === "important" || demoted === "discuss";
-			const needsFix = demoted === "critical" || demoted === "important" || demoted === "suggestion";
-			if (needsWhy && (typeof f.why !== "string" || !f.why.trim())) throw new Error(`update: cannot Weaken ${f.id} to ${demoted} — that tier requires a \`why\` this finding lacks`);
-			if (needsFix && (typeof f.fix !== "string" || !f.fix.trim())) throw new Error(`update: cannot Weaken ${f.id} to ${demoted} — that tier requires a \`fix\` this finding lacks`);
-		}
-		f.severity = demoted;
-	} else if (patch.verify === "Falsified") {
-		if (typeof patch.verifyNote !== "string" || !patch.verifyNote.trim()) {
-			throw new Error("update: Falsified requires a verifyNote (why the claim does not hold)");
-		}
-		f.verifyNote = patch.verifyNote.trim();
-		f.status = "withdrawn"; // retire-not-delete — the record stays (append-only)
-	}
+	if (patch.verify === "Weakened") applyWeakened(f, kind, patch);
+	else if (patch.verify === "Falsified") applyFalsified(f, patch);
 	if (typeof patch.status === "string") f.status = patch.status;
 	if (typeof patch.statusNote === "string") f.statusNote = patch.statusNote.trim();
-	// Re-validate the mutated record (the demoted severity must stay a valid tier, etc.).
-	const errors = validateFinding(f, basenameCounts(root), new Set());
-	if (errors.length > 0) throw new Error(errors.map((e) => `invalid finding after update: ${e}`).join("\n"));
+	revalidateAfterUpdate(f, root);
 	saveStore(storePath, store);
 	if (kind === "ar") renderInto(artifactPath, store, f.layer); // DR whole-doc re-render: Slice 8
 	return f;
@@ -710,52 +776,78 @@ export function diffReview(artifactPath, priorPath) {
 
 // ---- query --clusters (Slice 6 — read-only cluster discovery) ---------------
 
-/** Discover clusters over the persisted finding set (Step 9.5 steps 1-3): group
- * accepted/deferred findings by a shared store-intrinsic key — file, exported symbol,
- * or System-Model Entity/stage — plus each Depends-on edge as a 2-member cluster,
- * keeping only groups of >= 2 DISTINCT findings. Each cluster is flagged `anticipated`
- * when every member already shares one cross-cut tag (the "subtract known themes"
- * step). READ-ONLY — never mutates the store. */
-export function queryClusters(store) {
-	const active = store.findings.filter((f) => f.status === "accepted" || f.status === "deferred");
-	const byId = new Map(active.map((f) => [f.id, f]));
+// ═══ Slice 3: queryClusters helpers ═══
+
+/** A cluster is "anticipated" when every member shares one cross-cut tag (the
+ *  "subtract known themes" step). */
+function anticipatedOf(ids, byId) {
+	const tags = ids.map((id) => byId.get(id)?.crossCutTag).filter(Boolean);
+	return tags.length === ids.length && new Set(tags).size === 1;
+}
+
+/** Bucket active finding ids by every key `keysOf` yields (falsy keys skipped). */
+function groupIds(active, keysOf) {
+	const map = new Map();
+	for (const f of active) {
+		for (const k of keysOf(f)) {
+			if (!k) continue;
+			if (!map.has(k)) map.set(k, []);
+			map.get(k).push(f.id);
+		}
+	}
+	return map;
+}
+
+/** Group active findings by a shared store-intrinsic key (file / symbol / entity-stage),
+ *  keeping only groups of >= 2 findings. Returns clusters[]. */
+function groupByKey(dimension, active, keysOf, byId) {
 	const clusters = [];
-	const anticipatedOf = (ids) => {
-		const tags = ids.map((id) => byId.get(id)?.crossCutTag).filter(Boolean);
-		return tags.length === ids.length && new Set(tags).size === 1;
-	};
-	const group = (dimension, keysOf) => {
-		const map = new Map();
-		for (const f of active) {
-			for (const k of keysOf(f)) {
-				if (!k) continue;
-				if (!map.has(k)) map.set(k, []);
-				map.get(k).push(f.id);
-			}
-		}
-		for (const [key, ids] of map) {
-			if (ids.length >= 2) clusters.push({ dimension, key, ids, anticipated: anticipatedOf(ids) });
-		}
-	};
-	group("file", (f) => f.evidence.map((ev) => ev.path));
-	group("symbol", (f) => [f.symbol]);
-	group("entity", (f) => [f.entityStage]);
-	// (c) a Depends-on edge links two findings into a 2-member cluster. Edges are
-	// canonicalized to an UNORDERED pair (a mutual A<->B is one cluster, not two) and
-	// self-references are skipped (a cluster needs >= 2 DISTINCT findings). Direction
-	// is preserved in each finding's own dependsOn field for the Step-11 topo-sort.
+	for (const [key, ids] of groupIds(active, keysOf)) {
+		if (ids.length >= 2) clusters.push({ dimension, key, ids, anticipated: anticipatedOf(ids, byId) });
+	}
+	return clusters;
+}
+
+/** The canonical unordered edges one finding contributes (self-refs + dangling skipped). */
+function edgesFrom(f, byId) {
+	const edges = [];
+	if (!Array.isArray(f.dependsOn)) return edges;
+	for (const d of f.dependsOn) {
+		if (d !== f.id && byId.has(d)) edges.push([f.id, d].sort());
+	}
+	return edges;
+}
+
+/** Each Depends-on edge → a 2-member cluster. Edges canonicalized to an UNORDERED pair
+ *  (mutual A<->B is one cluster) and self-references skipped. NOT routed through groupByKey
+ *  — an edge names both members, so grouping would yield a length-1 group (P6.1/P6.2). */
+function dependsOnClusters(active, byId) {
+	const clusters = [];
 	const seen = new Set();
 	for (const f of active) {
-		if (!Array.isArray(f.dependsOn)) continue;
-		for (const d of f.dependsOn) {
-			if (d === f.id || !byId.has(d)) continue;
-			const ids = [f.id, d].sort();
+		for (const ids of edgesFrom(f, byId)) {
 			const key = ids.join(" <-> ");
 			if (seen.has(key)) continue;
 			seen.add(key);
-			clusters.push({ dimension: "dependsOn", key, ids, anticipated: anticipatedOf(ids) });
+			clusters.push({ dimension: "dependsOn", key, ids, anticipated: anticipatedOf(ids, byId) });
 		}
 	}
+	return clusters;
+}
+
+/** Discover clusters over the persisted finding set (Step 9.5 steps 1-3): group
+ *  accepted/deferred findings by file / symbol / entity-stage, plus each Depends-on edge as
+ *  a 2-member cluster, keeping only groups of >= 2 distinct findings. Each cluster is flagged
+ *  `anticipated` when every member already shares one cross-cut tag. READ-ONLY. */
+export function queryClusters(store) {
+	const active = store.findings.filter((f) => f.status === "accepted" || f.status === "deferred");
+	const byId = new Map(active.map((f) => [f.id, f]));
+	const clusters = [
+		...groupByKey("file", active, (f) => f.evidence.map((ev) => ev.path), byId),
+		...groupByKey("symbol", active, (f) => [f.symbol], byId),
+		...groupByKey("entity", active, (f) => [f.entityStage], byId),
+		...dependsOnClusters(active, byId),
+	];
 	return { clusters, discovered: clusters.length, unanticipated: clusters.filter((c) => !c.anticipated).length };
 }
 
@@ -787,19 +879,36 @@ const DR_LEGEND = [
 	"```",
 ].join("\n");
 
+// ═══ Slice 6: renderDrFinding data-driven tier table ═══
+
+// Which display sections each DR tier shows, in order (deep-review/templates/review.md:42-105).
+// Data-driven replacement for the four ||-chain tier conditionals (the cc=11 driver).
+const DR_TIER_SECTIONS = {
+	critical: ["Code", "Why", "Fix", "Alt"],
+	important: ["Code", "Why", "Fix"],
+	suggestion: ["Fix"],
+	discuss: ["Why"],
+};
+
+/** Emit one display section's lines for a DR finding ([] when the field is absent — Alt). */
+function drSection(name, f) {
+	if (name === "Code") return ["", "**Code**", "```", f.evidence.flatMap((ev) => ev.quoted).join("\n"), "```"];
+	if (name === "Why") return ["", "**Why**", f.why];
+	if (name === "Fix") return ["", "**Fix**", f.fix];
+	if (name === "Alt") return f.alt ? ["", "**Alt**", f.alt] : [];
+	return [];
+}
+
 /** One DR finding block, degrade-per-tier (deep-review/templates/review.md:42-105):
  *   critical: Where + Code + Why + Fix + Alt?   important: Where + Code + Why + Fix
  *   suggestion: Where + Fix                      discuss: Where + Why
- * Code/Why/Fix persist for all tiers (fingerprint/validation) but only DISPLAY per tier. */
+ * Code/Why/Fix persist for all tiers (fingerprint/validation) but only DISPLAY per tier.
+ * Unknown severity → suggestion emoji (DR_TIERS[2]) + no sections (only Where), as before. */
 export function renderDrFinding(f) {
 	const tier = DR_TIERS.find((t) => t.sev === f.severity) ?? DR_TIERS[2];
 	const where = f.evidence.map((ev) => `\`${ev.path}:${ev.endLine != null ? `${ev.startLine}-${ev.endLine}` : ev.startLine}\``).join(" ");
 	const lines = [`### ${f.id} ${tier.emoji} ${f.title}`, "", "**Where**", where];
-	const sev = f.severity;
-	if (sev === "critical" || sev === "important") lines.push("", "**Code**", "```", f.evidence.flatMap((ev) => ev.quoted).join("\n"), "```");
-	if (sev === "critical" || sev === "important" || sev === "discuss") lines.push("", "**Why**", f.why);
-	if (sev === "critical" || sev === "important" || sev === "suggestion") lines.push("", "**Fix**", f.fix);
-	if (sev === "critical" && f.alt) lines.push("", "**Alt**", f.alt);
+	for (const name of DR_TIER_SECTIONS[f.severity] ?? []) lines.push(...drSection(name, f));
 	return lines.join("\n");
 }
 
@@ -949,6 +1058,143 @@ export function toSarif(store) {
 
 // ---- CLI ---------------------------------------------------------------------
 
+// ═══ Slice 7: dispatch(argv, io) importable routing + shim ═══
+
+const USAGE = [
+	"usage: store.mjs init --artifact <review.md> [--root <dir>] < {target,layers:[{n,name}]}.json",
+	"       store.mjs add --artifact <review.md> [--root <dir>] < finding.json",
+	"       store.mjs update --artifact <review.md> [--root <dir>] < {id,verify,verifyNote?,status?,statusNote?}.json",
+	"       store.mjs diff --artifact <review.md> --prior <prior-review.json> [--root <dir>]",
+	"       store.mjs query --clusters --artifact <review.md>",
+	"       store.mjs render --review --artifact <review.md>   (DR write-once)",
+	"       store.mjs render --artifact <review.md> --layer <n> [--tally]",
+	"       store.mjs finalize --artifact <review.md> --health-score <healthy|drifting|degraded> [--root <dir>]",
+	"       store.mjs export --sarif --artifact <review.md> [--out <path>]",
+].join("\n");
+
+/** Arg/usage error: print usage, signal exit 2. */
+function usageExit(ctx) {
+	ctx.stderr.write(`${USAGE}\n`);
+	return 2;
+}
+
+/** Trimmed stdin, or null after writing the command's empty-stdin message (caller returns 2). */
+function stdinOrNull(ctx, emptyMsg) {
+	const raw = ctx.readStdin().trim();
+	if (raw) return raw;
+	ctx.stderr.write(emptyMsg);
+	return null;
+}
+
+function cmdInit(ctx) {
+	if (!ctx.artifact) return usageExit(ctx);
+	const raw = stdinOrNull(ctx, "store init: empty stdin — pipe { target, layers:[{n,name}] } JSON\n");
+	if (raw === null) return 2;
+	const { storePath, layers } = initStore(resolve(ctx.artifact), JSON.parse(raw));
+	ctx.stdout.write(`initialized ${storePath} with layer(s) ${layers.join(", ")}\n`);
+	return 0;
+}
+
+function cmdAdd(ctx) {
+	if (!ctx.artifact) return usageExit(ctx);
+	const raw = stdinOrNull(ctx, "store add: empty stdin — pipe one finding JSON object\n");
+	if (raw === null) return 2;
+	const record = addFinding(resolve(ctx.artifact), ctx.root, JSON.parse(raw));
+	ctx.stdout.write(`added ${record.id} (fp ${record.fp}) -> ${deriveStorePath(resolve(ctx.artifact))}\n`);
+	return 0;
+}
+
+function cmdUpdate(ctx) {
+	if (!ctx.artifact) return usageExit(ctx);
+	const raw = stdinOrNull(ctx, "store update: empty stdin — pipe { id, verify, verifyNote?, status?, statusNote? } JSON\n");
+	if (raw === null) return 2;
+	const rec = updateFinding(resolve(ctx.artifact), ctx.root, JSON.parse(raw));
+	ctx.stdout.write(`updated ${rec.id}: verify ${rec.verify}, severity ${rec.severity}, status ${rec.status}\n`);
+	return 0;
+}
+
+function cmdQuery(ctx) {
+	if (!ctx.artifact || !ctx.rest.includes("--clusters")) return usageExit(ctx);
+	const { store } = loadStore(resolve(ctx.artifact));
+	ctx.stdout.write(`${renderClusters(queryClusters(store))}\n`);
+	return 0;
+}
+
+function cmdDiff(ctx) {
+	const prior = ctx.flag("--prior");
+	if (!ctx.artifact || !prior) return usageExit(ctx);
+	const d = diffReview(resolve(ctx.artifact), resolve(prior));
+	ctx.stdout.write(`drift vs ${d.priorArtifact}: ${d.counts.new} new, ${d.counts.stillOpen} still-open, ${d.counts.regressed} regressed, ${d.counts.resolved} resolved\n`);
+	return 0;
+}
+
+function cmdRenderReview(ctx) {
+	if (!ctx.artifact) return usageExit(ctx);
+	const { store } = loadStore(resolve(ctx.artifact));
+	writeFileSync(resolve(ctx.artifact), `${renderReview(store)}\n`);
+	ctx.stdout.write(`rendered DR review (${store.findings.length} finding(s)) -> ${resolve(ctx.artifact)}\n`);
+	return 0;
+}
+
+function cmdRenderLayer(ctx) {
+	const layer = ctx.flag("--layer");
+	if (!ctx.artifact || layer == null) return usageExit(ctx);
+	const tallyOnly = ctx.rest.includes("--tally");
+	const { store } = loadStore(resolve(ctx.artifact));
+	renderInto(resolve(ctx.artifact), store, layer, tallyOnly ? { findings: false, tally: true } : { findings: true, tally: true });
+	ctx.stdout.write(`rendered layer ${layer}${tallyOnly ? " (tally only)" : ""}\n`);
+	return 0;
+}
+
+/** `render --review` (DR write-once) vs `render --layer <n> [--tally]`. */
+function cmdRender(ctx) {
+	return ctx.rest.includes("--review") ? cmdRenderReview(ctx) : cmdRenderLayer(ctx);
+}
+
+function cmdFinalize(ctx) {
+	if (!ctx.artifact) return usageExit(ctx);
+	const { hash, findings } = finalizeReview(resolve(ctx.artifact), ctx.root, ctx.flag("--health-score"));
+	ctx.stdout.write(`finalized: ${findings} finding(s), health ${ctx.flag("--health-score")}, content_hash ${hash.slice(0, 12)}...\n`);
+	return 0;
+}
+
+function cmdExport(ctx) {
+	if (!ctx.artifact || !ctx.rest.includes("--sarif")) return usageExit(ctx);
+	const { store } = loadStore(resolve(ctx.artifact));
+	const sarif = `${JSON.stringify(toSarif(store), null, 2)}\n`;
+	const out = ctx.flag("--out");
+	if (!out) {
+		ctx.stdout.write(sarif);
+		return 0;
+	}
+	writeFileSync(resolve(out), sarif);
+	ctx.stdout.write(`exported ${store.findings.length} finding(s) -> ${resolve(out)}\n`);
+	return 0;
+}
+
+// Command table — dispatch is a lookup + a single try/catch (0 ok / 2 usage/arg / 1 thrown).
+const COMMANDS = { init: cmdInit, add: cmdAdd, update: cmdUpdate, query: cmdQuery, diff: cmdDiff, render: cmdRender, finalize: cmdFinalize, export: cmdExport };
+
+/** Importable CLI routing — the isMain tail extracted so vitest attributes its mutants.
+ *  Returns an exit code (0 ok / 2 usage/arg error / 1 thrown). `io` defaults read fd 0 and
+ *  the process streams; tests pass fakes. */
+export function dispatch(argv, { readStdin = () => readFileSync(0, "utf-8"), stdout = process.stdout, stderr = process.stderr } = {}) {
+	const [cmd, ...rest] = argv;
+	const flag = (name) => {
+		const i = rest.indexOf(name);
+		return i === -1 ? null : rest[i + 1];
+	};
+	const ctx = { rest, readStdin, stdout, stderr, flag, artifact: flag("--artifact"), root: resolve(flag("--root") ?? process.cwd()) };
+	const handler = COMMANDS[cmd];
+	if (!handler) return usageExit(ctx);
+	try {
+		return handler(ctx);
+	} catch (e) {
+		stderr.write(`store ${cmd}: ${e.message}\n`);
+		return 1;
+	}
+}
+
 const isMain = (() => {
 	try {
 		return fileURLToPath(import.meta.url) === resolve(process.argv[1] ?? "");
@@ -956,138 +1202,4 @@ const isMain = (() => {
 		return false;
 	}
 })();
-if (isMain) {
-	const [cmd, ...rest] = process.argv.slice(2);
-	const flag = (name) => {
-		const i = rest.indexOf(name);
-		return i === -1 ? null : rest[i + 1];
-	};
-	const usage = [
-		"usage: store.mjs init --artifact <review.md> [--root <dir>] < {target,layers:[{n,name}]}.json",
-		"       store.mjs add --artifact <review.md> [--root <dir>] < finding.json",
-		"       store.mjs update --artifact <review.md> [--root <dir>] < {id,verify,verifyNote?,status?,statusNote?}.json",
-		"       store.mjs diff --artifact <review.md> --prior <prior-review.json> [--root <dir>]",
-		"       store.mjs query --clusters --artifact <review.md>",
-		"       store.mjs render --review --artifact <review.md>   (DR write-once)",
-		"       store.mjs render --artifact <review.md> --layer <n> [--tally]",
-		"       store.mjs finalize --artifact <review.md> --health-score <healthy|drifting|degraded> [--root <dir>]",
-		"       store.mjs export --sarif --artifact <review.md> [--out <path>]",
-	].join("\n");
-	const artifact = flag("--artifact");
-	const root = resolve(flag("--root") ?? process.cwd());
-	try {
-		if (cmd === "init") {
-			if (!artifact) {
-				process.stderr.write(`${usage}\n`);
-				process.exit(2);
-			}
-			const raw = readFileSync(0, "utf-8").trim();
-			if (!raw) {
-				process.stderr.write("store init: empty stdin — pipe { target, layers:[{n,name}] } JSON\n");
-				process.exit(2);
-			}
-			const { storePath, layers } = initStore(resolve(artifact), JSON.parse(raw));
-			process.stdout.write(`initialized ${storePath} with layer(s) ${layers.join(", ")}\n`);
-			process.exit(0);
-		}
-		if (cmd === "add") {
-			if (!artifact) {
-				process.stderr.write(`${usage}\n`);
-				process.exit(2);
-			}
-			const raw = readFileSync(0, "utf-8").trim();
-			if (!raw) {
-				process.stderr.write("store add: empty stdin — pipe one finding JSON object\n");
-				process.exit(2);
-			}
-			const record = addFinding(resolve(artifact), root, JSON.parse(raw));
-			process.stdout.write(`added ${record.id} (fp ${record.fp}) -> ${deriveStorePath(resolve(artifact))}\n`);
-			process.exit(0);
-		}
-		if (cmd === "update") {
-			if (!artifact) {
-				process.stderr.write(`${usage}\n`);
-				process.exit(2);
-			}
-			const raw = readFileSync(0, "utf-8").trim();
-			if (!raw) {
-				process.stderr.write("store update: empty stdin — pipe { id, verify, verifyNote?, status?, statusNote? } JSON\n");
-				process.exit(2);
-			}
-			const rec = updateFinding(resolve(artifact), root, JSON.parse(raw));
-			process.stdout.write(`updated ${rec.id}: verify ${rec.verify}, severity ${rec.severity}, status ${rec.status}\n`);
-			process.exit(0);
-		}
-		if (cmd === "query") {
-			if (!artifact || !rest.includes("--clusters")) {
-				process.stderr.write(`${usage}\n`);
-				process.exit(2);
-			}
-			const { store } = loadStore(resolve(artifact));
-			process.stdout.write(`${renderClusters(queryClusters(store))}\n`);
-			process.exit(0);
-		}
-		if (cmd === "diff") {
-			const prior = flag("--prior");
-			if (!artifact || !prior) {
-				process.stderr.write(`${usage}\n`);
-				process.exit(2);
-			}
-			const d = diffReview(resolve(artifact), resolve(prior));
-			process.stdout.write(`drift vs ${d.priorArtifact}: ${d.counts.new} new, ${d.counts.stillOpen} still-open, ${d.counts.regressed} regressed, ${d.counts.resolved} resolved\n`);
-			process.exit(0);
-		}
-		if (cmd === "render" && rest.includes("--review")) {
-			if (!artifact) {
-				process.stderr.write(`${usage}\n`);
-				process.exit(2);
-			}
-			const { store } = loadStore(resolve(artifact));
-			writeFileSync(resolve(artifact), `${renderReview(store)}\n`);
-			process.stdout.write(`rendered DR review (${store.findings.length} finding(s)) -> ${resolve(artifact)}\n`);
-			process.exit(0);
-		}
-		if (cmd === "render") {
-			const layer = flag("--layer");
-			if (!artifact || layer == null) {
-				process.stderr.write(`${usage}\n`);
-				process.exit(2);
-			}
-			const tallyOnly = rest.includes("--tally");
-			const { store } = loadStore(resolve(artifact));
-			renderInto(resolve(artifact), store, layer, tallyOnly ? { findings: false, tally: true } : { findings: true, tally: true });
-			process.stdout.write(`rendered layer ${layer}${tallyOnly ? " (tally only)" : ""}\n`);
-			process.exit(0);
-		}
-		if (cmd === "finalize") {
-			if (!artifact) {
-				process.stderr.write(`${usage}\n`);
-				process.exit(2);
-			}
-			const { hash, findings } = finalizeReview(resolve(artifact), root, flag("--health-score"));
-			process.stdout.write(`finalized: ${findings} finding(s), health ${flag("--health-score")}, content_hash ${hash.slice(0, 12)}...\n`);
-			process.exit(0);
-		}
-		if (cmd === "export") {
-			if (!artifact || !rest.includes("--sarif")) {
-				process.stderr.write(`${usage}\n`);
-				process.exit(2);
-			}
-			const { store } = loadStore(resolve(artifact));
-			const sarif = `${JSON.stringify(toSarif(store), null, 2)}\n`;
-			const out = flag("--out");
-			if (out) {
-				writeFileSync(resolve(out), sarif);
-				process.stdout.write(`exported ${store.findings.length} finding(s) -> ${resolve(out)}\n`);
-			} else {
-				process.stdout.write(sarif);
-			}
-			process.exit(0);
-		}
-		process.stderr.write(`${usage}\n`);
-		process.exit(2);
-	} catch (e) {
-		process.stderr.write(`store ${cmd}: ${e.message}\n`);
-		process.exit(1);
-	}
-}
+if (isMain) process.exit(dispatch(process.argv.slice(2)));
