@@ -21,6 +21,7 @@ import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { citesIn, fileIndex, resolveInIndex } from "../../skills/_shared/citation-grammar.mjs";
+import { deriveStorePath, renderFinding, renderTally, sentinelsFor } from "../../skills/_shared/store.mjs";
 
 // ---------- CLI ----------
 const args = {};
@@ -41,6 +42,13 @@ const fmMatch = text.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
 const fmText = fmMatch?.[1] ?? "";
 const body = fmMatch?.[2] ?? text;
 expect("produced artifact exists", true, artifact);
+
+// ---------- sibling review.json (store-backed grading) ----------
+// recall/absence/max_findings field-assert over the sibling review.json WHEN it exists;
+// else the existing markdown grep (a per-artifact FALLBACK, never a dual-run). null for
+// non-store artifacts (research/design/plan/blueprint/deep-review, and agent-output).
+const storePath = artifact ? deriveStorePath(artifact) : null;
+const store = storePath && existsSync(storePath) ? JSON.parse(readFileSync(storePath, "utf-8")) : null;
 
 // ---------- worktree file index ----------
 // fileIndex/resolveInIndex are single-sourced in skills/_shared/citation-grammar.mjs
@@ -155,21 +163,37 @@ if (checks.citations) {
 }
 
 // ---------- 3. recall of curated ground-truth items ----------
+// When a store exists, field-assert over review.json evidence; else the EXISTING
+// markdown body-cite grep (moved verbatim into the else — non-store cases grade as today).
 for (const item of checks.recall ?? []) {
-	const hits = [];
-	const bodyCites = citesIn(body);
-	for (const f of item.files) {
-		const rel = resolveRel(f.path) ?? f.path;
-		const found = bodyCites.filter((c) => (resolveRel(c.tok) ?? c.tok) === rel);
-		const ok = found.some((c) => f.line == null || (c.line != null && Math.abs(c.line - f.line) <= (f.radius ?? 60)));
-		if (ok) hits.push(f.path);
+	if (store) {
+		const evidence = store.findings.flatMap((f) => f.evidence.map((ev) => ({ path: resolveRel(ev.path) ?? ev.path, line: ev.startLine })));
+		const hits = [];
+		for (const f of item.files) {
+			const rel = resolveRel(f.path) ?? f.path;
+			if (evidence.some((e) => e.path === rel && (f.line == null || Math.abs(e.line - f.line) <= (f.radius ?? 60)))) hits.push(f.path);
+		}
+		expect(
+			`recall ${item.id}: review.json cites >= ${item.min_files ?? 1} of [${item.files.map((f) => f.path.split("/").pop() + (f.line ? ":" + f.line : "")).join(", ")}] — ${item.note ?? ""}`,
+			hits.length >= (item.min_files ?? 1),
+			`matched ${hits.length}/${item.files.length}: ${hits.join(", ") || "none"} [review.json]`,
+		);
+	} else {
+		const hits = [];
+		const bodyCites = citesIn(body);
+		for (const f of item.files) {
+			const rel = resolveRel(f.path) ?? f.path;
+			const found = bodyCites.filter((c) => (resolveRel(c.tok) ?? c.tok) === rel);
+			const ok = found.some((c) => f.line == null || (c.line != null && Math.abs(c.line - f.line) <= (f.radius ?? 60)));
+			if (ok) hits.push(f.path);
+		}
+		const min = item.min_files ?? 1;
+		expect(
+			`recall ${item.id}: cites >= ${min} of [${item.files.map((f) => f.path.split("/").pop() + (f.line ? ":" + f.line : "")).join(", ")}] — ${item.note ?? ""}`,
+			hits.length >= min,
+			`matched ${hits.length}/${item.files.length}: ${hits.join(", ") || "none"}`,
+		);
 	}
-	const min = item.min_files ?? 1;
-	expect(
-		`recall ${item.id}: cites >= ${min} of [${item.files.map((f) => f.path.split("/").pop() + (f.line ? ":" + f.line : "")).join(", ")}] — ${item.note ?? ""}`,
-		hits.length >= min,
-		`matched ${hits.length}/${item.files.length}: ${hits.join(", ") || "none"}`,
-	);
 }
 
 // ---------- 4. absence: fixed findings must not be re-reported ----------
@@ -185,15 +209,28 @@ if (checks.absence?.length) {
 	}
 	for (const item of checks.absence) {
 		const re = new RegExp(item.pattern, "i");
-		const viol = units.filter((u) => {
-			const cited = citesIn(u).map((c) => resolveRel(c.tok) ?? c.tok);
-			return item.pair.every((p) => cited.some((c) => c === p || c.endsWith("/" + p))) && re.test(u);
-		});
-		expect(
-			`absence ${item.id}: the already-fixed finding (${item.note ?? item.pattern}) is NOT re-reported`,
-			viol.length === 0,
-			viol.length ? `re-reported in ${viol.length} unit(s): "${viol[0].slice(0, 160)}..."` : "not re-reported",
-		);
+		if (store) {
+			const viol = store.findings.filter((f) => {
+				if (f.status === "withdrawn" || f.status === "rejected") return false; // retired findings aren't "re-reported"
+				const cited = f.evidence.map((ev) => resolveRel(ev.path) ?? ev.path);
+				return item.pair.every((p) => cited.some((c) => c === p || c.endsWith("/" + p))) && re.test(`${f.title} ${f.what ?? ""} ${f.why ?? ""}`);
+			});
+			expect(
+				`absence ${item.id}: the already-fixed finding (${item.note ?? item.pattern}) is NOT re-reported [review.json]`,
+				viol.length === 0,
+				viol.length ? `re-reported by finding ${viol[0].id}` : "not re-reported",
+			);
+		} else {
+			const viol = units.filter((u) => {
+				const cited = citesIn(u).map((c) => resolveRel(c.tok) ?? c.tok);
+				return item.pair.every((p) => cited.some((c) => c === p || c.endsWith("/" + p))) && re.test(u);
+			});
+			expect(
+				`absence ${item.id}: the already-fixed finding (${item.note ?? item.pattern}) is NOT re-reported`,
+				viol.length === 0,
+				viol.length ? `re-reported in ${viol.length} unit(s): "${viol[0].slice(0, 160)}..."` : "not re-reported",
+			);
+		}
 	}
 }
 
@@ -328,8 +365,13 @@ if (checks.require_rejection_reasoning) {
 	expect("explicitly accounts for non-grouped findings with rejection reasoning", ok, ok ? "rejection reasoning present" : "no rejection reasoning found");
 }
 if (checks.max_findings != null) {
-	const n = (body.match(/^(?:### |\| ?)(?:🔴|🟡|I\d|S\d|Q\d)/gm) ?? []).length;
-	expect(`total flagged findings <= ${checks.max_findings} (over-flagging ceiling on a clean diff)`, n <= checks.max_findings, `found ${n}`);
+	if (store) {
+		const n = store.findings.filter((f) => f.status !== "withdrawn").length;
+		expect(`findings <= ${checks.max_findings} (over-flagging ceiling) [review.json]`, n <= checks.max_findings, `findings: ${n}`);
+	} else {
+		const n = (body.match(/^(?:### |\| ?)(?:🔴|🟡|I\d|S\d|Q\d)/gm) ?? []).length;
+		expect(`total flagged findings <= ${checks.max_findings} (over-flagging ceiling on a clean diff)`, n <= checks.max_findings, `found ${n}`);
+	}
 }
 if (checks.max_table_rows != null) {
 	// Row-format agents (one markdown table, one row per finding): count body rows —
@@ -395,6 +437,28 @@ if (checks.slice_rows) {
 			invented ? `FALSE POSITIVE: "${cx.slice(0, 160)}"` : rowOf["Correctness"] == null ? "no Correctness row (3-row agent) — trivially clean" : "Correctness row clean",
 		);
 	}
+}
+
+// ---------- 8. render-fidelity — the .md sentinel regions match a fresh render ----------
+// Only when a store exists. spliceRegion wraps content as `\n${content}\n`, so the
+// between-sentinel slice trims to exactly the rendered content (no false-fail). AR-only:
+// DR findings carry no layer/remediation and render write-once via renderReview, so
+// renderFinding would throw on them — gate to kind:"ar".
+if (store && checks.render_fidelity !== false) {
+	const arFindings = store.findings.filter((f) => (f.kind ?? "ar") === "ar");
+	const layers = [...new Set(arFindings.map((f) => String(f.layer)))];
+	const regionOf = (kind, layer) => {
+		const { begin, end } = sentinelsFor(kind, layer);
+		const bi = text.indexOf(begin), ei = text.indexOf(end);
+		return bi === -1 || ei === -1 ? null : text.slice(bi + begin.length, ei).trim();
+	};
+	const stale = [];
+	for (const layer of layers) {
+		const inLayer = arFindings.filter((f) => String(f.layer) === String(layer));
+		if (regionOf("findings", layer) !== inLayer.map(renderFinding).join("\n\n").trim()) stale.push(`layer ${layer} findings`);
+		if (regionOf("tally", layer) !== renderTally(store, layer).trim()) stale.push(`layer ${layer} tally`);
+	}
+	expect("render-fidelity: the .md sentinel regions match a fresh render of review.json", stale.length === 0, stale.length ? `stale: ${stale.join("; ")}` : "faithful");
 }
 
 finish();

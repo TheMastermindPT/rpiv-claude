@@ -12,6 +12,8 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { renderFinding, renderTally } from "../../skills/_shared/store.mjs";
+
 const GRADER = join(dirname(fileURLToPath(import.meta.url)), "grade-artifact.mjs");
 const tmp = mkdtempSync(join(tmpdir(), "grade-artifact-"));
 
@@ -175,6 +177,95 @@ const g5 = run(frdOut, {
 assert.equal(byText(g5, "routing scope-creep").passed, true, "scope-creep keyword in Follow-ups and not in Goals");
 assert.equal(byText(g5, "routing constraint").passed, true, "constraint keyword present in Constraints");
 assert.equal(byText(g5, "routing leaked").passed, false, "keyword is NOT in Goals -> in_section check must fail");
+
+// ---------- Phase 7: grader field-assert migration (store-backed) ----------
+// A store-backed artifact grades recall/absence/max_findings over the sibling review.json;
+// a non-store artifact keeps the existing markdown grep (per-artifact fallback, no dual-run).
+function storeFixture(name, findings, mdBody = "# Review\n") {
+	const md = join(tmp, `${name}.md`);
+	writeFileSync(md, `---\nstatus: ready\n---\n${mdBody}`);
+	writeFileSync(join(tmp, `${name}.json`), JSON.stringify({ schema: 1, artifact: `${name}.md`, target: "src", findings }, null, 2));
+	return md;
+}
+
+// P7.1 recall field-asserts over review.json WHEN a store exists.
+{
+	const finding = { id: "L0-01", layer: 0, lens: "G", title: "t", evidence: [{ path: "src/alpha.ts", startLine: 320, quoted: ["x"] }] };
+	const md = storeFixture("recall-store", [finding]);
+	const caseSpec = { id: "T-recall-store", checks: { render_fidelity: false, recall: [{ id: "R1", files: [{ path: "src/alpha.ts", line: 322, radius: 5 }], min_files: 1 }] } };
+	const r = byText(run(md, caseSpec), "recall R1");
+	assert.equal(r.passed, true, "recall matches review.json evidence within the window");
+	assert.match(r.evidence, /\[review\.json\]/, "graded off review.json");
+	// delete the finding from review.json, leave a matching body cite -> must fail (reads JSON, not body)
+	writeFileSync(join(tmp, "recall-store.json"), JSON.stringify({ schema: 1, artifact: "recall-store.md", target: "src", findings: [] }, null, 2));
+	writeFileSync(md, "---\nstatus: ready\n---\n# Review\n\n`src/alpha.ts:322` — `x`\n");
+	assert.equal(byText(run(md, caseSpec), "recall R1").passed, false, "empty review.json -> recall fails despite a body cite");
+	console.log("OK — P7 recall from review.json: field-asserts over the store, not the body.");
+}
+
+// P7.2 NON-store artifacts keep grading recall via the UNCHANGED markdown path.
+{
+	const md = join(tmp, "recall-nostore.md");
+	writeFileSync(md, "---\nstatus: ready\n---\n## Findings\n\n- `src/alpha.ts:3` — `return prior * (1 + pct / 100);`\n");
+	const r = byText(run(md, { id: "T-recall-nostore", checks: { recall: [{ id: "R1", files: [{ path: "src/alpha.ts", line: 3 }], min_files: 1 }] } }), "recall R1");
+	assert.equal(r.passed, true, "markdown fallback matches the body cite");
+	assert.doesNotMatch(r.evidence, /\[review\.json\]/, "graded off markdown, not review.json");
+	console.log("OK — P7 non-store markdown fallback: recall via the body cite (unchanged).");
+}
+
+// P7.3 absence field-asserts when store-backed; the markdown unit-grep runs otherwise.
+{
+	const dup = { id: "D1", status: "accepted", title: "cap formula duplicated 1 + pct", what: "", why: "", evidence: [{ path: "src/alpha.ts", startLine: 3 }, { path: "src/deep/beta.ts", startLine: 3 }] };
+	const md = storeFixture("absence-store", [dup]);
+	const caseSpec = { id: "T-absence-store", checks: { render_fidelity: false, absence: [{ id: "fixed-dup", pair: ["src/alpha.ts", "src/deep/beta.ts"], pattern: "1 ?\\+ ?pct", note: "was fixed" }] } };
+	assert.equal(byText(run(md, caseSpec), "absence fixed-dup").passed, false, "store finding re-reports the fixed pair+pattern");
+	writeFileSync(join(tmp, "absence-store.json"), JSON.stringify({ schema: 1, artifact: "absence-store.md", target: "src", findings: [] }, null, 2));
+	assert.equal(byText(run(md, caseSpec), "absence fixed-dup").passed, true, "no finding in review.json -> not re-reported");
+	const mdNo = join(tmp, "absence-nostore.md");
+	writeFileSync(mdNo, "---\nstatus: ready\n---\n## Findings\n\n| D1 | dup | `src/alpha.ts:3` and `src/deep/beta.ts:3` 1 + pct | High |\n");
+	assert.equal(byText(run(mdNo, { id: "T-absence-nostore", checks: { absence: [{ id: "fixed-dup", pair: ["src/alpha.ts", "src/deep/beta.ts"], pattern: "1 ?\\+ ?pct" }] } }), "absence fixed-dup").passed, false, "markdown unit re-reports -> fail");
+	console.log("OK — P7 absence store + fallback: store field-assert; markdown unit-grep otherwise.");
+}
+
+// P7.4 max_findings counts active review.json findings when store-backed (withdrawn excluded); else body markers.
+{
+	const mk = (statuses) => statuses.map((s, i) => ({ id: `F${i}`, status: s }));
+	const md = storeFixture("max-store", mk(["accepted", "accepted", "accepted", "withdrawn"]));
+	assert.equal(byText(run(md, { id: "T-max-store-3", checks: { render_fidelity: false, max_findings: 3 } }), "findings <= 3").passed, true, "3 active + 1 withdrawn <= 3");
+	assert.equal(byText(run(md, { id: "T-max-store-2", checks: { render_fidelity: false, max_findings: 2 } }), "findings <= 2").passed, false, "3 active > 2");
+	const mdNo = join(tmp, "max-nostore.md");
+	writeFileSync(mdNo, "---\nstatus: ready\n---\n### 🔴 one\n### 🟡 two\n");
+	assert.equal(byText(run(mdNo, { id: "T-max-nostore", checks: { max_findings: 1 } }), "flagged findings <= 1").passed, false, "2 body markers > 1");
+	console.log("OK — P7 max_findings store + fallback: active count vs body-marker count.");
+}
+
+// P7.5 render-fidelity fails when a region diverges from a fresh render; skipped when no store.
+{
+	const finding = {
+		id: "L0-01", layer: 0, lens: "G", title: "god-object", evidence: [{ path: "src/alpha.ts", startLine: 3, endLine: null, quoted: ["return prior * (1 + pct / 100);"] }],
+		symbol: null, anchor: "a", what: "w", why: "y", remediation: { steps: ["s"], acceptance: ["a"], testStrategy: "t", tradeoff: "o" },
+		severity: "High", effort: "L", blastRadius: ["cross-module"], class: "redesign", entityStage: null, verify: "Verified", status: "accepted", statusNote: null, dependsOn: [], crossCutTag: null, fp: "deadbeefdeadbeef",
+	};
+	const store = { schema: 1, artifact: "rf.md", target: "src", findings: [finding] };
+	const findingsRegion = renderFinding(finding);
+	const tallyRegion = renderTally(store, 0);
+	const body = `# Review\n\n<!-- BEGIN store:findings layer=0 -->\n${findingsRegion}\n<!-- END store:findings layer=0 -->\n\n<!-- BEGIN store:tally layer=0 -->\n${tallyRegion}\n<!-- END store:tally layer=0 -->\n`;
+	const md = join(tmp, "rf.md");
+	writeFileSync(md, `---\nstatus: ready\n---\n${body}`);
+	writeFileSync(join(tmp, "rf.json"), JSON.stringify(store, null, 2));
+	assert.equal(byText(run(md, { id: "T-rf", checks: {} }), "render-fidelity").passed, true, "regions match a fresh render -> faithful");
+	// mutate one char inside the findings region (review.json unchanged) -> stale
+	writeFileSync(md, `---\nstatus: ready\n---\n${body.replace("- **Lens:** G", "- **Lens:** X")}`);
+	const stale = byText(run(md, { id: "T-rf-stale", checks: {} }), "render-fidelity");
+	assert.equal(stale.passed, false, "mutated region -> stale");
+	assert.match(stale.evidence, /layer 0 findings/, "names the stale region");
+	// no sibling review.json -> render-fidelity is store-gated (no expectation emitted)
+	const mdNo = join(tmp, "rf-nostore.md");
+	writeFileSync(mdNo, "---\nstatus: ready\n---\n# Review\n");
+	const g = run(mdNo, { id: "T-rf-nostore", checks: {} });
+	assert.equal(g.expectations.find((e) => e.text.includes("render-fidelity")), undefined, "no render-fidelity expectation without a store");
+	console.log("OK — P7 render-fidelity: faithful passes, mutated fails, store-gated when absent.");
+}
 
 rmSync(tmp, { recursive: true, force: true });
 console.log("OK");
