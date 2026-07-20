@@ -186,7 +186,15 @@ Layers mirror dependency direction. Higher layers consume lower-layer vocabulary
    - **Frontmatter** with all template_version 2 fields. Fill `file_count`, `loc_*`, `entities`, and the **Health Scorecard** NOW from Step 2 metrics + linter summary (this is the quantified backbone, available before any finding). Set `prior_review` to the Step 2 path or `none`. Leave `severity`/`verification`/`drift`/`slop_by_lens` as zeros for now, and set frontmatter `health_score: pending` — the composite verdict is written only at the Step 11 ready-flip. An interrupted run must not leave a skeleton carrying a verdict ("healthy") computed before any lens ran; the Scorecard section holds the raw metrics in the meantime.
    - **System Model:** write the `## System Model` section from the Step 2.7 `entity-mapper` output (L0 table + per-entity L1/L2 with style-specific stage bullets). Omit only when Step 2.7 was gate-skipped.
    - **Drift Delta:** placeholder if a prior review exists, else omit the section (scorecard Composite notes "Baseline review").
-   - **Methodology / Slop Inventory / per-layer / themes / polish plan:** empty placeholders; one `## Layer N — {name}` heading per approved layer. Each layer section carries its two store-managed sentinel pairs (`<!-- BEGIN store:findings layer=N -->`/`<!-- END store:findings layer=N -->` and the matching `store:tally` pair, N = the layer number verbatim, sub-layers included) with EMPTY interiors — Step 7.5's store refuses to render into a skeleton missing them.
+   - **Methodology / Slop Inventory / themes / polish plan:** empty placeholders. The
+     per-layer skeleton is emitted by the store, not hand-written: keep the template's empty
+     `<!-- BEGIN store:layers -->`/`<!-- END store:layers -->` region in the skeleton Write, then
+     after the layers are approved run
+     `echo '{"target":"<target>","layers":[{"n":"0","name":"<name>"},...]}' | node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/store.mjs" init --artifact <path.md> --root .`
+     — creates the sibling review.json envelope AND expands the `store:layers` region into one
+     `## Layer N` section per layer, each with EMPTY store:findings / store:tally sentinel pairs
+     (N = the layer number verbatim, sub-layers included; Step 7.5's store refuses to render into
+     a skeleton missing them).
 
 4. **All subsequent writes use the Edit tool** — EXCEPT the store-managed sentinel regions (finding blocks + tallies, written only by `store.mjs` at 7.5/7.6) and the Step-11 ready flip (`store finalize`). Never re-Write the whole file — the artifact is the durable checkpoint between sessions — and never hand-Edit between sentinel markers.
 
@@ -365,6 +373,11 @@ Persist through the findings store the instant an outcome is chosen — never ha
 
    One call validates at insert (schema, unique ID, unambiguous evidence paths, content-hash fingerprint) and renders the finding block AND this layer's tally into the sentinel regions. Non-zero exit = rejected: fix the reported field and re-pipe — never bypass with a hand Edit. Maintain frontmatter `unresolved_finding_count` via Edit as before (counters stay Edit-based this iteration).
 
+   **Apply the Step-6 verify verdict via `store update` — a PERSISTED finding, never a hand-Edit.** The Step-6 initial gate (drop never-persisted Falsified candidates; carry Verified/Weakened to Step 7) is unchanged; findings persist at 7.5 with a provisional `verify:"Verified"` + raw severity. After the `store add`, apply each surviving finding's verdict:
+   - **Verified** → no update (the provisional stands).
+   - **Weakened** → `echo '{"id":"L{X}-{YY}","verify":"Weakened","verifyNote":"<narrower claim>"}' | node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/store.mjs" update --artifact <artifact path> --root .` → severity demotes one tier; the layer re-renders.
+   - **Falsified → withdrawn (retire-not-delete)** fires only on an ALREADY-PERSISTED finding later invalidated — a Step-13 follow-up re-verification or a DR falsification (Slice 8): `store update {id, verify:"Falsified", verifyNote}` flips `status:"withdrawn"`; the record is RETAINED (append-only, emitted as a SARIF suppression by `toSarif`) and still counted in the tally. It is NOT the Step-6 initial gate (those candidates were never stored). Frontmatter verified/weakened/falsified count recording is otherwise unchanged.
+
 #### 7.6 Tally
 Re-render the layer tally from the store — status counts, fired-lens counts (inline code by construction; the backtick discipline is now structural), cross-cut tags introduced/reused, and within-layer dependency edges are ALL derived from the persisted findings:
 
@@ -380,7 +393,15 @@ If Step 2 found no prior review: omit the Drift Delta section; the scorecard Com
 
 Otherwise, match prior review findings against this run's using **content-hash fingerprints** that survive file renames and line-number drift — unlike the old `path#symbol@lens` pattern which breaks when files move.
 
-Read `references/drift-fingerprints.md` NOW (gated — only when a prior review exists) and execute its 8a–8d exactly: fingerprint current + prior findings via `fingerprint.mjs` (count + no-null assertions, abort on either), match inline (no agent), classify `Still-open` / `Resolved` (claim-verifier-verified at HEAD) / `Regressed` / `NEW`, write the Drift Delta section + scorecard row + frontmatter `drift`, and fall back to `path#symbol@lens` matching when the helper is unavailable.
+The drift computation is `store diff`, not a hand-Edit. Findings already carry stored fingerprints (computed at `store add`), so the store matches current vs prior on stored `fp` inline — the old 8a `fingerprint.mjs` recompute + count/no-null assertions are subsumed (fp validity is enforced at insert; a stored fp is never null). Run once, when a prior review exists:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/store.mjs" diff --artifact <artifact path> --prior <prior-review.json> --root .
+```
+
+→ classifies each finding `Still-open` / `Regressed` / `NEW`, persists `baselineState` + `driftClass` on current findings, and writes the frontmatter `drift:` counts + the store-managed `store:drift` region (the 4-class table + NEW/Regressed/Resolved id lists). The `path#symbol@lens` fallback is retired — stored fingerprints are always present.
+
+**Re-verify Resolved rows at HEAD (STAYS an AR-skill dispatch).** After `store diff`, dispatch `claim-verifier` over `store.drift.resolved` to confirm each prior finding is genuinely fixed at HEAD — a falsely-claimed fix must not hide a regression. A false-Resolved is re-added via `store add` (it then Regresses on the next diff).
 
 **Model drift (additive).** When BOTH this run and the prior review emitted LikeC4 models (`likec4_model` frontmatter on each), also compute the structural model diff per the "Model drift" section of `references/likec4-model.md` — one extra line in the Drift Delta, orchestrator set-arithmetic, no agent. Skip silently when either side lacks a model.
 
@@ -390,12 +411,13 @@ A principle surfaces when the developer reverses a finding with a generalizable 
 
 ### Step 9.5: Cluster Discovery (set-arithmetic over the finding graph)
 
-Cross-cut tags were hand-attached per finding at 7.5, so Step 10 can only surface clusters someone already labelled — un-anticipated clusters stay invisible. This step finds them. **No agent dispatch** — the orchestrator computes inline over the persisted finding set (the same idiom as code-review's Gap-Finder):
+Cross-cut tags were hand-attached per finding at 7.5, so Step 10 can only surface clusters someone already labelled — un-anticipated clusters stay invisible. This step finds them. **No agent dispatch** — `store query --clusters` computes the store-intrinsic clustering inline over the persisted finding set:
 
-1. **Build the finding graph.** For every accepted/deferred finding, extract its `file`, nearest symbol, `Depends on` edges, lens, and any Step 6.5 `IX` constituency.
-2. **Cluster by shared key**, ignoring the hand-set cross-cut tag: group findings that share (a) the same file, (b) the same exported concept/symbol, (c) a `Depends on` edge, (d) membership in the same `IX` compound, (e) a co-change pair from `---co-change-candidates---`, or (f) the same System Model entity (their `Entity/stage` coordinate). A cluster needs >= 2 findings.
-3. **Subtract the known themes.** `{discovered clusters}` − `{clusters already covered by an existing cross-cut tag}` = the **un-anticipated clusters**. These are the systemic patterns no human named.
-4. **Promote each surviving cluster** into a candidate theme for Step 10, tagged `auto`, carrying the shared key as its provisional root-cause hypothesis. Record the discovered-cluster count in frontmatter `clusters_discovered`.
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/store.mjs" query --clusters --artifact <artifact path>
+```
+
+It groups accepted/deferred findings by shared (a) **file**, (b) **exported symbol**, (f) **System-Model Entity/stage**, AND by (c) each **Depends-on** edge — each a >= 2-member cluster counted in `discovered` — flagging every cluster `known` (all members already share one cross-cut tag) vs `AUTO` (un-anticipated — the "subtract known themes" step, un-labelled by any human). Only the two NON-store-intrinsic dimensions stay orchestrator-combined against the query output: (d) `IX`-compound membership (Step 6.5 records) and (e) co-change pairs (`---co-change-candidates---`). Promote each `AUTO` cluster into a Step-10 candidate theme tagged `auto`, carrying its shared key as the provisional root-cause hypothesis; record the discovered-cluster count in frontmatter `clusters_discovered`. Read-only — no persistence, no render mutation.
 
 ### Step 10: Synthesize Root-Caused Cross-Cutting Themes
 
@@ -420,6 +442,14 @@ Phases are agent-driven (handed to `blueprint` -> `implement`); size by signals 
 6. **LikeC4 end-state emission (gated).** When Step 4.5 emitted a model, read the "Step 11 — fate tags and end-state views" section of `references/likec4-model.md` and apply it **append-only**: phase tags into `spec.c4`, fates via `extend` (+ `#planned` elements for the G/M-lens units the plan creates) into `model.c4`, the `end-state` and per-phase views into `views.c4`, then re-run the validate loop. This is the visual encoding of the aimed-at architecture; the Step 4.5 blocks are never rewritten. Skip silently when no model was emitted. **Declared-model deliverable** (per the same reference's "Adoption deliverables" section): when Step 2.2 folded `C4-` conformance rows, add an "Update the declared architecture model" deliverable to the fitting phase (append the accepted missing relationships, retire the dead ones, annotate elements with `metadata { dir }` so the next review's mapping is free); when the repo declares NO model, offer "Adopt an architecture model" with the emitted project as the starting point — merge-never-replace, same discipline as the dependency-cruiser deliverable.
 
 7. **Citation-path gate (deterministic, before the flip).** Run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/check-citations.mjs" <the artifact path> --root .`. It exits non-zero and lists every **ambiguous bare-basename** cite (`service.ts:329` in a repo with three `service.ts`) — the un-greppable form the path-discipline prose keeps leaking from dense System-Model stage cells. For each one, grep the repo for the basename, pick the file the surrounding prose means, rewrite the cite repo-relative from the repository root, and re-run until it exits 0. Do NOT flip status while it fails — an ambiguous cite is as broken as a wrong line.
+
+7b. **LikeC4 conformance gate (deterministic, before the flip — gated).** Mirrors the citation gate above (a second pre-finalize block). SKIP the whole step when Step 2.7 was gate-skipped (no System Model → no `.c4` model). Otherwise:
+   - **(a) Update the declared model to the END STATE** (deliverable): the polish plan changes the target architecture, so add/rename the elements + relationships the plan introduces and drop what it removes, then re-export (`npx likec4 export json`) — this makes the model a living contract, not a snapshot.
+   - **(b) Run the standalone conformance gate** over the updated model vs the Step-2 import graph:
+     ```bash
+     node "${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/_helpers/likec4-conformance-gate.mjs" --model <export.json> --graph <depcruise.json> [--target <prefix>] --max-undocumented 0
+     ```
+     Exit 1 (undocumented edges exceed the threshold) BLOCKS the finalize: either document each undocumented edge as a declared relationship or record it as an accepted finding, then re-run. Exit 0 (pass) OR degraded (model/graph unavailable — additive/non-blocking) proceeds to `store finalize`. The gate stays a SEPARATE script (locked decision): the shared store never imports LikeC4 — conformance composes at the SKILL.md level exactly where check-citations sits.
 
 8. **Confirm + flip status** via `ask_user_question` ("{N} phases ({F} findings, {Files} files). Approve?"; Approve / Adjust boundaries / Resequence / Other). On approve: rebuild the `phases:` frontmatter array from the `### Phase N — name` headings via Edit (one `{ n, title, depends_on, blast_radius, effort }` per heading, body order), then finalize through the store — never hand-Edit the flip:
 

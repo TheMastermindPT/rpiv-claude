@@ -407,7 +407,11 @@ Before writing the artifact, spawn ONE `claim-verifier` whose sole job is to gro
    - `date:` ← `<iso>` (first tab-separated field on line 1 of the Metadata block above, offset verbatim).
    - Reviewer: `author:` from the Metadata block (fallback: `unknown`).
 
-2. **Write the artifact** using the Write tool (no Edit — this skill writes once per run).
+2. **Emit the artifact via the store (write-once).** `store add` each finding as `kind:"dr"` (`addFinding` skips the AR-sentinel render for dr), store the review metadata (date/author/repository/branch/commit/review_type/scope/scope_strategy/in_scope_files_count/status) + the pre-rendered trailing sections (Pattern/Impact/Precedents/Recommendation) in the envelope's `review` block, then ONE call writes the whole `.md`:
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/store.mjs" render --review --artifact <review.md> --root .
+   ```
+   `renderReview` emits byte-identical severity emoji (🔴/🟡/🔵/💭) + the full `template_version: 2` frontmatter the locator/analyzer grep, with `severity`/`verification`/`blockers_count` DERIVED from the findings. `verify` is stored capitalized (unified with AR so `store update` transitions work) and mapped to the lowercase `verification` keys at render. Append-only follow-ups (Step 9) remain a manual Edit below the store-written body — write-once == the initial emission, not the follow-ups.
 
 **Finding IDs**: lens-prefix + ordinal, stable across severity moves. `I` = interaction, `Q` = quality, `S` = security, `G` = gap. Ordinals never renumber — if a finding is dropped by Step 6, its ID is retired, not reused.
 
@@ -426,7 +430,7 @@ Before writing the artifact, spawn ONE `claim-verifier` whose sole job is to gro
 
 **Advisor prose**, when advisor ran, is pasted verbatim as a blockquote at the top of `## Recommendation`, not as a standalone section.
 
-**Template shape**: Read the full template at `templates/review.md` (house pattern per `.rpiv/guidance/skills/architecture.md:66` — `templates/` subfolder, runtime-read, never inlined). At emission time: Read `templates/review.md`, fill every `{placeholder}` with reconciled-and-verified values from Steps 5 and 6, apply the section-omission rules above (delete the whole section AND its trailing separator line when its input is empty), strip the leading `<!-- -->` comment, and Write the result to the target path.
+**Template shape**: `templates/review.md` (house pattern per `.rpiv/guidance/skills/architecture.md:66` — `templates/` subfolder, runtime-read, never inlined) is the byte-shape reference `renderReview` matches — the store now PRODUCES this shape rather than a hand fill-and-strip. `renderReview` emits the frontmatter, the post-heading summary line, the Legend, Top Blockers, and the per-tier severity sections (degrade-per-tier finding blocks); the section-omission rules are intrinsic to it (a tier/section with no findings is not emitted). The trailing analysis sections (Pattern/Impact/Precedents/Recommendation) ride the envelope's `review.sections` (pre-rendered by this skill, with the same omission rules applied) and are appended verbatim.
 
 ### Step 8: Present Summary
 
@@ -461,6 +465,11 @@ Ask follow-ups, or chain forward.
 - **Append, never rewrite.** Edit the artifact to add a `## Follow-up {ISO 8601 timestamp}` section. The section heading's timestamp is the append-time record — no frontmatter update needed.
 - **Re-dispatch narrowly.** Spawn a single targeted `codebase-analyzer` on the area in question (1 agent max).
 - **Retired IDs stay retired.** Findings dropped at Step 6 (Falsified) do not re-enter follow-ups; new findings introduce new IDs with the same lens-prefix scheme (next ordinal).
+- **Retire a PERSISTED finding a follow-up re-verification falsifies (retire-not-delete).** When a follow-up re-verification invalidates a finding already written to `review.json` (distinct from the Step-6 gate above, whose candidates were never persisted), apply it via the store — never a hand-Edit:
+  ```bash
+  echo '{"id":"<ID>","verify":"Falsified","verifyNote":"<why it no longer holds>"}' | node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/store.mjs" update --artifact <review.md> --root .
+  ```
+  `status` flips to `withdrawn` (the record is RETAINED, append-only; `renderReview` omits it from the body but the `verification` count still reflects it), then re-run `store render --review`. This is the "DR falsification" trigger the AR verify-verdict wiring refers to.
 - **When to re-invoke instead.** If the diff itself changed (new commits, scope shift, different branch), re-run `/rpiv:deep-review` for a fresh review. The previous block's `Next step:` stays valid for the existing review.
 
 ## Important Notes

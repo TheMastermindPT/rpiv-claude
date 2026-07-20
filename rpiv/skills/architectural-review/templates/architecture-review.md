@@ -84,37 +84,14 @@ Top-down domain-entity / data-flow model from the `entity-mapper` agent (Build S
 
 ---
 
-## Drift Delta — vs {prior review filename} ({prior date})
+## Drift Delta — vs prior review
 
-<!-- OMIT this whole section (heading through its trailing `---`) when there is no prior review for this target. In that case the Health Scorecard's Composite row notes "Baseline review — no prior to diff against." -->
+<!-- OMIT this whole section (heading through its trailing `---`) when there is no prior review for this target. In that case the Health Scorecard's Composite row notes "Baseline review — no prior to diff against." The optional LikeC4 model-drift line (an AR-skill addition emitted when BOTH reviews carry a `likec4_model`) sits in this prose, OUTSIDE the store-managed region below. -->
 
-**Scorecard:** Resolved {R} · Regressed {Rg} · Still-open {S} · NEW {N} · **Net slop Δ {+/-Δ}**
-
-Matched by content-hash fingerprint via `fingerprint.mjs` — survives file renames and line drift. Prior finding IDs shown as display aliases.
-
-### Regressed — was fixed, slop returned ({Rg})
-
-| Prior ID -> Current ID | Where | What came back |
-|---|---|---|
-| {LX-YY -> Gn} | `file:line` — `{verbatim line}` | {one line} |
-
-### NEW since last review — net-new slop ({N})
-
-| Current ID | Lens | Where | One-line |
-|---|---|---|---|
-| {Gn} | {D/C/G/A/T/L/M/S/Lc/Fe/Fp} | `file:line` — `{verbatim line}` | {one line} |
-
-### Still-open — carried from prior ({S})
-
-| Prior ID -> Current ID | Where | Note |
-|---|---|---|
-| {LX-YY -> Gn} | `file:line` — `{verbatim line}` | {still reproduces} |
-
-### Resolved — verified gone at {commit} ({R})
-
-| Prior ID | What was fixed |
-|---|---|
-| {LX-YY} | {one line; re-verified absent at HEAD} |
+<!-- BEGIN store:drift -->
+<!-- store-managed: `store.mjs diff` renders the vs-line, the 4-class count table, and
+     the NEW/Regressed/Resolved id lists here. Never hand-edit. -->
+<!-- END store:drift -->
 
 ---
 
@@ -246,7 +223,7 @@ Each finding is a level-3 heading `### L<layer>-<seq> — <title>` followed by t
 | **Remediation** | safe-refactor sequence + acceptance criteria + trade-off (see Remediation recipe) |
 | **Severity** | Low / Med / High — anchored in the quantified threshold, not vibes |
 | **Effort** | S (single-file, no consumers) / M (<=5 files, mechanical) / L (public-API or >=6 files) |
-| **Blast radius** | `internal` / `public-API` / `on-disk` / `cross-module` (from integration-scanner) |
+| **Blast radius** | one or more of `internal` / `public-API` / `on-disk` / `cross-module` / `other` — free-form allowed (from integration-scanner) |
 | **Class** | `polish` (rename / refactor / DRY) vs `redesign` (structural shift) |
 | **Verify** | `Verified` / `Weakened` (demoted one tier) — `Falsified` findings are dropped, never written |
 | **Status** | `open` / `accepted` / `rejected` / `deferred` / `withdrawn` |
@@ -289,86 +266,22 @@ _Principles emerge during Step 5 triage and are captured at Step 7. Patterns tha
 
 ---
 
-## Layer 0 — {layer name}
+<!-- BEGIN store:layers -->
+<!-- store-managed: `store.mjs init` emits one `## Layer N` section here per approved
+     layer, each with EMPTY store:findings / store:tally sentinel pairs. Never hand-edit;
+     re-run store init, or store add/render/update/diff. -->
+<!-- END store:layers -->
 
-{Files: `file1.ext`, `file2.ext`, ...}
-
-{Optional preamble: 1-2 paragraphs on what the layer owns + any ripple-ins from prior decisions in the same review.}
-
-<!-- BEGIN store:findings layer=0 -->
-<!-- store-managed region: store.mjs `add` renders every finding block between these markers. The skeleton copies the marker pair EMPTY; the L0-01 example below documents the emitted shape. Never hand-edit inside. -->
-
-### L0-01 — {short headline}
-
-- **Lens:** {D | C | G | A | T | L | Sec | M | S | Lc | Fe | Fp | Tc | P | IX | 10dim}
-
-**Evidence**
-
-`file.ext:lineA-lineB` — `{verbatim line}`
-
-**Quantified anchor**
-
-{the metric that sets severity, e.g. `927 LOC = 9.4x median; 15 consumers (cross-module)`}
-
-**What it is**
-
-{What the code does today.}
-
-**Why it's slop**
-
-{Why this is accumulated redundancy / erosion the linters missed, not intentional design. For the classic 10dim sweep this reads as the architectural problem statement.}
-
-**Remediation**
-
-1. {Safe-refactor step 1 — reversible (e.g. "extract pure helpers behind a re-export shim").}
-2. {Step 2 — migrate consumers one cluster at a time.}
-3. {Step 3 — delete the shim.}
-
-- **Acceptance criteria:** {checkable, e.g. "`metrics.mjs` reports this file < 3x median"; "`npm run deps` passes"; "no duplicate `{Type}` definition remains".}
-- **Test strategy:** {characterization test before a split; assertion added where the T lens found theater.}
-- **Trade-off / alternative:** {>= 1 alternative considered + why not chosen.}
-
-- **Severity:** {Low | Med | High}
-- **Effort:** {S | M | L}
-- **Blast radius:** {internal | public-API | on-disk | cross-module}
-- **Class:** {polish | redesign}
-- **Entity / stage:** {System Model coordinate, e.g. `WeeklyPlan/PERSIST` | — when no model}
-- **Verify:** {Verified | Weakened — narrower than first stated}
-- **Status:** {open -> triaged outcome inline, e.g., **accepted** — {chosen option summary}}
-- **Depends on:** {LX-YY, ...}
-- **Cross-cut tag:** `T{N}-{theme-name}` _(optional)_
-
-{Repeat for L0-02, L0-03, ...}
-
-<!-- END store:findings layer=0 -->
-
-<!-- BEGIN store:tally layer=0 -->
-
-### Layer 0 — tally
-
-| Status | Count |
-|---|---|
-| accepted | {A} |
-| rejected | {R} |
-| deferred | {D} |
-| withdrawn | {W} |
-
-Slop lenses fired in this layer: `{D: N; C: N; ...}` (rendered by store.mjs — inline code by construction; the counts, cross-cut tags, and dependency edges below are all derived from the store).
-Cross-cutting tags introduced: {list}. Reused: {list}.
-
-Dependency edges within Layer 0:
-
-- L0-XX depends on L0-YY ({dep title})
-
-<!-- END store:tally layer=0 -->
-
----
-
-## Layer 1 — {layer name}
-
-{Same structure as Layer 0 — including its own `store:findings layer=1` / `store:tally layer=1` sentinel pairs.}
-
-{... repeat per layer ...}
+<!-- Finding-shape reference (what store add renders between store:findings markers):
+       ### L0-01 — {short headline}
+       - **Lens:** {D | C | G | A | T | L | Sec | M | S | Lc | Fe | Fp | Tc | P | IX | 10dim}
+       **Evidence** / **Quantified anchor** / **What it is** / **Why it's slop** / **Remediation**
+       - **Severity:** {Low | Med | High}   - **Effort:** {S | M | L}
+       - **Blast radius:** {one or more of internal | public-API | on-disk | cross-module | other — free-form allowed}
+       - **Class:** {polish | redesign}     - **Entity / stage:** {System Model coordinate | —}
+       - **Verify:** {Verified | Weakened | Falsified}   - **Status:** {open -> triaged outcome}
+       - **Depends on:** {LX-YY, ...}        - **Cross-cut tag:** `T{N}-{theme-name}` _(optional)_
+     The per-layer `### Layer N — tally` block is likewise store-rendered. -->
 
 ---
 

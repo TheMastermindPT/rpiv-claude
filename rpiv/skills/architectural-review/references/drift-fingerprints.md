@@ -1,6 +1,11 @@
-<!-- Read by architectural-review SKILL.md at Step 8, ONLY when Step 2 located a prior review (never read on a baseline review). Content moved verbatim from SKILL.md — the content-hash fingerprint mechanics (8a-8d) and the path-based fallback. Apply as written, do not reword. -->
+<!-- SUPERSEDED (Slice 5, findings-store next layer). Step 8 no longer reads this file:
+     drift now runs via `store diff` (skills/_shared/store.mjs), which matches current vs
+     prior on the stored `fp` each finding already carries from `store add` — the 8a-8d
+     fingerprint.mjs recompute and the `path#symbol@lens` fallback documented below are
+     retired. Kept only as historical reference for the pre-store mechanics. See AR
+     SKILL.md Step 8 and the store's `diffReview`. -->
 
-# Drift Delta — content-hash fingerprint mechanics (Steps 8a–8d)
+# Drift Delta — content-hash fingerprint mechanics (Steps 8a–8d) — SUPERSEDED by `store diff`
 
 #### 8a. Compute fingerprints for the current run
 
