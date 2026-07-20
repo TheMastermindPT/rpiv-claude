@@ -1,13 +1,13 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "_comment": "This config was generated using 'stryker init'. Please take a look at: https://stryker-mutator.io/docs/stryker-js/configuration/ for more information.",
   "packageManager": "npm",
-  "reporters": [
-    "html",
-    "clear-text",
-    "progress"
-  ],
   "testRunner": "vitest",
-  "testRunner_comment": "Take a look at https://stryker-mutator.io/docs/stryker-js/vitest-runner for information about the vitest plugin.",
-  "coverageAnalysis": "perTest"
+  "vitest": { "configFile": "vitest.config.mjs" },
+  "coverageAnalysis": "perTest",
+  "reporters": ["html", "clear-text", "progress"],
+  "mutate": ["skills/_shared/store.mjs"],
+  "thresholds": { "high": 90, "low": 80, "break": null },
+  "incrementalFile": "reports/stryker-incremental.json",
+  "htmlReporter": { "fileName": "reports/mutation/store.html" },
+  "_status": "Action Item #2 scaffold. Runs green only AFTER Action Item #6 converts skills/_shared/store.test.mjs to vitest (Stryker's vitest-runner needs vitest tests to score mutants). mutate is scoped to the 90+ target store.mjs; `break` stays null until #6 so a premature run does not fail a build. mutate:plan uses --incremental."
 }

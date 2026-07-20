@@ -12,13 +12,19 @@
     "format:check": "biome format skills evals .claude/hooks",
     "deps": "depcruise skills evals",
     "knip": "knip",
-    "test": "echo \"tests run as: node <file>.test.mjs — vitest wiring pending (Action Item #2)\" && exit 1"
+    "test:vitest": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "mutate": "stryker run",
+    "mutate:plan": "stryker run --incremental",
+    "test": "echo \"tests run as: node <file>.test.mjs — vitest conversion is Action Item #6 (scaffold ready: npm run test:vitest)\" && exit 1"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.4",
     "@stryker-mutator/core": "^9.6.1",
     "@stryker-mutator/vitest-runner": "^9.6.1",
     "@types/node": "^26.1.1",
+    "@vitest/coverage-v8": "^4.1.10",
     "dependency-cruiser": "^18.1.0",
     "knip": "^6.27.0",
     "typescript": "^7.0.2",
