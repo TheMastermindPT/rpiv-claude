@@ -1,0 +1,22 @@
+{
+  "name": "rpiv",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "knip": "knip"
+  },
+  "devDependencies": {
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/vitest-runner": "^9.6.1",
+    "@types/node": "^26.1.1",
+    "dependency-cruiser": "^18.1.0",
+    "knip": "^6.27.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

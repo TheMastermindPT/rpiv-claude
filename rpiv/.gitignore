@@ -1,0 +1,7 @@
+# Node tooling (biome / knip / dependency-cruiser / vitest / stryker)
+node_modules/
+
+# Test / mutation / coverage output
+coverage/
+.stryker-tmp/
+reports/
