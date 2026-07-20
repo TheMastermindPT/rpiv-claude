@@ -4,13 +4,18 @@
   "description": "",
   "license": "ISC",
   "author": "",
+  "private": true,
   "type": "commonjs",
-  "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "knip": "knip"
+    "lint": "biome lint skills evals .claude/hooks",
+    "format": "biome format --write skills evals .claude/hooks",
+    "format:check": "biome format skills evals .claude/hooks",
+    "deps": "depcruise skills evals",
+    "knip": "knip",
+    "test": "echo \"tests run as: node <file>.test.mjs — vitest wiring pending (Action Item #2)\" && exit 1"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.4",
     "@stryker-mutator/core": "^9.6.1",
     "@stryker-mutator/vitest-runner": "^9.6.1",
     "@types/node": "^26.1.1",

@@ -1,5 +1,22 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "skills/**/*.mjs",
+    "evals/harness/**/*.mjs",
+    ".claude/hooks/**/*.mjs"
+  ],
+  "project": [
+    "skills/**/*.mjs",
+    "evals/harness/**/*.mjs",
+    ".claude/hooks/**/*.mjs"
+  ],
+  "ignoreBinaries": [
+    "rg",
+    "pip"
+  ],
+  "ignoreDependencies": [
+    "ts-morph"
+  ],
   "tags": [
     "-lintignore"
   ]

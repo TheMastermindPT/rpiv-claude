@@ -1,12 +1,12 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.5.4/schema.json",
 	"vcs": {
-		"enabled": false,
+		"enabled": true,
 		"clientKind": "git",
-		"useIgnoreFile": false
+		"useIgnoreFile": true
 	},
 	"files": {
-		"ignoreUnknown": false
+		"ignoreUnknown": true
 	},
 	"formatter": {
 		"enabled": true,
@@ -15,7 +15,11 @@
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"preset": "recommended"
+			"recommended": true,
+			"suspicious": {
+				"noAssignInExpressions": "off",
+				"noTemplateCurlyInString": "off"
+			}
 		}
 	},
 	"javascript": {
@@ -30,5 +34,17 @@
 				"organizeImports": "on"
 			}
 		}
-	}
+	},
+	"overrides": [
+		{
+			"includes": ["**/*.test.mjs"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noControlCharactersInRegex": "off"
+					}
+				}
+			}
+		}
+	]
 }
