@@ -74,4 +74,14 @@ describe("list-recent.mjs", () => {
 		// Math.max(1, ...) — 0 becomes 1, so we get the single newest file.
 		expect(out.trim().split("\n")).toEqual(["only.md"]);
 	});
+
+	it("resolves a relative directory against the current working directory", () => {
+		// Regression: a relative <dir> used to resolve against the git toplevel, so a
+		// project nested under the repo root (or any subdir invocation) looked in the
+		// wrong place. It must resolve against cwd — here the temp dir itself.
+		touch(join(dir, "a.md"), 1_000_000_000);
+		touch(join(dir, "b.md"), 1_000_000_500);
+		const out = run(dir, ".", "10");
+		expect(out.trim().split("\n")).toEqual(["b.md", "a.md"]);
+	});
 });

@@ -20,7 +20,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const BEGIN =
@@ -29,19 +29,33 @@ const END = "<!-- END standing-decisions -->";
 
 const toPosix = (p) => p.replaceAll("\\", "/");
 
-/** Resolve the repo root: explicit arg, else git toplevel, else cwd. */
+/** Resolve the repo root: explicit arg wins; otherwise the nearest ancestor of cwd
+ *  that owns a `.rpiv/` directory (bounded by the git toplevel), then the git
+ *  toplevel, then cwd. On a normal single-root repo (cwd === toplevel, `.rpiv/` at
+ *  the root) this returns the toplevel exactly as before; the walk-up only changes
+ *  the result when the project is nested under the repo (our rpiv/, a monorepo
+ *  package) where the git toplevel is NOT the project that owns `.rpiv/`. */
 export function repoRoot(argRoot) {
 	if (argRoot) return toPosix(argRoot);
+	let gitTop = "";
 	try {
-		const top = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+		gitTop = execFileSync("git", ["rev-parse", "--show-toplevel"], {
 			encoding: "utf-8",
 			stdio: ["ignore", "pipe", "ignore"],
 		}).trim();
-		if (top) return toPosix(top);
 	} catch {
 		/* not a git repo — fall through */
 	}
-	return toPosix(process.cwd());
+	const top = gitTop ? toPosix(gitTop) : "";
+	let dir = toPosix(process.cwd());
+	for (;;) {
+		if (existsSync(join(dir, ".rpiv"))) return dir;
+		if (!top || dir === top) break;
+		const parent = toPosix(dirname(dir));
+		if (parent === dir) break;
+		dir = parent;
+	}
+	return top || toPosix(process.cwd());
 }
 
 /** Minimal single-line-value frontmatter parser (deterministic; no multi-line values). */

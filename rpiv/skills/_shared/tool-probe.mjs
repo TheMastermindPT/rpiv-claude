@@ -23,7 +23,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 const safe = (args, fb = "") => {
 	try {
@@ -37,7 +37,24 @@ const safe = (args, fb = "") => {
 	}
 };
 const toPosix = (p) => p.replaceAll("\\", "/");
-const root = toPosix(safe(["rev-parse", "--show-toplevel"])) || toPosix(process.cwd());
+const gitTop = toPosix(safe(["rev-parse", "--show-toplevel"])) || toPosix(process.cwd());
+const targetArg = toPosix((process.argv[2] ?? ".").replace(/^['"]|['"]$/g, "")) || ".";
+const targetAbs = isAbsolute(targetArg) ? toPosix(targetArg) : toPosix(resolve(process.cwd(), targetArg));
+// Project root = nearest package.json at/above the target, bounded by the git
+// toplevel. Assuming the manifest sits AT the git root is wrong whenever the
+// project is nested under the repo (our rpiv/, or a monorepo package): the probe
+// then reads no manifest and reports every tool "absent". Walk up to find it.
+const findProjectRoot = (startAbs, top) => {
+	let dir = startAbs;
+	for (;;) {
+		if (existsSync(join(dir, "package.json"))) return toPosix(dir);
+		if (toPosix(dir) === top) return top;
+		const parent = dirname(dir);
+		if (parent === dir) return top;
+		dir = parent;
+	}
+};
+const root = findProjectRoot(targetAbs, gitTop);
 const has = (rel) => existsSync(join(root, rel));
 const firstFile = (rels) => rels.find((r) => has(r)) ?? "";
 const readJson = (rel) => {

@@ -3,7 +3,7 @@
 // detection works WITHOUT running or installing anything. Prints "OK" on success.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -67,4 +67,31 @@ try {
 	console.log(`OK (tool-probe) — configured/absent detected without running or installing (ts-morph: ${expectedTsm}).`);
 } finally {
 	rmSync(repo, { recursive: true, force: true });
+}
+
+// --- Regression: project nested under the git root (subdir invocation) ------
+// The manifest lookup joined onto the git TOPLEVEL, so a project living in a
+// subdirectory of the repo (nested repo, monorepo package) read no package.json
+// and reported ecosystem "unknown" / every tool absent. Manifest under pkg/, a
+// bare root package.json that must NOT shadow it, invoke from pkg/.
+const repo2 = mkdtempSync(join(tmpdir(), "probe-subdir-"));
+try {
+	mkdirSync(join(repo2, "pkg"), { recursive: true });
+	// Bare root manifest with none of the tools — proves walk-up picks the NEAREST
+	// package.json (pkg/), not the git-toplevel one.
+	writeFileSync(join(repo2, "package.json"), JSON.stringify({ name: "root" }));
+	writeFileSync(join(repo2, "pkg", "package.json"), JSON.stringify({
+		name: "nested",
+		devDependencies: { "dependency-cruiser": "^16" },
+	}));
+	writeFileSync(join(repo2, "pkg", ".dependency-cruiser.cjs"), "module.exports = { forbidden: [] };\n");
+	git(repo2, ["init", "-q"]);
+	git(repo2, ["add", "-A"]);
+	const out2 = execFileSync("node", [PROBE, "."], { cwd: join(repo2, "pkg"), encoding: "utf-8" });
+	assert.ok(out2.includes("ecosystem: js-ts"), `nested project (cwd != git toplevel) must still detect ecosystem\n${out2}`);
+	const dc2 = out2.split("\n").find((l) => l.startsWith("dependency-cruiser\t")) ?? "";
+	assert.ok(/status=configured/.test(dc2), `nested project's depcruise config must be found from a subdir, not the bare root manifest, got: ${dc2}\n${out2}`);
+	console.log("OK (tool-probe subdir) — project nested under the git root is detected (nearest manifest, not the toplevel).");
+} finally {
+	rmSync(repo2, { recursive: true, force: true });
 }
