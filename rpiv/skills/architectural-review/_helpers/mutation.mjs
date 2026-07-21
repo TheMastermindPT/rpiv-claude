@@ -25,7 +25,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 const safe = (args, fb = "") => {
 	try {
@@ -36,10 +36,30 @@ const safe = (args, fb = "") => {
 };
 const toPosix = (p) => p.replaceAll("\\", "/");
 const root = toPosix(safe(["rev-parse", "--show-toplevel"])) || toPosix(process.cwd());
-const target = toPosix((process.argv[2] ?? ".").replace(/^['"]|['"]$/g, "")) || ".";
+const cwd = toPosix(process.cwd());
+const targetArg = toPosix((process.argv[2] ?? ".").replace(/^['"]|['"]$/g, "")) || ".";
+const targetAbs = isAbsolute(targetArg) ? toPosix(targetArg) : toPosix(resolve(process.cwd(), targetArg));
+// Target, enumeration, and report keys are all emitted relative to the invocation
+// cwd — the base the skill's T-lens agent and `store --root .` use. Identical to the
+// git toplevel on a normal repo (cwd === toplevel); correct when nested under it.
+const target = toPosix(relative(cwd, targetAbs)) || ".";
+// Project root = nearest package.json at/above the target, bounded by the git
+// toplevel: the reports/ dir lives at the PROJECT root, not the git root when the
+// project is nested under the repo (our rpiv/, a monorepo package).
+const findProjectRoot = (startAbs, top) => {
+	let dir = startAbs;
+	for (;;) {
+		if (existsSync(join(dir, "package.json"))) return toPosix(dir);
+		if (toPosix(dir) === top) return top;
+		const parent = dirname(dir);
+		if (parent === dir) return top;
+		dir = parent;
+	}
+};
+const projectRoot = findProjectRoot(targetAbs, root);
 const relOf = (k) => {
 	const p = toPosix(k);
-	return p.startsWith(`${root}/`) ? p.slice(root.length + 1) : p;
+	return p.startsWith(`${cwd}/`) ? p.slice(cwd.length + 1) : p;
 };
 const underTarget = (rp) => target === "." || rp === target || rp.startsWith(`${target}/`);
 
@@ -61,7 +81,10 @@ const isEligible = (p, rp) => isSrc(p) && !isTest(rp) && !rp.endsWith(".d.ts");
 // to the repository: an arbitrary argv target can never walk outside the root,
 // and node_modules/.git never appear because they are not tracked.
 const collectSrc = (dir) => {
-	const raw = safe(["-C", root, "ls-files", "-z", "--", dir]);
+	// Enumerate from the process cwd so paths come back cwd-relative (matching relOf
+	// and the report keys); ls-files still lists tracked files only, so an arbitrary
+	// argv target can never escape the repo and node_modules/.git never appear.
+	const raw = safe(["ls-files", "-z", "--", dir]);
 	if (!raw) return [];
 	return raw
 		.split("\0")
@@ -72,9 +95,9 @@ const collectSrc = (dir) => {
 
 // Find a StrykerJS mutation report (ordered by preference: scoped → full → fallback).
 const reportPaths = [
-	join(root, "reports", "mutation", "mutation.json"),
-	join(root, "reports", "mutation.json"),
-	join(root, "stryker-output", "mutation.json"),
+	join(projectRoot, "reports", "mutation", "mutation.json"),
+	join(projectRoot, "reports", "mutation.json"),
+	join(projectRoot, "stryker-output", "mutation.json"),
 ];
 
 let reportPath = "";
@@ -82,7 +105,7 @@ let reportName = "none";
 for (const p of reportPaths) {
 	if (existsSync(p)) {
 		reportPath = p;
-		reportName = toPosix(p.slice(root.length + 1));
+		reportName = toPosix(p.slice(projectRoot.length + 1));
 		break;
 	}
 }

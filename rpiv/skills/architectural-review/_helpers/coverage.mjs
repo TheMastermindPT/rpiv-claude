@@ -16,7 +16,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 const safe = (args, fb = "") => {
 	try {
@@ -27,17 +27,37 @@ const safe = (args, fb = "") => {
 };
 const toPosix = (p) => p.replaceAll("\\", "/");
 const root = toPosix(safe(["rev-parse", "--show-toplevel"])) || toPosix(process.cwd());
-const target = toPosix((process.argv[2] ?? ".").replace(/^['"]|['"]$/g, "")) || ".";
+const cwd = toPosix(process.cwd());
+const targetArg = toPosix((process.argv[2] ?? ".").replace(/^['"]|['"]$/g, "")) || ".";
+const targetAbs = isAbsolute(targetArg) ? toPosix(targetArg) : toPosix(resolve(process.cwd(), targetArg));
+// Target and file keys are emitted relative to the invocation cwd — the base the
+// skill's T-lens agent and `store --root .` use. Identical to the git toplevel on a
+// normal repo (cwd === toplevel); correct when the project is nested under the repo.
+const target = toPosix(relative(cwd, targetAbs)) || ".";
+// Project root = nearest package.json at/above the target, bounded by the git
+// toplevel: the coverage/ dir lives at the PROJECT root, which is not the git
+// root when the project is nested under the repo (our rpiv/, a monorepo package).
+const findProjectRoot = (startAbs, top) => {
+	let dir = startAbs;
+	for (;;) {
+		if (existsSync(join(dir, "package.json"))) return toPosix(dir);
+		if (toPosix(dir) === top) return top;
+		const parent = dirname(dir);
+		if (parent === dir) return top;
+		dir = parent;
+	}
+};
+const projectRoot = findProjectRoot(targetAbs, root);
 const pct = (covered, total) => (total > 0 ? Math.round((covered / total) * 100) : 100);
 const relOf = (k) => {
 	const p = toPosix(k);
-	return p.startsWith(`${root}/`) ? p.slice(root.length + 1) : p;
+	return p.startsWith(`${cwd}/`) ? p.slice(cwd.length + 1) : p;
 };
 const underTarget = (rp) => target === "." || rp === target || rp.startsWith(`${target}/`);
 
-const summaryPath = join(root, "coverage/coverage-summary.json");
-const finalPath = join(root, "coverage/coverage-final.json");
-const lcovPath = join(root, "coverage/lcov.info");
+const summaryPath = join(projectRoot, "coverage/coverage-summary.json");
+const finalPath = join(projectRoot, "coverage/coverage-final.json");
+const lcovPath = join(projectRoot, "coverage/lcov.info");
 
 const files = [];
 let overall = null;

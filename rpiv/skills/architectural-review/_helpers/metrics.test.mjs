@@ -325,6 +325,17 @@ try {
 	write("src/orders-write-a.ts", `export function addOrder(o) {\n\treturn supabase.from("orders").insert(o);\n}\n`);
 	write("src/orders-write-b.ts", `export function editOrder(o) {\n\treturn supabase.from("orders").update(o).eq("id", o.id);\n}\n`);
 	write("src/users-write.ts", `export function saveUser(u) {\n\treturn supabase.from("users").upsert(u);\n}\n`);
+	// Comment exclusion: a documented `.from(...).insert()` / `.rpc(...)` inside a
+	// `//` comment must NOT be counted as a real write site (regression for the
+	// self-review false positive where the detector matched its own doc comments).
+	write("src/commented-write.ts", `export function noop() {\n\t// example: supabase.from("ghost").insert(x); also supabase.rpc("ghostfn", y);\n\treturn 1;\n}\n`);
+	// Assert-counting: node:assert is method-based, so `assert.equal`/`assert.ok` must
+	// be counted — the old `assert\\s*\\(` missed them and reported asserts=0. 3 cases,
+	// 2 asserts -> ratio 0.67 (<1) so the file surfaces with asserts=2.
+	write(
+		"src/sample.test.ts",
+		`import assert from "node:assert/strict";\nit("a", () => { assert.equal(1, 1); });\nit("b", () => { assert.ok(true); });\nit("c", () => {});\n`,
+	);
 	// Fe pre-filter: data target (dropped) vs behavioral target (kept).
 	write("src/knobs.ts", knobsData);
 	write("src/fe-data-envy.ts", feDataEnvy);
@@ -474,6 +485,19 @@ try {
 	assert.ok(
 		!writeSites.some((r) => r.includes("INVENTORY_TABLE")),
 		`const table identifier must be resolved, not keyed as table:INVENTORY_TABLE\n--- output ---\n${out}`,
+	);
+	// 9b-2. Comment exclusion: writes inside a `//` comment are not real write sites.
+	assert.ok(
+		!writeSites.some((r) => r.includes("ghost")),
+		`a .from()/.rpc() inside a // comment must NOT be counted as a write site\n--- output ---\n${out}`,
+	);
+	// 9b-3. Assert-counting: node:assert method calls are counted (was asserts=0).
+	const testDensity = blockOf("test-density");
+	const sampleRow = testDensity.find((r) => r.includes("sample.test.ts"));
+	assert.ok(sampleRow, `sample.test.ts must appear in test-density (ratio < 1)\n--- output ---\n${out}`);
+	assert.ok(
+		/\basserts=2\b/.test(sampleRow),
+		`node:assert calls (assert.equal + assert.ok) must count as 2 asserts, got: ${sampleRow}`,
 	);
 	// 9c. Indented declarations: `^\s*` regex must match 2-space-indented function*
 	//     and tab-indented class as top-level symbols (pre-`^\s*` would miss both).
@@ -724,4 +748,44 @@ try {
 	console.log("OK (adaptive cap) — p95 lifted the cap to admit 26-file commits; p1<->p2 surfaced.");
 } finally {
 	rmSync(repo3, { recursive: true, force: true });
+}
+
+// --- Regression: subdir invocation (cwd != git toplevel) --------------------
+// `git ls-files` returns paths relative to the process cwd, but reads join them
+// onto the git TOPLEVEL. Invoked from a subdirectory of the repo, those bases
+// disagree and every read silently fails -> file_count 0, no error, empty
+// scorecard reading as a clean module. Build source under `pkg/src`, invoke from
+// `pkg/`, and assert the files are actually read and resolve.
+const repo4 = mkdtempSync(join(tmpdir(), "argate-subdir-"));
+try {
+	mkdirSync(join(repo4, "pkg/src"), { recursive: true });
+	const w4 = (rel, body) => writeFileSync(join(repo4, rel), body);
+	// One clear size outlier + small peers: any source-derived block is non-empty
+	// ONLY when the reads succeed, so file_count and size-outliers prove resolution.
+	w4(
+		"pkg/src/big.mjs",
+		`${Array.from({ length: 400 }, (_, i) => `export function f${i}(x) { return x + ${i}; }`).join("\n")}\n`,
+	);
+	for (let n = 0; n < 6; n += 1) w4(`pkg/src/n${n}.mjs`, `export function g${n}(x) { return x; }\n`);
+	git(repo4, ["init", "-q"]);
+	git(repo4, ["add", "-A"]);
+	// Invoke from the SUBDIR with a subdir-relative target — the previously-broken case.
+	const out4 = execFileSync("node", [METRICS, "."], { cwd: join(repo4, "pkg"), encoding: "utf-8" });
+	const fc4 = Number((out4.match(/^file_count:\s*(\d+)/m) ?? [])[1]);
+	assert.equal(fc4, 7, `subdir invocation (cwd != toplevel) must read all files; got file_count=${fc4}\n--- out ---\n${out4}`);
+	const sizeRows4 = extractBlock(out4, "size-outliers");
+	// Reads must resolve AND the output must be rebased to the invocation cwd
+	// (repo/pkg) — so the emitted path is `src/big.mjs`, what the skill's agents and
+	// `store --root .` consume, NOT the git-toplevel-relative `pkg/src/big.mjs`.
+	assert.ok(
+		sizeRows4.some((r) => r.startsWith("src/big.mjs\t")),
+		`size-outlier must name the file cwd-relative (src/big.mjs)\n--- out ---\n${out4}`,
+	);
+	assert.ok(
+		!sizeRows4.some((r) => r.includes("pkg/src/big.mjs")),
+		`output must be cwd-relative, not git-toplevel-relative (no leading pkg/)\n--- out ---\n${out4}`,
+	);
+	console.log("OK (subdir) — invoking from a repo subdirectory reads files (cwd != toplevel no longer blinds enumeration).");
+} finally {
+	rmSync(repo4, { recursive: true, force: true });
 }

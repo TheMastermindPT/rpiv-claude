@@ -53,6 +53,10 @@ const safeGit = (args, fb = "") => {
 };
 
 const root = toPosix(safeGit(["rev-parse", "--show-toplevel"])) || toPosix(process.cwd());
+// Emitted finding paths are relative to the invocation cwd — the base the skill's
+// lens agents and `store --root .` consume. Identical to the git toplevel on a
+// normal repo (cwd === toplevel); correct when the project is nested under the repo.
+const cwd = toPosix(process.cwd());
 const targetArg = process.argv[2] || ".";
 const targetAbs = toPosix(isAbsolute(targetArg) ? targetArg : resolve(process.cwd(), targetArg));
 
@@ -89,6 +93,23 @@ const findTsconfig = () => {
 const tsConfigFilePath = findTsconfig();
 if (!tsConfigFilePath) status("unavailable: no tsconfig.json found at or above the target");
 
+// Project root = nearest package.json at/above the target (bounded by the git
+// toplevel), so knip / node_modules / package.json detection works when the
+// project is nested under the repo (our rpiv/, a monorepo package). tsconfig
+// discovery already walks up via findTsconfig; this covers the other configs.
+const findProjectRoot = () => {
+	let dir = isDir(targetAbs) ? targetAbs : dirname(targetAbs);
+	for (let guard = 0; guard < 100; guard += 1) {
+		if (existsSync(join(dir, "package.json"))) return toPosix(dir);
+		if (toPosix(dir) === root) break;
+		const parent = dirname(dir);
+		if (parent === dir) break;
+		dir = parent;
+	}
+	return root;
+};
+const projectRoot = findProjectRoot();
+
 // --- Load the program (bounded) ---------------------------------------------
 let project;
 try {
@@ -101,7 +122,7 @@ if (allFiles.length > SEMANTIC_MAX_FILES) {
 	status(`unavailable: project too large (${allFiles.length} files > SEMANTIC_MAX_FILES=${SEMANTIC_MAX_FILES})`);
 }
 
-const rel = (sf) => toPosix(relative(root, sf.getFilePath()));
+const rel = (sf) => toPosix(relative(cwd, sf.getFilePath()));
 const underTarget = (sf) => {
 	const p = toPosix(sf.getFilePath());
 	return p === targetAbs || p.startsWith(`${targetAbs}/`);
@@ -247,11 +268,11 @@ envyRows.sort((a, b) => b.beh - a.beh || b.ext - a.ext || a.f.localeCompare(b.f)
 // signal — and skip the expensive findReferences pass). Functions/classes rank first.
 const knipAvailable = (() => {
 	for (const c of ["knip.json", "knip.jsonc", "knip.ts", "knip.config.ts", "knip.config.js"]) {
-		if (existsSync(join(root, c))) return true;
+		if (existsSync(join(projectRoot, c))) return true;
 	}
-	if (existsSync(join(root, "node_modules/.bin/knip")) || existsSync(join(root, "node_modules/.bin/knip.cmd"))) return true;
+	if (existsSync(join(projectRoot, "node_modules/.bin/knip")) || existsSync(join(projectRoot, "node_modules/.bin/knip.cmd"))) return true;
 	try {
-		const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf-8"));
+		const pkg = JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf-8"));
 		if (pkg.knip) return true;
 		const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
 		if (deps.knip) return true;
@@ -395,8 +416,8 @@ projRows.length = Math.min(projRows.length, PROJ_MAX_ROWS);
 
 // --- Emit -------------------------------------------------------------------
 const out = [];
-out.push(`target:           ${toPosix(relative(root, targetAbs)) || "."}`);
-out.push(`tsconfig:         ${toPosix(relative(root, tsConfigFilePath))}`);
+out.push(`target:           ${toPosix(relative(cwd, targetAbs)) || "."}`);
+out.push(`tsconfig:         ${toPosix(relative(cwd, tsConfigFilePath))}`);
 out.push(`files_in_program: ${allFiles.length}`);
 out.push(`files_in_target:  ${targetFiles.length}`);
 out.push(`write_resolution: resolved=${writeResolved} unresolved=${writeUnresolved}`);

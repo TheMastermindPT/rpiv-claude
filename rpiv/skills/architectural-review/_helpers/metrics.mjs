@@ -50,7 +50,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, resolve } from "node:path";
 
 const OUT_LINE_CAP = 200; // max rows per block
 const OUT_BYTE_CAP = 40 * 1024; // total block-bytes budget
@@ -75,9 +75,17 @@ const DUP_STOPWORDS = new Set([
 	"test", "tests", "spec", "mod", "init", "app", "api", "client", "server",
 ]);
 
+// All git commands run from the repository toplevel once `root` is known, so
+// `git ls-files` returns ROOT-relative paths that agree with `git log`'s output
+// and resolve correctly against `root` at read time. Without this, invoking from
+// a subdirectory (cwd != toplevel) yields cwd-relative enumeration paths that are
+// joined onto the wrong base and silently read nothing. `gitCwd` stays undefined
+// until `root` is computed — `rev-parse --show-toplevel` works from any subdir.
+let gitCwd;
 const safe = (args, fb = "") => {
 	try {
 		return execFileSync("git", args, {
+			cwd: gitCwd,
 			encoding: "utf-8",
 			stdio: ["ignore", "pipe", "ignore"],
 			maxBuffer: 64 * 1024 * 1024,
@@ -190,8 +198,14 @@ if (!root) {
 	emit();
 }
 
+// Pin every subsequent git call to the toplevel and re-express the target
+// relative to it, so enumeration (ls-files), history (log), and reads
+// (join(root, rel)) all speak root-relative paths no matter where we were invoked.
+gitCwd = root;
+const rootRelTarget = toPosix(relative(root, resolve(process.cwd(), target))) || ".";
+
 // --- Enumerate tracked files under the target -------------------------------
-const lsRaw = safe(["ls-files", "-z", "--", target]);
+const lsRaw = safe(["ls-files", "-z", "--", rootRelTarget]);
 const tracked = lsRaw ? lsRaw.split("\0").filter(Boolean).map(toPosix) : [];
 if (tracked.length === 0) {
 	result.note = `no tracked files under target: ${target}`;
@@ -205,7 +219,7 @@ const testFilesUnder = tracked.filter((p) => isTest(p) && SOURCE_EXT.has(extOf(p
 
 // Test-theater also wants tests that mirror the target by its last path segment
 // (e.g. target `lib/generation` -> tests under `tests/**/generation/**`).
-const segment = target.replace(/\/+$/, "").split("/").filter(Boolean).pop() ?? "";
+const segment = rootRelTarget.replace(/\/+$/, "").split("/").filter(Boolean).pop() ?? "";
 let mirrorTests = [];
 if (segment && segment !== ".") {
 	const allTestsRaw = safe([
@@ -246,6 +260,13 @@ for (const f of sourceFiles) {
 	locByFile.set(f, nonBlankLoc(text));
 }
 result.file_count = locByFile.size;
+// Guard the previously-silent failure: files were enumerated but none could be
+// read (path-base mismatch, permissions). Surface it instead of emitting an empty
+// scorecard that reads like a clean module.
+if (result.file_count === 0 && sourceFiles.length > 0) {
+	result.note = `enumerated ${sourceFiles.length} source file(s) under ${rootRelTarget} but none were readable — check the target resolves inside the git repo at ${root}`;
+	emit();
+}
 const sourceSet = new Set(locByFile.keys()); // tracked source files; reused by the import graph, co-change, and the Fe pre-filter
 const locValues = [...locByFile.values()].sort((a, b) => a - b);
 result.loc_total = locValues.reduce((a, b) => a + b, 0);
@@ -560,7 +581,7 @@ result.lowCohesion.sort((a, b) => a.coh - b.coh);
 
 // --- Churn hotspots ---------------------------------------------------------
 const churnRaw = safe([
-	"log", `--since=${CHURN_DAYS}.days`, "--name-only", "--pretty=format:", "--", target,
+	"log", `--since=${CHURN_DAYS}.days`, "--name-only", "--pretty=format:", "--", rootRelTarget,
 ]);
 if (churnRaw) {
 	const counts = new Map();
@@ -616,7 +637,9 @@ for (const [f, n] of exportCandidates) {
 	// usefully — report inbound as unknown (`?`) rather than a misleading 0.
 	let inbound = null;
 	if (stem && !DUP_STOPWORDS.has(stem.toLowerCase())) {
-		const hits = safe(["grep", "-l", "--fixed-strings", stem, "--", "*.ts", "*.tsx", "*.js", "*.jsx"]);
+		// Scan the whole JS/TS family (mirror SOURCE_EXT) — omitting *.mjs/*.cjs made
+		// every ESM-script importer invisible, so `.mjs` modules read as inbound=0.
+		const hits = safe(["grep", "-l", "--fixed-strings", stem, "--", "*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.mts", "*.cts"]);
 		const files = new Set((hits ? hits.split("\n") : []).map(toPosix).filter(Boolean));
 		files.delete(f);
 		inbound = files.size;
@@ -632,7 +655,12 @@ result.exportUsage.sort(
 
 // --- Test density (test-theater signal) -------------------------------------
 const caseRe = /\b(?:it|test)\s*\(/g;
-const assertRe = /\b(?:expect|assert)\s*\(|\.(?:toBe|toEqual|toMatch|toThrow|toHaveBeenCalled)\b/g;
+// Assertion calls across the common runners: node:assert (`assert.equal(` /
+// `assert.ok(` / bare `assert(`), Vitest/Jest (`expect(` + matchers). Matching the
+// `assert.<method>(` form is essential — node:assert is method-based, so the old
+// `assert\s*\(` missed every `assert.equal`/`assert.ok` and reported asserts=0.
+// Lenient by design: the assert/case ratio is a rough theater signal, not a count.
+const assertRe = /\bexpect\s*\(|\bassert\b\s*(?:\.\s*\w+\s*)?\(|\.(?:toBe|toEqual|toStrictEqual|toMatch|toContain|toThrow|toHaveBeenCalled|toHaveLength|toBeNull|toBeDefined|toBeTruthy|toBeFalsy|toBeGreaterThan|toBeLessThan)\b/g;
 for (const f of testFiles) {
 	const text = readText(f);
 	if (text === null) continue;
@@ -853,7 +881,7 @@ for (const f of sourceFiles) {
 const importLinked = (a, b) =>
 	Boolean(importGraph.get(a)?.has(b)) || Boolean(importGraph.get(b)?.has(a));
 const coRaw = safe([
-	"log", `--since=${CHURN_DAYS}.days`, "--name-only", "--find-renames", `--pretty=format:${COMMIT_DELIM}`, "--", target,
+	"log", `--since=${CHURN_DAYS}.days`, "--name-only", "--find-renames", `--pretty=format:${COMMIT_DELIM}`, "--", rootRelTarget,
 ]);
 if (coRaw) {
 	// First pass: collect each commit's distinct source files, then derive the
@@ -956,10 +984,18 @@ if (coRaw) {
 		if (!writeSites.has(key)) writeSites.set(key, new Set());
 		writeSites.get(key).add(f);
 	};
+	// Blank full-line `//` comments before the scan, so a documented example like
+	// `.rpc("fn")` or `.from("t").insert()` in a comment is never counted as a real
+	// write site. Line-based on purpose: a char-walk that tracks strings is fooled by
+	// regex literals containing quote chars (e.g. `["'`]`), which open a phantom
+	// string and swallow every later comment — this stays correct on any source.
+	const stripLineComments = (src) =>
+		src.split("\n").map((line) => (/^\s*\/\//.test(line) ? "" : line)).join("\n");
 	for (const f of sourceFiles) {
 		if (!isJsTs(f)) continue;
-		const text = readText(f);
-		if (text === null) continue;
+		const raw = readText(f);
+		if (raw === null) continue;
+		const text = stripLineComments(raw);
 		// Resolve same-file `const TABLE = "name"` so `.from(TABLE).insert` is caught
 		// (a common pattern, e.g. `.from(BODY_METRIC_ENTRIES_TABLE)`); unresolved const
 		// names are keyed by the identifier so the write is still counted.
@@ -1006,6 +1042,14 @@ function emit() {
 	let body = `${head.join("\n")}\n`;
 	const budget = { bytes: body.length };
 
+	// Emit paths relative to the invocation cwd — where the skill's lens agents
+	// grep/read and where `store`/`check-citations --root .` resolve. Identical to
+	// the git-toplevel base on a normal repo (cwd === toplevel), but correct when
+	// the project is nested under the repo (our rpiv/, a monorepo package): the
+	// internal computation stays toplevel-relative; only the output is rebased.
+	const cwdPrefix = toPosix(relative(root, process.cwd()));
+	const em = (p) => (cwdPrefix && p.startsWith(`${cwdPrefix}/`) ? p.slice(cwdPrefix.length + 1) : p);
+
 	const block = (label, rows) => {
 		let out = `---${label}---\n`;
 		let count = 0;
@@ -1021,19 +1065,19 @@ function emit() {
 		body += out;
 	};
 
-	block("size-outliers", result.sizeOutliers.map((r) => `${r.f}\t${r.loc}\t${r.x}x`));
-	block("godfile-candidates", result.godfileCandidates.map((r) => `${r.f}\t${r.loc}\t${r.x}x\tcats=${r.cats}\tcoh=${r.coh === null ? "?" : r.coh.toFixed(2)}\t${r.reason}`));
-	block("low-cohesion", result.lowCohesion.map((r) => `${r.f}\tcoh=${r.coh.toFixed(2)}\tsyms=${r.syms}\tislands=${r.islands}`));
-	block("feature-envy-candidates", result.featureEnvy.map((r) => `${r.f}\tenvies=${r.module}\text=${r.ext}\town=${r.own}\tratio=${r.ratio.toFixed(2)}`));
-	block("churn-hotspots", result.churnHotspots.map((r) => `${r.f}\t${r.c}`));
-	block("export-usage", result.exportUsage.map((r) => `${r.f}\texports=${r.exports}\tinbound=${r.inbound === null ? "?" : r.inbound}`));
-	block("test-density", result.testDensity.map((r) => `${r.f}\tcases=${r.cases}\tasserts=${r.asserts}\tratio=${r.ratio}`));
-	block("dup-candidates", result.dupCandidates.map((r) => `${r.a} | ${r.b}\trun=${r.run}\tshared=${r.shared}\toverlap=${r.overlap.toFixed(2)}\ttokenSim=${r.tokenSim.toFixed(2)}\tvia=${r.via}`));
-	block("co-change-candidates", result.coChange.map((r) => `${r.from} -> ${r.to}\tsupport=${r.support}\tconf=${r.conf.toFixed(2)}`));
-	block("co-change-groups", result.coGroups.map((r, i) => `g${i + 1}\tfiles=${r.files.join(", ")}\tmodules=${r.modules.join(", ")}`));
-	block("write-sites", result.writeSites.map((r) => `${r.key}\twriters=${r.writers}\tfiles=${r.files.join(", ")}`));
-	block("catch-swallows", result.catchSwallows.map((r) => `${r.f}\tswallows=${r.swallows}`));
-	block("bus-factor", result.busFactor.map((r) => `${r.f}\tcommits=${r.commits}\tauthors=${r.authors}\ttop_share=${r.topShare.toFixed(2)}`));
+	block("size-outliers", result.sizeOutliers.map((r) => `${em(r.f)}\t${r.loc}\t${r.x}x`));
+	block("godfile-candidates", result.godfileCandidates.map((r) => `${em(r.f)}\t${r.loc}\t${r.x}x\tcats=${r.cats}\tcoh=${r.coh === null ? "?" : r.coh.toFixed(2)}\t${r.reason}`));
+	block("low-cohesion", result.lowCohesion.map((r) => `${em(r.f)}\tcoh=${r.coh.toFixed(2)}\tsyms=${r.syms}\tislands=${r.islands}`));
+	block("feature-envy-candidates", result.featureEnvy.map((r) => `${em(r.f)}\tenvies=${em(r.module)}\text=${r.ext}\town=${r.own}\tratio=${r.ratio.toFixed(2)}`));
+	block("churn-hotspots", result.churnHotspots.map((r) => `${em(r.f)}\t${r.c}`));
+	block("export-usage", result.exportUsage.map((r) => `${em(r.f)}\texports=${r.exports}\tinbound=${r.inbound === null ? "?" : r.inbound}`));
+	block("test-density", result.testDensity.map((r) => `${em(r.f)}\tcases=${r.cases}\tasserts=${r.asserts}\tratio=${r.ratio}`));
+	block("dup-candidates", result.dupCandidates.map((r) => `${em(r.a)} | ${em(r.b)}\trun=${r.run}\tshared=${r.shared}\toverlap=${r.overlap.toFixed(2)}\ttokenSim=${r.tokenSim.toFixed(2)}\tvia=${r.via}`));
+	block("co-change-candidates", result.coChange.map((r) => `${em(r.from)} -> ${em(r.to)}\tsupport=${r.support}\tconf=${r.conf.toFixed(2)}`));
+	block("co-change-groups", result.coGroups.map((r, i) => `g${i + 1}\tfiles=${r.files.map(em).join(", ")}\tmodules=${r.modules.map(em).join(", ")}`));
+	block("write-sites", result.writeSites.map((r) => `${r.key}\twriters=${r.writers}\tfiles=${r.files.map(em).join(", ")}`));
+	block("catch-swallows", result.catchSwallows.map((r) => `${em(r.f)}\tswallows=${r.swallows}`));
+	block("bus-factor", result.busFactor.map((r) => `${em(r.f)}\tcommits=${r.commits}\tauthors=${r.authors}\ttop_share=${r.topShare.toFixed(2)}`));
 
 	process.stdout.write(body);
 	process.exit(0);
