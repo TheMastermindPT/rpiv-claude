@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { validateFinding, toSarif, initStore, addFinding, updateFinding, diffReview, queryClusters, renderDrFinding, renderReview, renderFinding, renderTally, spliceRegion, sentinelsFor, renderInto, loadStore, deriveStorePath } from "../skills/_shared/store.mjs";
+import { validateFinding, toSarif, initStore, addFinding, updateFinding, diffReview, queryClusters, renderClusters, renderDrFinding, renderDrift, renderReview, renderFinding, renderTally, spliceRegion, sentinelsFor, renderInto, loadStore, deriveStorePath, checkEvidenceGrounding, finalizeReview } from "../skills/_shared/store.mjs";
 // Namespace import so the Phase-7 dispatch tests read `store.dispatch` — before the
 // extraction lands that is `undefined` (a clean runtime "not a function" red), not an
 // ESM load-time error that would break the whole suite.
@@ -1306,5 +1306,968 @@ it("dispatch export --sarif", () => {
 	assert.equal(toStdout.code, 0, toStdout.err);
 	assert.equal(JSON.parse(toStdout.out).version, "2.1.0", "stdout SARIF parses");
 	assert.equal(runDispatch(["export", "--artifact", fx.artifact, "--root", fx.root]).code, 2, "export without --sarif -> 2");
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
+// ============================================================================
+// Mutation hardening (Batch A + B) — frozen golden-equality + exact error arrays
+// ============================================================================
+// The ported oracle blocks above are characterization tests (presence checks:
+// includes / loose regex). They leave StringLiteral + ConditionalExpression
+// mutants alive because a mutated string still "includes" the checked substring.
+// The blocks below assert BYTE-EXACT render output and EXACT validator error
+// arrays. Goldens were captured ONCE from the proven-correct milestone (commit
+// 3c9283c, node+vitest 71/71 green) and frozen as literals here — they never
+// re-derive from source, so a mutant that changes output can no longer match.
+
+// ---- Batch A: frozen render goldens ----------------------------------------
+
+const GOLDEN_DR_REVIEW = [
+	"---",
+	"template_version: 2",
+	"date: 2026-07-20T00:00:00+0100",
+	"author: ",
+	"repository: ",
+	"branch: ",
+	"commit: abc123",
+	"review_type: pr",
+	"scope: \"lib/x\"",
+	"scope_strategy: working-tree",
+	"in_scope_files_count: 0",
+	"status: needs_changes",
+	"severity: { critical: 1, important: 1, suggestion: 1 }",
+	"verification: { verified: 1, weakened: 0, falsified: 0 }",
+	"blockers_count: 2",
+	"tags: [code-review]",
+	"---",
+	"# Code Review — lib/x",
+	"**Commit:** `abc123` · **Status:** `needs_changes` · **Findings:** 1🔴 · 1🟡 · 1🔵 · **Verification:** 1✓ / 0− / 0✗",
+	"## Top Blockers",
+	"1. **S1** — race",
+	"2. **I1** — race",
+	"## Legend",
+	"",
+	"```text",
+	"Severity    🔴 fix before merge   🟡 fix soon   🔵 nice to have   💭 discuss",
+	"ID prefix   I interaction   Q quality   S security   G gap",
+	"Verify      ✓ verified   − weakened (demoted)   ✗ falsified (dropped)",
+	"Annotate    [precedent-weighted]   [cascade: <kind>]   [subsumed-by <ID>]",
+	"```",
+	"## 🔴 Critical",
+	"",
+	"",
+	"",
+	"### S1 🔴 race",
+	"",
+	"**Where**",
+	"`lib/x/a.ts:10`",
+	"",
+	"**Code**",
+	"```",
+	"const x = 1;",
+	"```",
+	"",
+	"**Why**",
+	"w",
+	"",
+	"**Fix**",
+	"f",
+	"",
+	"## 🟡 Important",
+	"",
+	"",
+	"",
+	"### I1 🟡 race",
+	"",
+	"**Where**",
+	"`lib/x/a.ts:10`",
+	"",
+	"**Code**",
+	"```",
+	"const x = 1;",
+	"```",
+	"",
+	"**Why**",
+	"w",
+	"",
+	"**Fix**",
+	"f2",
+	"",
+	"## 🔵 Suggestions",
+	"",
+	"",
+	"",
+	"### Q1 🔵 race",
+	"",
+	"**Where**",
+	"`lib/x/a.ts:10`",
+	"",
+	"**Fix**",
+	"f3",
+].join("\n");
+
+const GOLDEN_DR_CRIT_ALT = [
+	"### S1 🔴 race",
+	"",
+	"**Where**",
+	"`lib/x/a.ts:10`",
+	"",
+	"**Code**",
+	"```",
+	"const x = 1;",
+	"```",
+	"",
+	"**Why**",
+	"w",
+	"",
+	"**Fix**",
+	"f",
+	"",
+	"**Alt**",
+	"use a lock",
+].join("\n");
+
+const GOLDEN_DR_CRIT = [
+	"### S1 🔴 race",
+	"",
+	"**Where**",
+	"`lib/x/a.ts:10`",
+	"",
+	"**Code**",
+	"```",
+	"const x = 1;",
+	"```",
+	"",
+	"**Why**",
+	"w",
+	"",
+	"**Fix**",
+	"f",
+].join("\n");
+
+const GOLDEN_DR_IMPORTANT = [
+	"### I1 🟡 race",
+	"",
+	"**Where**",
+	"`lib/x/a.ts:10`",
+	"",
+	"**Code**",
+	"```",
+	"const x = 1;",
+	"```",
+	"",
+	"**Why**",
+	"w",
+	"",
+	"**Fix**",
+	"f2",
+].join("\n");
+
+const GOLDEN_DR_SUGGESTION = [
+	"### Q1 🔵 race",
+	"",
+	"**Where**",
+	"`lib/x/a.ts:10`",
+	"",
+	"**Fix**",
+	"f3",
+].join("\n");
+
+const GOLDEN_DR_DISCUSS = [
+	"### D1 💭 race",
+	"",
+	"**Where**",
+	"`lib/x/a.ts:10`",
+	"",
+	"**Why**",
+	"w",
+].join("\n");
+
+const GOLDEN_DR_UNKNOWN = [
+	"### U1 🔵 race",
+	"",
+	"**Where**",
+	"`lib/x/a.ts:10`",
+].join("\n");
+
+const GOLDEN_DR_MULTI = [
+	"### S1 🔴 race",
+	"",
+	"**Where**",
+	"`a.ts:10-20` `b.ts:5`",
+	"",
+	"**Code**",
+	"```",
+	"x",
+	"y",
+	"```",
+	"",
+	"**Why**",
+	"w",
+	"",
+	"**Fix**",
+	"f",
+].join("\n");
+
+const GOLDEN_CLUSTERS = [
+	"Clusters: 4 discovered (4 un-anticipated).",
+	"  [AUTO] file lib/x/a.ts: L0-01, L0-02",
+	"  [AUTO] symbol Svc: L0-01, L0-03",
+	"  [AUTO] entity E/P: L0-01, L0-02",
+	"  [AUTO] dependsOn L0-01 <-> L0-03: L0-01, L0-03",
+].join("\n");
+
+const GOLDEN_CLUSTERS_EMPTY = [
+	"Clusters: 0 discovered (0 un-anticipated).",
+	"  (none — no shared dimension across >= 2 findings)",
+].join("\n");
+
+const GOLDEN_DRIFT = [
+	"_vs `prior.md` — compared 2026-07-20_",
+	"",
+	"| Class | Count |",
+	"|---|---|",
+	"| NEW | 1 |",
+	"| Still-open | 1 |",
+	"| Regressed | 1 |",
+	"| Resolved | 1 |",
+	"",
+	"**NEW**",
+	"",
+	"- N1 — new one",
+	"",
+	"**Regressed (fixed, now back)**",
+	"",
+	"- RG1 — regressed one",
+	"",
+	"**Resolved (gone since prior)**",
+	"",
+	"- L0-05 — gone",
+].join("\n");
+
+const GOLDEN_SARIF_AR = {
+	"$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+	"version": "2.1.0",
+	"runs": [
+		{
+			"tool": {
+				"driver": {
+					"name": "rpiv-architectural-review",
+					"informationUri": "https://github.com/rpiv",
+					"rules": [
+						{ "id": "G", "name": "G", "shortDescription": { "text": "rpiv lens G" } },
+					],
+				},
+			},
+			"results": [
+				{
+					"ruleId": "G",
+					"ruleIndex": 0,
+					"level": "error",
+					"message": { "text": "god-file service.ts" },
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": { "uri": "lib/x/service.ts" },
+								"region": { "startLine": 320, "endLine": 320, "snippet": { "text": "export class PlanService {" } },
+							},
+						},
+					],
+					"partialFingerprints": { "rpivFingerprint/v1": "a1b2c3d4e5f60718" },
+					"baselineState": "new",
+					"properties": { "lens": "G", "severity": "High", "class": "redesign" },
+					"rank": 90,
+				},
+			],
+		},
+	],
+};
+
+const GOLDEN_SARIF_DR = {
+	"$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+	"version": "2.1.0",
+	"runs": [
+		{
+			"tool": {
+				"driver": {
+					"name": "rpiv-deep-review",
+					"informationUri": "https://github.com/rpiv",
+					"rules": [
+						{ "id": "S", "name": "S", "shortDescription": { "text": "rpiv lens S" } },
+					],
+				},
+			},
+			"results": [
+				{
+					"ruleId": "S",
+					"ruleIndex": 0,
+					"level": "warning",
+					"message": { "text": "race in loader" },
+					"locations": [
+						{
+							"physicalLocation": {
+								"artifactLocation": { "uri": "lib/x/a.ts" },
+								"region": { "startLine": 10, "endLine": 10, "snippet": { "text": "const x = 1;" } },
+							},
+						},
+					],
+					"partialFingerprints": { "rpivFingerprint/v1": "beefbeefbeefbeef" },
+					"baselineState": "unchanged",
+					"properties": { "lens": "S", "severity": "important", "rpivDriftClass": "Still-open" },
+					"rank": 60,
+				},
+			],
+		},
+	],
+};
+
+// MA1. renderReview — whole DR document byte-exact (frontmatter counts, summary line,
+// Top Blockers, Legend, all three severity sections, withdrawn G1 omitted).
+it("MA1. renderReview whole-document byte-exact", () => {
+	const store = { schema: 1, target: "lib/x", review: { review_type: "pr", status: "needs_changes", scope: "lib/x", commit: "abc123", date: "2026-07-20T00:00:00+0100" }, findings: [
+		{ ...DR_C, verify: "Verified" },
+		{ ...DR_C, id: "I1", lens: "I", severity: "important", why: "w", fix: "f2" },
+		{ ...DR_C, id: "Q1", lens: "Q", severity: "suggestion", fix: "f3" },
+		{ ...DR_C, id: "G1", severity: "critical", status: "withdrawn" },
+	] };
+	assert.equal(renderReview(store), GOLDEN_DR_REVIEW, "renderReview output byte-identical to the frozen golden");
+});
+
+// MA2. renderDrFinding — every tier byte-exact (Code/Why/Fix/Alt gating, emoji, endLine).
+it("MA2. renderDrFinding per-tier byte-exact", () => {
+	assert.equal(renderDrFinding({ ...DR_C, alt: "use a lock" }), GOLDEN_DR_CRIT_ALT, "critical + Alt");
+	assert.equal(renderDrFinding(DR_C), GOLDEN_DR_CRIT, "critical, no Alt (alt absent)");
+	assert.equal(renderDrFinding({ ...DR_C, id: "I1", lens: "I", severity: "important", fix: "f2" }), GOLDEN_DR_IMPORTANT, "important");
+	assert.equal(renderDrFinding({ ...DR_C, id: "Q1", severity: "suggestion", fix: "f3" }), GOLDEN_DR_SUGGESTION, "suggestion (Fix only)");
+	assert.equal(renderDrFinding({ ...DR_C, id: "D1", severity: "discuss", why: "w" }), GOLDEN_DR_DISCUSS, "discuss (Why only)");
+	assert.equal(renderDrFinding({ ...DR_C, id: "U1", severity: "banana" }), GOLDEN_DR_UNKNOWN, "unknown severity -> emoji + Where only");
+	assert.equal(renderDrFinding({ ...DR_C, evidence: [{ path: "a.ts", startLine: 10, endLine: 20, quoted: ["x"] }, { path: "b.ts", startLine: 5, quoted: ["y"] }] }), GOLDEN_DR_MULTI, "multi-evidence + endLine range");
+});
+
+// MA3. renderClusters — report byte-exact (populated + empty).
+it("MA3. renderClusters report byte-exact", () => {
+	const clusterFindings = () => [
+		{ id: "L0-01", evidence: [{ path: "lib/x/a.ts" }], symbol: "Svc", entityStage: "E/P", status: "accepted", crossCutTag: null, dependsOn: [] },
+		{ id: "L0-02", evidence: [{ path: "lib/x/a.ts" }], symbol: "Other", entityStage: "E/P", status: "accepted", crossCutTag: null, dependsOn: [] },
+		{ id: "L0-03", evidence: [{ path: "lib/y/b.ts" }], symbol: "Svc", entityStage: "E/Q", status: "deferred", crossCutTag: null, dependsOn: ["L0-01"] },
+	];
+	assert.equal(renderClusters(queryClusters({ findings: clusterFindings() })), GOLDEN_CLUSTERS, "4-cluster report byte-identical");
+	assert.equal(renderClusters(queryClusters({ findings: [] })), GOLDEN_CLUSTERS_EMPTY, "empty report byte-identical");
+});
+
+// MA4. renderDrift — Drift Delta region byte-exact (vs-line, count table, id lists).
+it("MA4. renderDrift region byte-exact", () => {
+	const store = {
+		findings: [
+			{ id: "N1", title: "new one", driftClass: "NEW" },
+			{ id: "RG1", title: "regressed one", driftClass: "Regressed" },
+			{ id: "SO1", title: "still open", driftClass: "Still-open" },
+		],
+		drift: { priorArtifact: "prior.md", comparedAt: "2026-07-20T00:00:00+0100", resolved: [{ id: "L0-05", title: "gone" }], counts: { new: 1, stillOpen: 1, regressed: 1, resolved: 1 } },
+	};
+	assert.equal(renderDrift(store), GOLDEN_DRIFT, "drift region byte-identical to the frozen golden");
+});
+
+// MA5. toSarif — full 2.1.0 log deep-equal (AR driver + DR driver, whole object frozen).
+it("MA5. toSarif whole-log deepEqual (AR + DR)", () => {
+	assert.deepEqual(toSarif({ schema: 1, findings: [{ ...VALID_AR, fp: "a1b2c3d4e5f60718" }] }), GOLDEN_SARIF_AR, "AR SARIF log frozen");
+	assert.deepEqual(toSarif({ schema: 1, findings: [{ kind: "dr", id: "S1", title: "race in loader", lens: "S", severity: "important", status: "accepted", baselineState: "unchanged", driftClass: "Still-open", evidence: [{ path: "lib/x/a.ts", startLine: 10, quoted: ["const x = 1;"] }], fp: "beefbeefbeefbeef" }] }), GOLDEN_SARIF_DR, "DR SARIF log frozen");
+});
+
+// ---- Batch B: validator exact error-arrays ---------------------------------
+// Each asserts the FULL error array all-at-once (order + every message frozen),
+// killing StringLiteral mutants in every message + ConditionalExpression mutants
+// that would drop/add a branch's error. Clean cases ([]) are pinned by P1.1/P1.2.
+
+const ERR_DR_AS_AR = [
+	"severity must be one of Low | Med | High (got: critical)",
+	"missing or empty field: anchor",
+	"missing or empty field: what",
+	"layer must be N or N.M (got: undefined)",
+	"effort must be one of S | M | L (got: undefined)",
+	"class must be one of polish | redesign (got: undefined)",
+	"verify must be one of Verified | Weakened | Falsified (got: undefined)",
+	"blastRadius must be a non-empty array of strings (recommended: internal | public-API | on-disk | cross-module | other; free-form allowed)",
+	"remediation must be an object",
+	"dependsOn must be a string array (may be empty)",
+];
+
+const ERR_AR_BROKEN = [
+	"missing or empty field: title",
+	"status must be one of open | accepted | rejected | deferred | withdrawn (got: undefined)",
+	"severity must be one of Low | Med | High (got: undefined)",
+	"evidence must be a non-empty array",
+	"missing or empty field: anchor",
+	"missing or empty field: what",
+	"missing or empty field: why",
+	"layer must be N or N.M (got: undefined)",
+	"lens must be one of D/C/G/A/T/L/Sec/M/S/Lc/Fe/Fp/Tc/P/IX/10dim (got: undefined)",
+	"effort must be one of S | M | L (got: undefined)",
+	"class must be one of polish | redesign (got: undefined)",
+	"verify must be one of Verified | Weakened | Falsified (got: undefined)",
+	"blastRadius must be a non-empty array of strings (recommended: internal | public-API | on-disk | cross-module | other; free-form allowed)",
+	"remediation must be an object",
+	"dependsOn must be a string array (may be empty)",
+];
+
+const ERR_EVIDENCE = [
+	"evidence[0].path missing",
+	"evidence[0].startLine must be a positive integer",
+	"evidence[0].quoted must be a non-empty array of verbatim lines",
+];
+
+const ERR_REMEDIATION = [
+	"remediation.steps must be a non-empty string array",
+	"remediation.acceptance must be a non-empty string array",
+	"remediation.testStrategy missing",
+	"remediation.tradeoff missing",
+];
+
+const ERR_DR_FIELDS = [
+	"lens must be one of I/Q/S/G for kind:dr (got: Z)",
+	"kind:dr critical finding requires a why",
+	"kind:dr critical finding requires a fix",
+];
+
+const ERR_DRIFT = [
+	"baselineState must be one of new | unchanged | updated | absent (got: gone)",
+	"driftClass must be one of NEW | Still-open | Resolved | Regressed (got: Mutated)",
+	"priorFp must be a non-empty string or null",
+	"priorId must be a non-empty string or null",
+	"verifyNote must be a non-empty string or null",
+];
+
+// MB1. the shared-enum + AR-required + AR-enum surface, all-at-once, in source order.
+it("MB1. validateFinding DR-as-AR exact error array", () => {
+	assert.deepEqual(validateFinding({ ...DR_C, kind: "ar" }, new Map(), new Set()), ERR_DR_AS_AR, "kind:ar over a dr finding reports every AR requirement");
+});
+
+// MB2. a near-empty AR finding surfaces every shape + enum + required error at once.
+it("MB2. validateFinding maximally-broken AR exact error array", () => {
+	assert.deepEqual(validateFinding({ id: "L0-01", kind: "ar" }, new Map(), new Set()), ERR_AR_BROKEN, "every missing/enum error at once");
+});
+
+// MB3. evidence-entry errors (path/startLine/quoted) all-at-once.
+it("MB3. validateFinding evidence-entry exact error array", () => {
+	assert.deepEqual(validateFinding({ ...VALID_AR, evidence: [{ path: "", startLine: 0, quoted: [] }] }, new Map(), new Set()), ERR_EVIDENCE, "every evidence[0] error at once");
+});
+
+// MB4. remediation object errors all-at-once.
+it("MB4. validateFinding remediation exact error array", () => {
+	assert.deepEqual(validateFinding({ ...VALID_AR, remediation: { steps: [], acceptance: "x", testStrategy: "", tradeoff: null } }, new Map(), new Set()), ERR_REMEDIATION, "every remediation error at once");
+});
+
+// MB5. DR-arm errors (lens + per-tier why/fix) all-at-once.
+it("MB5. validateFinding DR-fields exact error array", () => {
+	assert.deepEqual(validateFinding({ kind: "dr", id: "S1", lens: "Z", title: "t", severity: "critical", status: "open", evidence: [{ path: "a.ts", startLine: 1, quoted: ["x"] }] }, new Map(), new Set()), ERR_DR_FIELDS, "DR lens + critical why/fix at once");
+});
+
+// MB6. drift-field errors (baselineState/driftClass/priorFp/priorId/verifyNote) all-at-once.
+it("MB6. validateFinding drift-fields exact error array", () => {
+	assert.deepEqual(validateFinding({ ...VALID_AR, baselineState: "gone", driftClass: "Mutated", priorFp: 5, priorId: "", verifyNote: 3 }, new Map(), new Set()), ERR_DRIFT, "every drift-field error at once");
+});
+
+// ---- Batch C: in-process branch coverage -----------------------------------
+// Many branches in checkEvidenceGrounding / deriveStorePath / spliceRegion /
+// renderInto / finalizeReview / addFinding / the DR-demotion guard survived only
+// because the ported oracles exercise them OUT-OF-PROCESS (spawnSync), which
+// Stryker's perTest coverage cannot attribute. These call the functions directly
+// and assert the EXACT message/array/region for both sides of each guard.
+
+/** The message a thrown call produced (or "NO THROW"), for exact-equality asserts. */
+const throwMsg = (fn) => { try { fn(); return "NO THROW"; } catch (e) { return e.message; } };
+
+// MC1. deriveStorePath — the .md guard (throw) + the .md->.json swap (both sides).
+it("MC1. deriveStorePath .md guard + .json swap", () => {
+	assert.equal(deriveStorePath("foo/review.md"), "foo/review.json", ".md -> .json");
+	assert.equal(throwMsg(() => deriveStorePath("foo/review.txt")), "artifact must be a .md path: foo/review.txt", "non-.md rejected with exact message");
+});
+
+// MC2. checkEvidenceGrounding — exact per-branch error arrays, in-process (kills the
+// resolve / bounds / quote-window guards the spawnSync grounding oracles can't attribute).
+it("MC2. checkEvidenceGrounding exact per-branch arrays (in-process)", () => {
+	const fx = mkFixture({ seed: { "lib/x/service.ts": "a\nb\nc\nd\nTARGET\n" } });
+	const ground = (ev) => checkEvidenceGrounding({ evidence: [ev] }, fx.root);
+	assert.deepEqual(ground({ path: "lib/x/service.ts", startLine: 5, quoted: ["TARGET"] }), [], "resolves + in-range + quote present -> []");
+	assert.deepEqual(ground({ path: "lib/x/ghost.ts", startLine: 1, quoted: ["x"] }), ["evidence[0].path does not resolve to a repo file: lib/x/ghost.ts (cite it repo-relative from the root)"], "non-resolving path");
+	assert.deepEqual(ground({ path: "lib/x/service.ts", startLine: 99, quoted: ["a"] }), ["evidence[0].startLine 99 exceeds lib/x/service.ts length (6 lines)"], "startLine past EOF");
+	assert.deepEqual(ground({ path: "lib/x/service.ts", startLine: 1, quoted: ["NOPE"] }), ["evidence[0].quoted not found at lib/x/service.ts:1 (±3): \"NOPE\""], "quote absent");
+	assert.deepEqual(ground({ path: "lib/x/service.ts", startLine: 1, quoted: ["TARGET"] }), ["evidence[0].quoted not found at lib/x/service.ts:1 (±3) (found at line 5): \"TARGET\""], "quote elsewhere -> names the real line");
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
+// MC3. spliceRegion — missing-sentinel throw + exact idempotent splice.
+it("MC3. spliceRegion missing-sentinel throw + exact splice", () => {
+	assert.equal(throwMsg(() => spliceRegion("no markers", sentinelsFor("findings", 0), "X")), "sentinel pair not found in artifact: <!-- BEGIN store:findings layer=0 -->", "missing pair throws exact message");
+	const text = `PRE\n${pair("findings", 0)}\nPOST`;
+	assert.equal(spliceRegion(text, sentinelsFor("findings", 0), "INSERTED"), "PRE\n<!-- BEGIN store:findings layer=0 -->\nINSERTED\n<!-- END store:findings layer=0 -->\nPOST", "splice replaces only the region body");
+});
+
+// MC4. renderInto — the parts.{findings,tally} gates touch ONLY the named region.
+it("MC4. renderInto parts gates isolate the region", () => {
+	const fx = mkFixture();
+	addFinding(fx.artifact, fx.root, VALID_FINDING);
+	// tally-only: tamper the findings region, render {findings:false, tally:true}
+	writeFileSync(fx.artifact, spliceRegion(readFileSync(fx.artifact, "utf-8"), sentinelsFor("findings", 0), "FTAMPER"));
+	let loaded = loadStore(fx.artifact);
+	renderInto(fx.artifact, loaded.store, 0, { findings: false, tally: true });
+	let md = readFileSync(fx.artifact, "utf-8");
+	assert.equal(regionContent(md, "findings", 0).trim(), "FTAMPER", "findings region untouched when findings:false");
+	assert.match(regionContent(md, "tally", 0), /\| accepted \| 1 \|/, "tally re-rendered when tally:true");
+	// findings-only: tamper the tally region, render {findings:true, tally:false}
+	writeFileSync(fx.artifact, spliceRegion(readFileSync(fx.artifact, "utf-8"), sentinelsFor("tally", 0), "TTAMPER"));
+	loaded = loadStore(fx.artifact);
+	renderInto(fx.artifact, loaded.store, 0, { findings: true, tally: false });
+	md = readFileSync(fx.artifact, "utf-8");
+	assert.equal(regionContent(md, "tally", 0).trim(), "TTAMPER", "tally region untouched when tally:false");
+	assert.ok(regionContent(md, "findings", 0).includes("### L0-01"), "findings re-rendered when findings:true");
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
+// MC5. finalizeReview — every gate message + the dual flip, in-process.
+it("MC5. finalizeReview gate messages + dual flip (in-process)", () => {
+	const fxBad = mkReviewFixture();
+	addFinding(fxBad.artifact, fxBad.root, VALID_FINDING);
+	assert.equal(throwMsg(() => finalizeReview(fxBad.artifact, fxBad.root, "pending")), "--health-score must be one of healthy | drifting | degraded (got: pending)", "pending rejected");
+	assert.equal(throwMsg(() => finalizeReview(fxBad.artifact, fxBad.root, null)), "--health-score must be one of healthy | drifting | degraded (got: none)", "omitted rejected");
+	rmSync(fxBad.tmp, { recursive: true, force: true });
+
+	const fxOpen = mkReviewFixture();
+	addFinding(fxOpen.artifact, fxOpen.root, { ...VALID_FINDING, id: "L0-03", status: "open" });
+	assert.equal(throwMsg(() => finalizeReview(fxOpen.artifact, fxOpen.root, "drifting")), "untriaged findings remain: L0-03", "untriaged blocks");
+	rmSync(fxOpen.tmp, { recursive: true, force: true });
+
+	const fxAmb = mkReviewFixture({ seed: { "only.ts": "export const x = 1;\n" } });
+	addFinding(fxAmb.artifact, fxAmb.root, { ...VALID_FINDING, evidence: [{ path: "only.ts", startLine: 1, endLine: null, quoted: ["export const x = 1;"] }] });
+	mkdirSync(join(fxAmb.root, "second"), { recursive: true });
+	writeFileSync(join(fxAmb.root, "second", "only.ts"), "export const y = 1;\n");
+	assert.equal(throwMsg(() => finalizeReview(fxAmb.artifact, fxAmb.root, "drifting")), "evidence went ambiguous since insert (repo gained same-named files): L0-01: only.ts", "now-ambiguous evidence blocks");
+	rmSync(fxAmb.tmp, { recursive: true, force: true });
+
+	const fxLint = mkReviewFixture();
+	addFinding(fxLint.artifact, fxLint.root, VALID_FINDING);
+	writeFileSync(fxLint.artifact, readFileSync(fxLint.artifact, "utf-8").replace("# Review", "# Review\n\nPhase 1 {Files: , }"));
+	assert.match(throwMsg(() => finalizeReview(fxLint.artifact, fxLint.root, "drifting")), /body fails the finalization lint/, "dirty body blocks");
+	rmSync(fxLint.tmp, { recursive: true, force: true });
+
+	const fx = mkReviewFixture();
+	addFinding(fx.artifact, fx.root, VALID_FINDING);
+	const ret = finalizeReview(fx.artifact, fx.root, "drifting");
+	assert.equal(ret.findings, 1, "returns finding count");
+	assert.match(ret.hash, /^[0-9a-f]{64}$/, "returns a 64-char content hash");
+	const md = readFileSync(fx.artifact, "utf-8");
+	assert.match(md, /^status: ready$/m, "status flipped to ready");
+	assert.match(md, /^health_score: drifting$/m, "health_score written");
+	assert.equal(throwMsg(() => finalizeReview(fx.artifact, fx.root, "drifting")), "artifact already ready — re-stamp via validate-artifact.mjs --stamp", "double-finalize refused");
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
+// MC6. addFinding — validation / grounding / fingerprint rejections, in-process.
+it("MC6. addFinding rejection messages (in-process)", () => {
+	const fx1 = mkFixture();
+	assert.equal(throwMsg(() => addFinding(fx1.artifact, fx1.root, { ...VALID_FINDING, why: "" })), "invalid finding: missing or empty field: why", "schema rejection");
+	rmSync(fx1.tmp, { recursive: true, force: true });
+	const fx2 = mkFixture();
+	assert.equal(throwMsg(() => addFinding(fx2.artifact, fx2.root, { ...VALID_FINDING, evidence: [{ path: "lib/x/ghost.ts", startLine: 1, endLine: null, quoted: ["x"] }] })), "invalid finding: evidence[0].path does not resolve to a repo file: lib/x/ghost.ts (cite it repo-relative from the root)", "grounding rejection");
+	rmSync(fx2.tmp, { recursive: true, force: true });
+	const fx3 = mkFixture({ seed: { "lib/x/service.ts": "// just a comment\n" } });
+	assert.equal(throwMsg(() => addFinding(fx3.artifact, fx3.root, { ...VALID_FINDING, id: "L0-02", evidence: [{ ...VALID_FINDING.evidence[0], quoted: ["// just a comment"] }] })), "fingerprint invalid for L0-02: 'quoted' evidence is empty after normalisation", "fp:null rejection");
+	rmSync(fx3.tmp, { recursive: true, force: true });
+});
+
+// MC7. updateFinding — the DR cross-tier demotion guard (both sides), in-process.
+it("MC7. updateFinding DR cross-tier demotion guard (in-process)", () => {
+	const fx = mkDrFixture();
+	addFinding(fx.artifact, fx.root, { kind: "dr", id: "S1", lens: "S", title: "race", severity: "suggestion", status: "open", evidence: [{ path: "lib/x/a.ts", startLine: 10, quoted: ["const x = 1;"] }], fix: "f" });
+	assert.equal(throwMsg(() => updateFinding(fx.artifact, fx.root, { id: "S1", verify: "Weakened", verifyNote: "narrower" })), "update: cannot Weaken S1 to discuss — that tier requires a `why` this finding lacks", "demotion into a tier that needs a missing field is refused");
+	rmSync(fx.tmp, { recursive: true, force: true });
+	const fx2 = mkDrFixture();
+	addFinding(fx2.artifact, fx2.root, { kind: "dr", id: "S1", lens: "S", title: "race", severity: "critical", status: "open", evidence: [{ path: "lib/x/a.ts", startLine: 10, quoted: ["const x = 1;"] }], why: "w", fix: "f" });
+	assert.equal(updateFinding(fx2.artifact, fx2.root, { id: "S1", verify: "Weakened", verifyNote: "n" }).severity, "important", "critical weakens to important when why+fix present");
+	rmSync(fx2.tmp, { recursive: true, force: true });
+});
+
+// MC8. initStore — the artifact-exists guard + spec normalization (trim), in-process.
+it("MC8. initStore artifact-not-found guard + spec trim", () => {
+	const tmp = mkdtempSync(join(tmpdir(), "store-noart-"));
+	assert.match(throwMsg(() => initStore(join(tmp, "ghost.md"), { target: "x", layers: [{ n: "0" }] })), /^artifact not found: /, "missing artifact throws");
+	rmSync(tmp, { recursive: true, force: true });
+	const fx = mkLayersFixture();
+	initStore(fx.artifact, { target: "  lib/x  ", layers: [{ n: "0", name: "  Persist  " }] });
+	const s = JSON.parse(readFileSync(fx.storePath, "utf-8"));
+	assert.equal(s.target, "lib/x", "spec.target trimmed");
+	assert.equal(s.layers[0].name, "Persist", "layer name trimmed");
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
+// MC9. renderFinding — mdEscape backtick truncation + multi-evidence line shape.
+it("MC9. renderFinding mdEscape backtick + multi-evidence", () => {
+	const bt = renderFinding({ ...VALID_AR, evidence: [{ path: "lib/x/tpl.ts", startLine: 5, quoted: ["const s = `x`;"] }] });
+	assert.ok(bt.includes("`lib/x/tpl.ts:5` — `const s =...`"), "backtick quote is truncated code-span-safe");
+	const multi = renderFinding({ ...VALID_AR, evidence: [{ path: "a.ts", startLine: 1, endLine: 9, quoted: ["L1"] }, { path: "b.ts", startLine: 3, quoted: ["L2"] }] });
+	assert.ok(multi.includes("`a.ts:1-9` — `L1`"), "endLine renders a range");
+	assert.ok(multi.includes("`b.ts:3` — `L2`"), "no endLine renders a single line");
+});
+
+// MC10. toSarif — empty findings default to the AR driver (the length>0 guard) +
+// the no-notes suppression justification (String(verify ?? status)).
+it("MC10. toSarif empty-findings AR driver + suppression justification", () => {
+	const s = toSarif({ schema: 1, findings: [] });
+	assert.equal(s.runs[0].tool.driver.name, "rpiv-architectural-review", "empty findings -> AR driver, not DR");
+	assert.deepEqual(s.runs[0].results, [], "no results for empty findings");
+	const rejected = toSarif({ schema: 1, findings: [{ ...VALID_AR, fp: "f1", status: "rejected" }] }).runs[0].results[0];
+	assert.equal(rejected.suppressions[0].justification, "Verified", "no-notes suppression justification falls back to verify");
+});
+
+// ============================================================================
+// Mutation hardening (Batch D) — alternate-branch goldens
+// ============================================================================
+// Batch A froze ONE representative output per renderer; that leaves the OTHER
+// side of each field-conditional / `?? default` untested (e.g. an absent
+// entityStage, an empty dependsOn, absent metadata falling back to defaults, a
+// multi-line SARIF snippet). These goldens freeze the alternate branch.
+
+// MD1. renderTally — a rich 2-layer store, both layers frozen (status counts incl.
+// rejected/withdrawn, multi-lens map, cross-cut introduced vs reused, dep edges).
+const GOLDEN_TALLY_L0 = [
+	"### Layer 0 — tally",
+	"",
+	"| Status | Count |",
+	"|---|---|",
+	"| accepted | 1 |",
+	"| rejected | 1 |",
+	"| deferred | 1 |",
+	"| withdrawn | 1 |",
+	"",
+	"Slop lenses fired in this layer: `{G: 2; Lc: 1; S: 1}`",
+	"Cross-cutting tags introduced: T1-boundaries. Reused: none.",
+	"",
+	"Dependency edges within Layer 0:",
+	"",
+	"- L0-01 depends on L0-02 (dead cluster)",
+].join("\n");
+
+const GOLDEN_TALLY_L1 = [
+	"### Layer 1 — tally",
+	"",
+	"| Status | Count |",
+	"|---|---|",
+	"| accepted | 1 |",
+	"| rejected | 0 |",
+	"| deferred | 0 |",
+	"| withdrawn | 0 |",
+	"",
+	"Slop lenses fired in this layer: `{G: 1}`",
+	"Cross-cutting tags introduced: none. Reused: T1-boundaries.",
+].join("\n");
+
+it("MD1. renderTally rich 2-layer byte-exact (both layers)", () => {
+	const store = { findings: [
+		{ id: "L0-01", layer: 0, lens: "G", title: "god-file", status: "accepted", crossCutTag: "T1-boundaries", dependsOn: ["L0-02"] },
+		{ id: "L0-02", layer: 0, lens: "Lc", title: "dead cluster", status: "rejected", crossCutTag: null, dependsOn: [] },
+		{ id: "L0-03", layer: 0, lens: "G", title: "gone", status: "withdrawn", crossCutTag: null, dependsOn: [] },
+		{ id: "L0-04", layer: 0, lens: "S", title: "race", status: "deferred", crossCutTag: "T1-boundaries", dependsOn: [] },
+		{ id: "L1-01", layer: 1, lens: "G", title: "reuse", status: "accepted", crossCutTag: "T1-boundaries", dependsOn: [] },
+	] };
+	assert.equal(renderTally(store, 0), GOLDEN_TALLY_L0, "layer 0 tally byte-identical");
+	assert.equal(renderTally(store, 1), GOLDEN_TALLY_L1, "layer 1 tally byte-identical (T1 reused, not introduced)");
+});
+
+// MD2. renderFinding — the ABSENT-field branches: no statusNote, empty dependsOn ("—"),
+// null entityStage ("—"), multi-item acceptance ("; " join), 2-value blastRadius.
+const GOLDEN_FINDING_MINIMAL = [
+	"### L0-09 — minimal",
+	"",
+	"- **Lens:** A",
+	"",
+	"**Evidence**",
+	"",
+	"`lib/y/m.ts:7` — `const y = 2;`",
+	"",
+	"**Quantified anchor**",
+	"",
+	"42 LOC",
+	"",
+	"**What it is**",
+	"",
+	"what.",
+	"",
+	"**Why it's slop**",
+	"",
+	"why.",
+	"",
+	"**Remediation**",
+	"",
+	"1. one.",
+	"2. two.",
+	"",
+	"- **Acceptance criteria:** a1; a2",
+	"- **Test strategy:** ts.",
+	"- **Trade-off / alternative:** to.",
+	"",
+	"- **Severity:** Low",
+	"- **Effort:** S",
+	"- **Blast radius:** internal, public-API",
+	"- **Class:** polish",
+	"- **Entity / stage:** —",
+	"- **Verify:** Weakened",
+	"- **Status:** **deferred**",
+	"- **Depends on:** —",
+].join("\n");
+
+it("MD2. renderFinding minimal (absent-field branches) byte-exact", () => {
+	const f = {
+		id: "L0-09", layer: 0, lens: "A", title: "minimal",
+		evidence: [{ path: "lib/y/m.ts", startLine: 7, endLine: null, quoted: ["const y = 2;"] }],
+		symbol: "M", anchor: "42 LOC", what: "what.", why: "why.",
+		remediation: { steps: ["one.", "two."], acceptance: ["a1", "a2"], testStrategy: "ts.", tradeoff: "to." },
+		severity: "Low", effort: "S", blastRadius: ["internal", "public-API"], class: "polish",
+		entityStage: null, verify: "Weakened", status: "deferred", dependsOn: [], crossCutTag: null,
+	};
+	assert.equal(renderFinding(f), GOLDEN_FINDING_MINIMAL, "no statusNote / empty dependsOn / null entityStage all render the em-dash + multi-acceptance joins");
+});
+
+// MD3. renderReview — the DEFAULT side of every `meta.X ?? default` (absent metadata),
+// plus the trailing meta.sections join, plus the fully-empty (no findings) shape.
+const GOLDEN_REVIEW_DEFAULTS = [
+	"---",
+	"template_version: 2",
+	"date: ",
+	"author: ",
+	"repository: ",
+	"branch: ",
+	"commit: ",
+	"review_type: working",
+	"scope: \"lib/z\"",
+	"scope_strategy: working-tree",
+	"in_scope_files_count: 0",
+	"status: needs_changes",
+	"severity: { critical: 1, important: 0, suggestion: 0 }",
+	"verification: { verified: 0, weakened: 0, falsified: 0 }",
+	"blockers_count: 1",
+	"tags: [code-review]",
+	"---",
+	"# Code Review — lib/z",
+	"**Commit:** `` · **Status:** `needs_changes` · **Findings:** 1🔴 · 0🟡 · 0🔵 · **Verification:** 0✓ / 0− / 0✗",
+	"## Top Blockers",
+	"1. **S1** — t-S1",
+	"## Legend",
+	"",
+	"```text",
+	"Severity    🔴 fix before merge   🟡 fix soon   🔵 nice to have   💭 discuss",
+	"ID prefix   I interaction   Q quality   S security   G gap",
+	"Verify      ✓ verified   − weakened (demoted)   ✗ falsified (dropped)",
+	"Annotate    [precedent-weighted]   [cascade: <kind>]   [subsumed-by <ID>]",
+	"```",
+	"## 🔴 Critical",
+	"",
+	"",
+	"",
+	"### S1 🔴 t-S1",
+	"",
+	"**Where**",
+	"`a.ts:1`",
+	"",
+	"**Code**",
+	"```",
+	"x",
+	"```",
+	"",
+	"**Why**",
+	"w",
+	"",
+	"**Fix**",
+	"f",
+	"## Extra A",
+	"",
+	"## Extra B",
+].join("\n");
+
+const GOLDEN_REVIEW_EMPTY = [
+	"---",
+	"template_version: 2",
+	"date: ",
+	"author: ",
+	"repository: ",
+	"branch: ",
+	"commit: ",
+	"review_type: working",
+	"scope: \"\"",
+	"scope_strategy: working-tree",
+	"in_scope_files_count: 0",
+	"status: needs_changes",
+	"severity: { critical: 0, important: 0, suggestion: 0 }",
+	"verification: { verified: 0, weakened: 0, falsified: 0 }",
+	"blockers_count: 0",
+	"tags: [code-review]",
+	"---",
+	"# Code Review — ",
+	"**Commit:** `` · **Status:** `needs_changes` · **Findings:** 0🔴 · 0🟡 · 0🔵 · **Verification:** 0✓ / 0− / 0✗",
+	"## Top Blockers",
+	"_none_",
+	"## Legend",
+	"",
+	"```text",
+	"Severity    🔴 fix before merge   🟡 fix soon   🔵 nice to have   💭 discuss",
+	"ID prefix   I interaction   Q quality   S security   G gap",
+	"Verify      ✓ verified   − weakened (demoted)   ✗ falsified (dropped)",
+	"Annotate    [precedent-weighted]   [cascade: <kind>]   [subsumed-by <ID>]",
+	"```",
+].join("\n");
+
+it("MD3. renderReview default-metadata + empty byte-exact", () => {
+	const DR = (id, sev, extra = {}) => ({ kind: "dr", id, lens: "S", title: `t-${id}`, severity: sev, status: "open", evidence: [{ path: "a.ts", startLine: 1, quoted: ["x"] }], why: "w", fix: "f", ...extra });
+	assert.equal(renderReview({ schema: 1, target: "lib/z", findings: [DR("S1", "critical")], review: { sections: ["## Extra A", "## Extra B"] } }), GOLDEN_REVIEW_DEFAULTS, "absent metadata falls to defaults; scope from store.target; sections appended");
+	assert.equal(renderReview({ schema: 1, target: "", findings: [] }), GOLDEN_REVIEW_EMPTY, "no findings -> _none_ blockers + empty scope");
+});
+
+// MD4. toSarif — a rich finding (backslash-path -> forward slashes, multi-line snippet,
+// entityStage/crossCutTag/priorFp/priorId property bag) + a withdrawn finding (statusNote
+// suppression justification).
+const GOLDEN_SARIF_RICH = {
+	"$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+	"version": "2.1.0",
+	"runs": [
+		{
+			"tool": { "driver": { "name": "rpiv-architectural-review", "informationUri": "https://github.com/rpiv", "rules": [{ "id": "G", "name": "G", "shortDescription": { "text": "rpiv lens G" } }] } },
+			"results": [
+				{
+					"ruleId": "G",
+					"ruleIndex": 0,
+					"level": "error",
+					"message": { "text": "rich" },
+					"locations": [{ "physicalLocation": { "artifactLocation": { "uri": "lib/x/a.ts" }, "region": { "startLine": 3, "endLine": 9, "snippet": { "text": "line one\nline two" } } } }],
+					"partialFingerprints": { "rpivFingerprint/v1": "richfp0000000001" },
+					"baselineState": "new",
+					"properties": { "lens": "G", "severity": "High", "class": "redesign", "entityStage": "WeeklyPlan/PERSIST", "crossCutTag": "T1-boundaries", "rpivDriftClass": "Regressed", "priorFingerprint": "oldfp00000000000a", "priorId": "L0-00" },
+					"rank": 90,
+				},
+			],
+		},
+	],
+};
+
+const GOLDEN_SARIF_WITHDRAWN = {
+	"$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+	"version": "2.1.0",
+	"runs": [
+		{
+			"tool": { "driver": { "name": "rpiv-architectural-review", "informationUri": "https://github.com/rpiv", "rules": [{ "id": "G", "name": "G", "shortDescription": { "text": "rpiv lens G" } }] } },
+			"results": [
+				{
+					"ruleId": "G",
+					"ruleIndex": 0,
+					"level": "error",
+					"message": { "text": "rich" },
+					"locations": [{ "physicalLocation": { "artifactLocation": { "uri": "lib/x/a.ts" }, "region": { "startLine": 3, "endLine": 9, "snippet": { "text": "line one\nline two" } } } }],
+					"partialFingerprints": { "rpivFingerprint/v1": "wfp" },
+					"baselineState": "new",
+					"properties": { "lens": "G", "severity": "High", "class": "redesign" },
+					"rank": 90,
+					"suppressions": [{ "kind": "external", "justification": "merged elsewhere" }],
+				},
+			],
+		},
+	],
+};
+
+it("MD4. toSarif rich property-bag + withdrawn suppression deepEqual", () => {
+	const rich = {
+		id: "L0-01", title: "rich", lens: "G", severity: "High", status: "accepted", verify: "Verified", fp: "richfp0000000001",
+		evidence: [{ path: "lib\\x\\a.ts", startLine: 3, endLine: 9, quoted: ["line one", "line two"] }],
+		class: "redesign", entityStage: "WeeklyPlan/PERSIST", crossCutTag: "T1-boundaries",
+		baselineState: "new", driftClass: "Regressed", priorFp: "oldfp00000000000a", priorId: "L0-00",
+	};
+	assert.deepEqual(toSarif({ schema: 1, findings: [rich] }), GOLDEN_SARIF_RICH, "backslash->slash uri, multi-line snippet, full property bag");
+	assert.deepEqual(toSarif({ schema: 1, findings: [{ ...rich, fp: "wfp", status: "withdrawn", statusNote: "merged elsewhere", driftClass: null, priorFp: null, priorId: null, entityStage: null, crossCutTag: null }] }), GOLDEN_SARIF_WITHDRAWN, "withdrawn -> suppression w/ statusNote justification");
+});
+
+// MD5. toSarif — mixed AR+DR store defaults to the AR driver (every, not some), and an
+// unknown severity emits no rank + the warning-level default.
+it("MD5. toSarif mixed-driver + unknown-severity rank/level", () => {
+	const ar = { id: "L0-01", title: "t", lens: "G", severity: "High", status: "accepted", fp: "a", evidence: [{ path: "a.ts", startLine: 1, quoted: ["x"] }] };
+	const dr = { kind: "dr", id: "S1", lens: "S", severity: "critical", title: "t", status: "open", fp: "z", evidence: [{ path: "a.ts", startLine: 1, quoted: ["x"] }] };
+	assert.equal(toSarif({ schema: 1, findings: [ar, dr] }).runs[0].tool.driver.name, "rpiv-architectural-review", "mixed kinds -> AR driver (every dr must hold, not some)");
+	const weird = toSarif({ schema: 1, findings: [{ ...ar, severity: "weird" }] }).runs[0].results[0];
+	assert.equal("rank" in weird, false, "unknown severity -> no rank field");
+	assert.equal(weird.level, "warning", "unknown severity -> warning level default");
+});
+
+// MD6. addFinding — duplicate id rejected in-process (attributes the priorIds Set build).
+it("MD6. addFinding duplicate-id rejection (in-process)", () => {
+	const fx = mkFixture();
+	addFinding(fx.artifact, fx.root, VALID_FINDING);
+	assert.equal(throwMsg(() => addFinding(fx.artifact, fx.root, VALID_FINDING)), "invalid finding: duplicate id: L0-01 (IDs are append-only, never reused)", "second add of the same id rejected");
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
+// MD7. updateFinding — the patch guards' EXACT messages (a loose regex let the guard vs the
+// re-validate message be confused; freeze the guard's own text).
+it("MD7. updateFinding patch-guard exact messages", () => {
+	const fx = mkUpdateFixture();
+	assert.equal(throwMsg(() => updateFinding(fx.artifact, fx.root, { id: "L0-01", verify: "Maybe" })), "update: verify must be one of Verified | Weakened | Falsified (got: Maybe)", "bad verify -> the guard message (not the re-validate message)");
+	assert.equal(throwMsg(() => updateFinding(fx.artifact, fx.root, { verify: "Verified" })), "update: patch.id (string) is required", "missing id");
+	assert.equal(throwMsg(() => updateFinding(fx.artifact, fx.root, { id: "ZZ", verify: "Verified" })), "update: no finding with id ZZ", "unknown id");
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
+// MD8. spliceRegion — the partial-sentinel branches (only BEGIN present, END before BEGIN)
+// both throw (attributes the `ei !== -1` and `bi <= ei` clauses of sentinelPairFound).
+it("MD8. spliceRegion partial-sentinel branches throw", () => {
+	const only = sentinelsFor("findings", 0);
+	assert.equal(throwMsg(() => spliceRegion("<!-- BEGIN store:findings layer=0 -->\nonly begin", only, "X")), "sentinel pair not found in artifact: <!-- BEGIN store:findings layer=0 -->", "BEGIN without END throws");
+	assert.equal(throwMsg(() => spliceRegion("<!-- END store:findings layer=0 -->\nx\n<!-- BEGIN store:findings layer=0 -->", only, "X")), "sentinel pair not found in artifact: <!-- BEGIN store:findings layer=0 -->", "END before BEGIN throws");
+});
+
+// MD9. validateFinding — remediation non-object variants + the N.M layer regex boundary.
+it("MD9. validateFinding remediation-shape + layer-format edges", () => {
+	assert.deepEqual(validateFinding({ ...VALID_AR, remediation: null }, new Map(), new Set()), ["remediation must be an object"], "null remediation");
+	assert.deepEqual(validateFinding({ ...VALID_AR, remediation: [] }, new Map(), new Set()), ["remediation must be an object"], "array remediation");
+	assert.deepEqual(validateFinding({ ...VALID_AR, layer: "1.2.3" }, new Map(), new Set()), ["layer must be N or N.M (got: 1.2.3)"], "N.M.P rejected");
+	assert.deepEqual(validateFinding({ ...VALID_AR, layer: "1.2" }, new Map(), new Set()), [], "N.M accepted");
+});
+
+// ============================================================================
+// Mutation hardening (Batch E) — multi-element join separators + a bounds edge
+// ============================================================================
+// Single-element fixtures left the `.join(sep)` separators equivalent (one item
+// never emits the separator). These use 2+ elements so the separator is real.
+
+// ME1. finalizeReview — the untriaged (", ") and ambiguous ("; ") id-list separators.
+it("ME1. finalizeReview multi-id join separators", () => {
+	const fxOpen = mkReviewFixture();
+	addFinding(fxOpen.artifact, fxOpen.root, { ...VALID_FINDING, id: "L0-03", status: "open" });
+	addFinding(fxOpen.artifact, fxOpen.root, { ...VALID_FINDING, id: "L0-04", status: "open" });
+	assert.equal(throwMsg(() => finalizeReview(fxOpen.artifact, fxOpen.root, "drifting")), "untriaged findings remain: L0-03, L0-04", "two open ids joined with ', '");
+	rmSync(fxOpen.tmp, { recursive: true, force: true });
+
+	const fxAmb = mkReviewFixture({ seed: { "only.ts": "export const x = 1;\n" } });
+	addFinding(fxAmb.artifact, fxAmb.root, { ...VALID_FINDING, id: "L0-01", evidence: [{ path: "only.ts", startLine: 1, endLine: null, quoted: ["export const x = 1;"] }] });
+	addFinding(fxAmb.artifact, fxAmb.root, { ...VALID_FINDING, id: "L0-02", evidence: [{ path: "only.ts", startLine: 1, endLine: null, quoted: ["export const x = 1;"] }] });
+	mkdirSync(join(fxAmb.root, "second"), { recursive: true });
+	writeFileSync(join(fxAmb.root, "second", "only.ts"), "export const y = 1;\n");
+	assert.equal(throwMsg(() => finalizeReview(fxAmb.artifact, fxAmb.root, "drifting")), "evidence went ambiguous since insert (repo gained same-named files): L0-01: only.ts; L0-02: only.ts", "two ambiguous entries joined with '; '");
+	rmSync(fxAmb.tmp, { recursive: true, force: true });
+});
+
+// ME2. renderFinding — the dependsOn ", " separator (2 ids).
+it("ME2. renderFinding multi-dependsOn join", () => {
+	assert.ok(renderFinding({ ...VALID_AR, dependsOn: ["L0-02", "L0-03"] }).includes("- **Depends on:** L0-02, L0-03"), "two dependsOn ids joined with ', '");
+});
+
+// ME3. renderTally — the introduced-tags ", " separator (2 distinct tags in a layer).
+it("ME3. renderTally multi-tag introduced join", () => {
+	const store = { findings: [
+		{ id: "L0-01", layer: 0, lens: "G", title: "a", status: "accepted", crossCutTag: "T1-x", dependsOn: [] },
+		{ id: "L0-02", layer: 0, lens: "G", title: "b", status: "accepted", crossCutTag: "T2-y", dependsOn: [] },
+	] };
+	assert.ok(renderTally(store, 0).includes("Cross-cutting tags introduced: T1-x, T2-y. Reused: none."), "two introduced tags joined with ', '");
+});
+
+// ME4. checkEvidenceGrounding — the startLine bounds boundary (== length ok, > length error).
+it("ME4. checkEvidenceGrounding startLine boundary (> vs >=)", () => {
+	const fx = mkFixture({ seed: { "lib/x/service.ts": "l1\nl2\nl3" } });
+	assert.deepEqual(checkEvidenceGrounding({ evidence: [{ path: "lib/x/service.ts", startLine: 3, quoted: ["l3"] }] }, fx.root), [], "startLine == length is in range");
+	assert.deepEqual(checkEvidenceGrounding({ evidence: [{ path: "lib/x/service.ts", startLine: 4, quoted: ["l3"] }] }, fx.root), ["evidence[0].startLine 4 exceeds lib/x/service.ts length (3 lines)"], "startLine == length + 1 overruns");
 	rmSync(fx.tmp, { recursive: true, force: true });
 });
