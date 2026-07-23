@@ -40,12 +40,21 @@
  */
 
 import { readFileSync } from "node:fs";
+import { parseInto } from "./bounded-output.mjs";
 
-// The ten lenses the warrant can measure from metrics + semantic + knip. M (missing
-// abstraction) and L (leaky boundary) are NOT here: they have no cheap deterministic seed
-// and always run whenever Wave 2 runs at all.
-const CROSS_CUTTING = ["C", "A", "S", "Fe", "T", "Fp"]; // seed-driven Wave-2 lenses
-const ALWAYS_ON = ["M", "L"]; // run whenever Wave 2 runs (skipped only on band=skip)
+// The canonical Wave-2 lens set — the SINGLE source of truth (dogfooding C). Exactly one
+// prompt per entry lives in references/wave2-lenses.md; SKILL.md's Wave-2 prose derives
+// from this list. Sec/P existed in the reference and the dispatch table but were never
+// emitted by the warrant; the in-file copies and the SKILL's 7/8/9/10-lens variants all
+// collapse here.
+const WAVE2 = ["C", "A", "T", "L", "Sec", "M", "S", "Fe", "Fp", "P"];
+// No-cheap-seed lenses run whenever Wave 2 runs at all (the standing M/L rule; Sec joins
+// it — security has no deterministic metric seed either, and SKILL Step 5d already
+// declares it always-on).
+const ALWAYS_ON = ["M", "L", "Sec"];
+// The rest are seed-driven, measured from metrics/semantic/knip stdin. Derived, never
+// hand-copied — the drift class this phase retires.
+const CROSS_CUTTING = WAVE2.filter((l) => !ALWAYS_ON.includes(l)); // C A T S Fe Fp P
 
 // --- flags ---------------------------------------------------------------
 const flags = {};
@@ -55,29 +64,6 @@ for (const a of process.argv.slice(2)) {
 }
 const pre10 = flags.pre10 === true || flags.pre10 === "true";
 const knipDead = flags["knip-dead"] != null ? Number(flags["knip-dead"]) : null;
-
-// --- block parser --------------------------------------------------------
-// metrics.mjs and semantic.mjs both emit `key: value` headers, then `---label---`
-// blocks of tab-separated rows. Headers are only read before the first block of a
-// source (block rows like `table:foo\twriters=1` also contain colons, so header
-// detection must stop once blocks begin).
-function parseInto(text, blocks, headers) {
-  let cur = null;
-  for (const line of text.split(/\r?\n/)) {
-    const b = line.match(/^---(.+)---\s*$/);
-    if (b) {
-      cur = b[1];
-      blocks[cur] ??= [];
-      continue;
-    }
-    if (cur === null) {
-      const h = line.match(/^([\w-]+)\s*:\s*(.+?)\s*$/);
-      if (h) headers[h[1]] = h[2];
-      continue;
-    }
-    if (line.trim()) blocks[cur].push(line);
-  }
-}
 
 function readStdin() {
   try {
@@ -127,9 +113,28 @@ function sLive() {
   return rows(src).some((r) => toNum(field(r, /writers=(\d+)/)) >= 2); // writers=1 is clean by design
 }
 
+function pLive() {
+  // P is db-gated: it fires only when the target HAS persistence write-sites
+  // (table:/rpc: rows, metric or semantic source) — no db surface, nothing to review.
+  const src = present("write-sites-semantic") ? "write-sites-semantic" : "write-sites";
+  return rows(src).some((r) => /^(table|rpc):/.test(r));
+}
+
 function aLive() {
   if (knipDead != null) return knipDead >= 1; // knip is authoritative for A when supplied
-  if (present("dead-exports-semantic")) return rows("dead-exports-semantic").length >= 1;
+  if (present("dead-exports-semantic")) {
+    if (rows("dead-exports-semantic").length >= 1) return true;
+    // An EMPTY block is only proof of clean when the scan actually ran to completion:
+    // a swallowed findReferences error (skipped_on_error>0), an examine-cap hit
+    // (capped=true), or knip-delegation empties the block without meaning "no dead
+    // exports" (L3-05/IX-5). Anything else falls through to the export-usage seed.
+    const scan = headers.dead_export_scan ?? "";
+    const complete =
+      scan.startsWith("examined=") &&
+      !/\bcapped=true\b/.test(scan) &&
+      toNum(field(scan, /skipped_on_error=(\d+)/), 0) === 0;
+    if (complete) return false;
+  }
   return rows("export-usage").some((r) => /\binbound=0\b/.test(r)); // exclude inbound=? (capped hubs)
 }
 
@@ -173,6 +178,7 @@ const lenses = {
   T: tLive(),
   Tc: tcLive(),
   Fp: fpLive(),
+  P: pLive(),
 };
 
 const liveLenses = Object.entries(lenses)
@@ -202,12 +208,13 @@ if (fileCount >= 100 || pre10 || liveCount >= 4) {
 }
 
 // Wave-2 lens set to actually dispatch. Wave 1 (G/Lc/D) has already run by this point.
-// selective = the live cross-cutting lenses + the always-on M/L. full = all eight.
+// selective = the live cross-cutting lenses + the always-on M/L/Sec. full = the WAVE2
+// set with P kept db-gated (a no-persistence target gets no P agent even on full).
 const selectiveWave2 =
   band === "skip"
     ? []
     : band === "full"
-      ? ["C", "A", "T", "L", "M", "S", "Fe", "Fp"]
+      ? WAVE2.filter((l) => l !== "P" || lenses.P === true)
       : [...liveLenses.filter((l) => CROSS_CUTTING.includes(l)), ...ALWAYS_ON];
 
 process.stdout.write(

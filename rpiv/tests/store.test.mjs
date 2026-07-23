@@ -22,7 +22,7 @@ import * as store from "../skills/_shared/store.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STORE = join(HERE, "..", "skills", "_shared", "store.mjs");
-const FINGERPRINT = join(HERE, "..", "skills", "architectural-review", "_helpers", "fingerprint.mjs");
+const FINGERPRINT = join(HERE, "..", "skills", "_shared", "fingerprint.mjs");
 
 // ---- fixtures ----------------------------------------------------------------
 

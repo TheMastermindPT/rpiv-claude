@@ -8,6 +8,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { makeBoundedEmitter } from "./bounded-output.mjs";
 
 const W = join(dirname(fileURLToPath(import.meta.url)), "warrant.mjs");
 const tmp = mkdtempSync(join(tmpdir(), "warrant-"));
@@ -29,8 +30,14 @@ function warrant(metrics, opts = {}) {
   return JSON.parse(out.trim());
 }
 
-// Tiny block builders.
-const block = (label, rows = []) => `---${label}---\n${rows.join("\n")}${rows.length ? "\n" : ""}`;
+// Tiny block builders — piped through the REAL emitter so a producer-side format
+// change breaks these fixtures loudly (byte-identical to the old hand-rolled copy
+// for every existing case, incl. zero-row `empties`: header only, no marker).
+const block = (label, rows = []) => {
+	const em = makeBoundedEmitter(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+	em.block(label, rows);
+	return em.body();
+};
 const empties = (...labels) => labels.map((l) => block(l)).join("");
 
 // ── Case 1: adaptive-context (17f) — THE counterexample ────────────────────
@@ -46,7 +53,7 @@ const empties = (...labels) => labels.map((l) => block(l)).join("");
   const r = warrant(metrics, { knipDead: 0 });
   assert.equal(r.band, "selective", "adaptive-context → selective (not skip)");
   assert.deepEqual(r.liveLenses, ["Fe"], "only Fe warranted (ratio=0.75,own=3; service ratio=0.69 excluded)");
-  assert.deepEqual(r.selectiveWave2, ["Fe", "M", "L"], "selective runs Fe + always-on M/L");
+  assert.deepEqual(r.selectiveWave2, ["Fe", "M", "L", "Sec"], "selective runs Fe + always-on M/L/Sec");
   assert.equal(r.prompt, false, "selective auto-runs, no prompt");
   assert.deepEqual(r.unmeasured, ["C"], "C unmeasured without a semantic pass");
 }
@@ -96,7 +103,7 @@ const empties = (...labels) => labels.map((l) => block(l)).join("");
   const r = warrant(metrics, { knipDead: 0 });
   assert.equal(r.band, "full", "lib → full (258 files ≥ 100)");
   assert.equal(r.prompt, true, "full sweep prompts the developer");
-  assert.deepEqual(r.selectiveWave2, ["C", "A", "T", "L", "M", "S", "Fe", "Fp"], "full runs all eight Wave-2 lenses");
+  assert.deepEqual(r.selectiveWave2, ["C", "A", "T", "L", "Sec", "M", "S", "Fe", "Fp", "P"], "full runs all ten (P live: db rows)");
   assert.ok(r.liveCount >= 4, "multiple lenses live");
 }
 
@@ -162,7 +169,7 @@ const empties = (...labels) => labels.map((l) => block(l)).join("");
   const r2 = warrant(spread, { knipDead: 0 });
   assert.equal(r2.lenses.Fp, true, ">=2 swallowing files → Fp live");
   assert.equal(r2.band, "selective");
-  assert.deepEqual(r2.selectiveWave2, ["Fp", "M", "L"], "selective dispatches Fp + always-on M/L");
+  assert.deepEqual(r2.selectiveWave2, ["Fp", "M", "L", "Sec"], "selective dispatches Fp + always-on M/L/Sec");
 
   const habitual = "file_count: 12\n" + empt + block("catch-swallows", ["src/sync.ts\tswallows=3"]);
   assert.equal(warrant(habitual, { knipDead: 0 }).lenses.Fp, true, "one habitual file (>=3) → Fp live");
@@ -178,6 +185,42 @@ const empties = (...labels) => labels.map((l) => block(l)).join("");
   assert.equal(r.lenses.S, true, "owner:NONE entity → S warranted even at writers=1");
   assert.equal(r.band, "selective");
   assert.ok(r.selectiveWave2.includes("S"), "S dispatched in selective when its owner seed fires");
+  assert.ok(r.selectiveWave2.includes("P"), "write-sites table row -> P rides selective too");
+}
+
+// ── P: db-gated (dogfooding C) ─────────────────────────────────────────────
+{
+  const empt = empties("godfile-candidates", "low-cohesion", "dup-candidates", "feature-envy-candidates", "export-usage", "write-sites", "co-change-groups", "test-density");
+  // pre-1.0 + all-empty blocks (incl. empty write-sites): full band WITHOUT P.
+  const noDb = warrant(`file_count: 12\n${empt}`, { knipDead: 0, pre10: true });
+  assert.deepEqual(noDb.selectiveWave2, ["C", "A", "T", "L", "Sec", "M", "S", "Fe", "Fp"], "full without db rows excludes P");
+  assert.equal(noDb.lenses.P, false, "no write-sites rows -> P dead");
+
+  // a single rpc row makes P live and dispatches it.
+  const rpcMetrics =
+    "file_count: 12\n" +
+    empties("godfile-candidates", "low-cohesion", "dup-candidates", "feature-envy-candidates", "export-usage", "co-change-groups", "test-density") +
+    block("write-sites", ["rpc:sync\twriters=1"]);
+  const rpc = warrant(rpcMetrics, { knipDead: 0 });
+  assert.equal(rpc.lenses.P, true, "rpc row -> P live");
+  assert.ok(rpc.liveLenses.includes("P") && rpc.band === "selective" && rpc.selectiveWave2.includes("P"), "P warranted, dispatched on selective");
+
+  // an EMPTY semantic write-sites supersedes a metric row -> P dead.
+  const supersede = warrant(
+    "file_count: 12\n" +
+      empties("godfile-candidates", "low-cohesion", "dup-candidates", "feature-envy-candidates", "export-usage", "co-change-groups", "test-density") +
+      block("write-sites", ["table:x\twriters=1"]),
+    { knipDead: 0, semantic: `files_in_target: 12\n${block("write-sites-semantic")}${block("feature-envy-semantic")}${block("dead-exports-semantic")}${block("type-fragmentation-semantic")}` },
+  );
+  assert.equal(supersede.lenses.P, false, "semantic supersedes: no semantic db rows -> P dead");
+}
+
+// ── Sec: only-absent-on-skip pin (the sole state without Sec) ──────────────
+{
+  const empt = empties("godfile-candidates", "low-cohesion", "dup-candidates", "feature-envy-candidates", "export-usage", "write-sites", "co-change-groups", "test-density");
+  const r = warrant(`file_count: 12\n${empt}`, { knipDead: 0 });
+  assert.equal(r.band, "skip");
+  assert.deepEqual(r.selectiveWave2, [], "skip band dispatches nothing — the only Sec-absent state");
 }
 
 // Band boundaries.
@@ -199,6 +242,45 @@ const empties = (...labels) => labels.map((l) => block(l)).join("");
     empties("godfile-candidates", "low-cohesion", "dup-candidates", "feature-envy-candidates", "export-usage", "write-sites", "co-change-groups", "test-density");
   const r = warrant(m, { knipDead: 0, pre10: true });
   assert.equal(r.band, "full", "pre-1.0 → full sweep regardless of seed");
+}
+
+// ── A-lens: block-presence is NOT scan-completeness (M2 — broken != absent) ──
+// An EMPTY dead-exports-semantic block only proves clean when the scan ran to
+// completion: dropped candidates (skipped_on_error>0), a cap hit (capped=true), or
+// knip-delegation-without-knip-flag must all fall through to the export-usage seed.
+{
+	const mkMetrics = () =>
+		"file_count: 10\n" +
+		empties("godfile-candidates", "low-cohesion", "dup-candidates", "feature-envy-candidates", "write-sites", "co-change-groups", "test-density") +
+		block("export-usage", ["dead.ts\texports=4\tinbound=0"]);
+	const mkSemantic = (scan) =>
+		`files_in_target: 10\ndead_export_scan: ${scan}\n` +
+		block("write-sites-semantic") + block("feature-envy-semantic") + block("dead-exports-semantic") + block("type-fragmentation-semantic");
+
+	const dropped = warrant(mkMetrics(), { semantic: mkSemantic("examined=5 capped=false skipped_on_error=2") });
+	assert.equal(dropped.lenses.A, true, "dropped candidates (skipped_on_error=2) → empty block untrusted, export-usage fallback fires");
+
+	const complete = warrant(mkMetrics(), { semantic: mkSemantic("examined=5 capped=false skipped_on_error=0") });
+	assert.equal(complete.lenses.A, false, "complete empty block (skipped_on_error=0, uncapped) is trusted → A clean");
+
+	const cappedScan = warrant(mkMetrics(), { semantic: mkSemantic("examined=1200 capped=true skipped_on_error=0") });
+	assert.equal(cappedScan.lenses.A, true, "capped scan → empty block untrusted, fallback fires");
+
+	const delegated = warrant(mkMetrics(), { semantic: mkSemantic("skipped (knip present — A delegated to knip)") });
+	assert.equal(delegated.lenses.A, true, "delegated-but-no-knip-flag → falls through to export-usage");
+}
+
+// ── Contract: truncation marker rows flow through the parser without tripping predicates ──
+{
+	const em = makeBoundedEmitter(1, Number.POSITIVE_INFINITY);
+	em.block("feature-envy-candidates", [
+		"a.ts\tenvies=@/m\text=9\town=3\tratio=0.75",
+		"b.ts\tenvies=@/m\text=9\town=3\tratio=0.75",
+	]);
+	const m = `file_count: 17\n${empties("godfile-candidates", "low-cohesion", "dup-candidates", "export-usage", "write-sites", "co-change-groups", "test-density")}${em.body()}`;
+	const r = warrant(m, { knipDead: 0 });
+	assert.equal(r.band, "selective", "truncated block still parses; surviving row warrants Fe");
+	assert.deepEqual(r.liveLenses, ["Fe"], "marker line has no fields → ignored by predicates");
 }
 
 console.log("OK (warrant) — gymapp counterexample (adaptive-context → selective[Fe]) + A/S/Fe predicates + knip-primary A + semantic supersede + band boundaries.");

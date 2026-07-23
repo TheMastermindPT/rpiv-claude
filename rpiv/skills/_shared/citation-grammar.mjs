@@ -45,22 +45,29 @@ export function citesIn(chunk) {
 // never diverge.
 const SKIP = new Set(["node_modules", "coverage", "reports", "playwright-report", "dist", "build", "out", ".stryker-tmp"]);
 
-/** Repo basename -> file count for the "ambiguous bare basename" rule. Skips
- * SKIP dirs and dot-dirs except .github (CI workflows are cited). */
-export function basenameCounts(root) {
-	const counts = new Map();
-	(function walk(dir) {
+/** Single recursive walker: skips SKIP dirs and dot-dirs except .github, tolerates
+ * unreadable entries, and calls onFile(entryName, relPath) for every file. */
+const walkTree = (root, onFile) => {
+	(function walk(dir, base) {
 		let entries;
 		try { entries = readdirSync(dir); } catch { return; }
 		for (const e of entries) {
 			if ((e.startsWith(".") && e !== ".github") || SKIP.has(e)) continue;
 			const p = join(dir, e);
+			const rel = base ? `${base}/${e}` : e;
 			let st;
 			try { st = statSync(p); } catch { continue; }
-			if (st.isDirectory()) walk(p);
-			else counts.set(e, (counts.get(e) ?? 0) + 1);
+			if (st.isDirectory()) walk(p, rel);
+			else onFile(e, rel);
 		}
-	})(root);
+	})(root, "");
+};
+
+/** Repo basename -> file count for the "ambiguous bare basename" rule. Skips
+ * SKIP dirs and dot-dirs except .github (CI workflows are cited). */
+export function basenameCounts(root) {
+	const counts = new Map();
+	walkTree(root, (name) => counts.set(name, (counts.get(name) ?? 0) + 1));
 	return counts;
 }
 
@@ -75,19 +82,7 @@ export function isAmbiguous(tok, counts) {
  * except .github — the resolvable-path universe for evidence grounding. */
 export function fileIndex(root) {
 	const files = [];
-	(function walk(dir, base) {
-		let entries;
-		try { entries = readdirSync(dir); } catch { return; }
-		for (const e of entries) {
-			if ((e.startsWith(".") && e !== ".github") || SKIP.has(e)) continue;
-			const p = join(dir, e);
-			const rel = base ? `${base}/${e}` : e;
-			let st;
-			try { st = statSync(p); } catch { continue; }
-			if (st.isDirectory()) walk(p, rel);
-			else files.push(rel);
-		}
-	})(root, "");
+	walkTree(root, (_name, rel) => files.push(rel));
 	return files;
 }
 

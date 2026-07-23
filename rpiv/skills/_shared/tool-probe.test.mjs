@@ -95,3 +95,113 @@ try {
 } finally {
 	rmSync(repo2, { recursive: true, force: true });
 }
+
+// --- Broken != absent (M2): a corrupt manifest is announced, an absent one stays clean ---
+const repo3 = mkdtempSync(join(tmpdir(), "probe-corrupt-"));
+try {
+	writeFileSync(join(repo3, "package.json"), "{invalid");
+	git(repo3, ["init", "-q"]);
+	git(repo3, ["add", "-A"]);
+	const out3 = execFileSync("node", [PROBE, "."], { cwd: repo3, encoding: "utf-8" });
+	assert.ok(
+		out3.includes("manifest:  error — package.json failed to parse"),
+		`corrupt package.json must emit the manifest error line, got:\n${out3}`,
+	);
+	assert.ok(out3.includes("ecosystem: unknown"), `corrupt manifest cannot claim an ecosystem, got:\n${out3}`);
+	console.log("OK (tool-probe corrupt-manifest) — parse failure surfaces `manifest: error`, never silent unknown.");
+} finally {
+	rmSync(repo3, { recursive: true, force: true });
+}
+
+const repo4 = mkdtempSync(join(tmpdir(), "probe-nomanifest-"));
+try {
+	writeFileSync(join(repo4, "README.md"), "no manifest here\n");
+	git(repo4, ["init", "-q"]);
+	git(repo4, ["add", "-A"]);
+	const out4 = execFileSync("node", [PROBE, "."], { cwd: repo4, encoding: "utf-8" });
+	assert.ok(!/^manifest:/m.test(out4), `absent manifest is the clean path — no manifest line, got:\n${out4}`);
+	console.log("OK (tool-probe absent-manifest) — no package.json emits no manifest line (clean absent path unchanged).");
+} finally {
+	rmSync(repo4, { recursive: true, force: true });
+}
+
+// --- Multi-target probe (dogfooding A): union of N paths, anchor announced ---
+const repo5 = mkdtempSync(join(tmpdir(), "probe-multi-"));
+try {
+	mkdirSync(join(repo5, "d1"), { recursive: true });
+	mkdirSync(join(repo5, "d2"), { recursive: true });
+	writeFileSync(join(repo5, "package.json"), JSON.stringify({ name: "one-root" }));
+	git(repo5, ["init", "-q"]);
+	git(repo5, ["add", "-A"]);
+	const multi = execFileSync("node", [PROBE, "d1", "d2"], { cwd: repo5, encoding: "utf-8" });
+	const single = execFileSync("node", [PROBE, "d1"], { cwd: repo5, encoding: "utf-8" });
+	assert.equal(multi, single, `two targets under ONE package.json must probe identically (no roots_note)`);
+	assert.ok(!multi.includes("roots_note"), `same project root -> no roots_note line, got:\n${multi}`);
+	console.log("OK (tool-probe multi same-root) — union of targets under one root probes identically.");
+} finally {
+	rmSync(repo5, { recursive: true, force: true });
+}
+
+const repo6 = mkdtempSync(join(tmpdir(), "probe-span-"));
+try {
+	mkdirSync(join(repo6, "pkgA"), { recursive: true });
+	mkdirSync(join(repo6, "pkgB"), { recursive: true });
+	writeFileSync(join(repo6, "pkgA", "package.json"), JSON.stringify({ name: "a" }));
+	writeFileSync(join(repo6, "pkgB", "package.json"), JSON.stringify({ name: "b" }));
+	git(repo6, ["init", "-q"]);
+	git(repo6, ["add", "-A"]);
+	const out6 = execFileSync("node", [PROBE, "pkgA", "pkgB"], { cwd: repo6, encoding: "utf-8" });
+	assert.ok(
+		out6.includes("roots_note: targets span 2 project roots — probing the first"),
+		`multi-project targets must announce the probe anchor, got:\n${out6}`,
+	);
+	console.log("OK (tool-probe span note) — multi-project anchor announced, never silent.");
+} finally {
+	rmSync(repo6, { recursive: true, force: true });
+}
+
+// --- HTML-only mutation report is distinct from absent (dogfooding B, M2) ----
+const repo7 = mkdtempSync(join(tmpdir(), "probe-htmlonly-"));
+try {
+	const seed = () => {
+		writeFileSync(join(repo7, "package.json"), JSON.stringify({
+			name: "x",
+			devDependencies: { "@stryker-mutator/core": "^9" },
+		}));
+		writeFileSync(join(repo7, "stryker.config.json"), JSON.stringify({ mutate: ["src/x.ts"] }));
+	};
+	seed();
+	mkdirSync(join(repo7, "reports", "mutation"), { recursive: true });
+	writeFileSync(join(repo7, "reports", "mutation", "store.html"), "<html></html>");
+	git(repo7, ["init", "-q"]);
+	git(repo7, ["add", "-A"]);
+
+	const htmlOnly = execFileSync("node", [PROBE, "."], { cwd: repo7, encoding: "utf-8" });
+	const strykerRow = htmlOnly.split("\n").find((l) => l.startsWith("stryker\t")) ?? "";
+	assert.ok(
+		strykerRow.includes("report=html-only:reports/mutation/store.html"),
+		`html-only report must be named distinctly, got: ${strykerRow}\n${htmlOnly}`,
+	);
+	assert.ok(
+		strykerRow.includes('hint=add "json" to stryker reporters for machine ingest'),
+		`html-only row must carry the add-json hint, got: ${strykerRow}`,
+	);
+	assert.ok(/^mutation: html-only$/m.test(htmlOnly), `footer must be exactly 'mutation: html-only', got:\n${htmlOnly}`);
+
+	// with a json report present, the html file is irrelevant -> present (unchanged, pinned)
+	writeFileSync(join(repo7, "reports", "mutation", "mutation.json"), JSON.stringify({ files: {} }));
+	const withJson = execFileSync("node", [PROBE, "."], { cwd: repo7, encoding: "utf-8" });
+	const jsonRow = withJson.split("\n").find((l) => l.startsWith("stryker\t")) ?? "";
+	assert.ok(jsonRow.includes("report=reports/mutation/mutation.json"), `json report preferred, got: ${jsonRow}`);
+	assert.ok(/^mutation: present$/m.test(withJson), `footer stays 'mutation: present' with json, got:\n${withJson}`);
+
+	// with neither -> absent (unchanged)
+	rmSync(join(repo7, "reports"), { recursive: true, force: true });
+	const neither = execFileSync("node", [PROBE, "."], { cwd: repo7, encoding: "utf-8" });
+	const noneRow = neither.split("\n").find((l) => l.startsWith("stryker\t")) ?? "";
+	assert.ok(noneRow.includes("report=none"), `no report at all -> report=none, got: ${noneRow}`);
+	assert.ok(/^mutation: absent$/m.test(neither), `footer stays 'mutation: absent' with no report, got:\n${neither}`);
+	console.log("OK (tool-probe html-only) — html-only distinct from absent; json preferred; absent unchanged.");
+} finally {
+	rmSync(repo7, { recursive: true, force: true });
+}

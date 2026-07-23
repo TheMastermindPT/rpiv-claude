@@ -3,7 +3,7 @@
 // insert/replace/remove behavior, status filtering, and the --check exit code. Prints "OK".
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -83,13 +83,37 @@ try {
 	decision(repo, "alpha", { rule: "v1" });
 	writeFileSync(join(repo, "CLAUDE.md"), CLAUDE("body"));
 	execFileSync("node", [SCRIPT, repo], { encoding: "utf-8" }); // write the block
-	execFileSync("node", [SCRIPT, "--check", repo], { encoding: "utf-8" }); // in sync -> exit 0
+	const upToDate = execFileSync("node", [SCRIPT, "--check", repo], { encoding: "utf-8" }); // in sync -> exit 0
+	assert.ok(upToDate.includes("decisions index: up to date"), "--check reports up to date on exit 0");
 	decision(repo, "alpha", { rule: "v2-changed" }); // drift the source
 	assert.throws(
 		() => execFileSync("node", [SCRIPT, "--check", repo], { stdio: "pipe" }),
 		/STALE/,
 		"--check exits nonzero and reports STALE when CLAUDE.md drifts from the decision files",
 	);
+
+	// --- the gate runs under the shared isMain: a SYMLINKED invocation still gates ---
+	// (realpath normalisation preserved through is-main.mjs; the old IIFE's whole-check
+	// swallow could silently exit 0 here. Skip when the OS forbids file symlinks — EPERM
+	// on Windows without developer mode.)
+	{
+		const link = join(repo, "regen-link.mjs");
+		let linked = false;
+		try {
+			symlinkSync(SCRIPT, link);
+			linked = true;
+		} catch (e) {
+			if (e?.code !== "EPERM" && e?.code !== "EACCES") throw e;
+			console.log("  (symlink case skipped: file symlinks unavailable — EPERM)");
+		}
+		if (linked) {
+			assert.throws(
+				() => execFileSync("node", [link, "--check", repo], { stdio: "pipe" }),
+				/STALE/,
+				"symlinked --check still exits 1 on a stale ledger (never a silent exit 0)",
+			);
+		}
+	}
 	rmSync(repo, { recursive: true, force: true });
 
 	console.log("OK (regen-decisions-index) — render, insert, replace, remove, status filter, --check gate.");

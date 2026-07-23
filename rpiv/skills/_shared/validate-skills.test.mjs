@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { danglingReferences, referencedAgents, referenceIntegrity } from "./validate-skills.mjs";
+import { danglingReferences, referencedAgents, referenceIntegrity, unprefixedReferences } from "./validate-skills.mjs";
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "validate-skills.mjs");
 
@@ -38,8 +38,8 @@ function makePluginRoot() {
 
 let root = makePluginRoot();
 try {
-	// all references resolve -> no dangling
-	writeFileSync(join(root, "skills", "demo", "SKILL.md"), 'Dispatch subagent_type: "scope-tracer" now.\n');
+	// all references resolve -> no dangling (prefixed, so the unprefixed gate passes too)
+	writeFileSync(join(root, "skills", "demo", "SKILL.md"), 'Dispatch subagent_type: "rpiv:scope-tracer" now.\n');
 	assert.deepEqual(danglingReferences(root), [], "resolvable reference is not dangling");
 	execFileSync("node", [SCRIPT, "--root", root], { encoding: "utf-8" }); // CLI exit 0
 
@@ -59,14 +59,14 @@ try {
 	writeFileSync(join(root, "skills", "demo", "references", "surfaces.md"), "content\n");
 	writeFileSync(
 		join(root, "skills", "demo", "SKILL.md"),
-		'Dispatch subagent_type: "scope-tracer".\nRead `references/surfaces.md` and substitute it for the `{{SURFACES}}` line.\n  {{SURFACES}}\n',
+		'Dispatch subagent_type: "rpiv:scope-tracer".\nRead `references/surfaces.md` and substitute it for the `{{SURFACES}}` line.\n  {{SURFACES}}\n',
 	);
 	assert.deepEqual(referenceIntegrity(root), [], "existing reference + paired placeholder are clean");
 
 	// dangling reference-file mention -> flagged + CLI exit 1
 	writeFileSync(
 		join(root, "skills", "demo", "SKILL.md"),
-		'Dispatch subagent_type: "scope-tracer".\nRead `references/surfaces.md` and `references/ghost.md`, substitute for `{{SURFACES}}`.\n  {{SURFACES}}\n',
+		'Dispatch subagent_type: "rpiv:scope-tracer".\nRead `references/surfaces.md` and `references/ghost.md`, substitute for `{{SURFACES}}`.\n  {{SURFACES}}\n',
 	);
 	let problems = referenceIntegrity(root);
 	assert.equal(problems.length, 1, `one dangling reference file: ${JSON.stringify(problems)}`);
@@ -78,7 +78,7 @@ try {
 	);
 
 	// orphan reference file (exists, never mentioned) -> flagged
-	writeFileSync(join(root, "skills", "demo", "SKILL.md"), 'Dispatch subagent_type: "scope-tracer". No references here.\n');
+	writeFileSync(join(root, "skills", "demo", "SKILL.md"), 'Dispatch subagent_type: "rpiv:scope-tracer". No references here.\n');
 	problems = referenceIntegrity(root);
 	assert.equal(problems.length, 1, `one orphan: ${JSON.stringify(problems)}`);
 	assert.equal(problems[0].kind, "orphan-reference");
@@ -86,7 +86,7 @@ try {
 	// unpaired placeholder (appears once — instruction or substitution site was lost) -> flagged
 	writeFileSync(
 		join(root, "skills", "demo", "SKILL.md"),
-		'Dispatch subagent_type: "scope-tracer".\nRead `references/surfaces.md`.\n  {{SURFACES}}\n',
+		'Dispatch subagent_type: "rpiv:scope-tracer".\nRead `references/surfaces.md`.\n  {{SURFACES}}\n',
 	);
 	problems = referenceIntegrity(root);
 	assert.equal(problems.length, 1, `one unpaired placeholder: ${JSON.stringify(problems)}`);
@@ -100,11 +100,39 @@ try {
 	);
 	writeFileSync(
 		join(root, "skills", "demo", "SKILL.md"),
-		'Dispatch subagent_type: "scope-tracer".\nRead `references/surfaces.md`, substitute for `{{SURFACES}}`.\n  {{SURFACES}}\n',
+		'Dispatch subagent_type: "rpiv:scope-tracer".\nRead `references/surfaces.md`, substitute for `{{SURFACES}}`.\n  {{SURFACES}}\n',
 	);
 	assert.deepEqual(referenceIntegrity(root), [], "cross-skill prefixed mention resolves against its owner");
 
-	console.log("OK (validate-skills) — parsing, resolution, dangling detection, reference integrity, CLI gate.");
+	// --- unprefixed gate: a bare KNOWN-plugin-agent dispatch fails at dispatch time ---
+	// (the strip-then-resolve gap: a bare name resolves in-repo but breaks on any
+	// harness that namespaces plugin agents — the live research/SKILL.md:72 bug.)
+	rmSync(join(root, "skills", "demo", "references"), { recursive: true, force: true });
+	rmSync(join(root, "skills", "other"), { recursive: true, force: true });
+	const demoSkill = join(root, "skills", "demo", "SKILL.md");
+	writeFileSync(demoSkill, 'Dispatch subagent_type: "scope-tracer" now.\n');
+	assert.deepEqual(
+		unprefixedReferences(root),
+		[{ file: demoSkill, agent: "scope-tracer" }],
+		"bare known plugin agent is flagged unprefixed",
+	);
+	assert.throws(
+		() => execFileSync("node", [SCRIPT, "--root", root], { stdio: "pipe" }),
+		/must be namespaced "rpiv:scope-tracer"/,
+		"CLI exits nonzero naming the required namespaced form",
+	);
+
+	writeFileSync(demoSkill, 'Dispatch subagent_type: "rpiv:scope-tracer" now.\n');
+	assert.deepEqual(unprefixedReferences(root), [], "prefixed dispatch passes");
+	execFileSync("node", [SCRIPT, "--root", root], { encoding: "utf-8" }); // CLI exit 0
+
+	writeFileSync(demoSkill, 'Dispatch subagent_type: "general-purpose" now.\n');
+	assert.deepEqual(unprefixedReferences(root), [], "built-in agents (no agents/*.md) pass untouched");
+
+	writeFileSync(demoSkill, 'Example: subagent_type: "scope-tracer" <!-- validate-skills:ignore -->\n');
+	assert.deepEqual(unprefixedReferences(root), [], "ignore marker exempts an illustrative bare dispatch");
+
+	console.log("OK (validate-skills) — parsing, resolution, dangling detection, unprefixed gate, reference integrity, CLI gate.");
 } finally {
 	rmSync(root, { recursive: true, force: true });
 }

@@ -56,7 +56,7 @@ Carry the resulting **user-settled dimensions** forward. They merge with scan fi
 Dispatch a single codebase-locator agent to scan for existing style context.
 
 **Agent — Style system scan:**
-- subagent_type: `codebase-locator`
+- subagent_type: `rpiv:codebase-locator`
 - description: "Scan for style systems"
 - prompt: "Scan the project for existing style context. Look for: (1) DESIGN.md files (Google's design spec), (2) design token files (tokens.css, tokens.json, design-tokens.*), (3) Tailwind/CSS framework configs (tailwind.config.*, postcss.config.*), (4) style guide or brand guideline files, (5) CSS custom property definitions (--color-*, --font-*, --spacing-*), (6) component library setups (Storybook, component indexes). Return file paths grouped by category with line offsets."
 

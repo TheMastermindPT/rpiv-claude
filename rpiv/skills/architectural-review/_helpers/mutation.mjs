@@ -23,68 +23,40 @@
 // When mutation_scope is "partial," the T lens treats missing mutation data as an unknown
 // signal rather than evidence of clean code.
 
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { isSource, isTest } from "./source-set.mjs";
+import { resolveTargets, safeGit, toPosix } from "./target-context.mjs";
 
-const safe = (args, fb = "") => {
-	try {
-		return execFileSync("git", args, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-	} catch {
-		return fb;
-	}
-};
-const toPosix = (p) => p.replaceAll("\\", "/");
-const root = toPosix(safe(["rev-parse", "--show-toplevel"])) || toPosix(process.cwd());
-const cwd = toPosix(process.cwd());
-const targetArg = toPosix((process.argv[2] ?? ".").replace(/^['"]|['"]$/g, "")) || ".";
-const targetAbs = isAbsolute(targetArg) ? toPosix(targetArg) : toPosix(resolve(process.cwd(), targetArg));
 // Target, enumeration, and report keys are all emitted relative to the invocation
 // cwd — the base the skill's T-lens agent and `store --root .` use. Identical to the
 // git toplevel on a normal repo (cwd === toplevel); correct when nested under it.
-const target = toPosix(relative(cwd, targetAbs)) || ".";
-// Project root = nearest package.json at/above the target, bounded by the git
-// toplevel: the reports/ dir lives at the PROJECT root, not the git root when the
-// project is nested under the repo (our rpiv/, a monorepo package).
-const findProjectRoot = (startAbs, top) => {
-	let dir = startAbs;
-	for (;;) {
-		if (existsSync(join(dir, "package.json"))) return toPosix(dir);
-		if (toPosix(dir) === top) return top;
-		const parent = dirname(dir);
-		if (parent === dir) return top;
-		dir = parent;
-	}
-};
-const projectRoot = findProjectRoot(targetAbs, root);
-const relOf = (k) => {
-	const p = toPosix(k);
-	return p.startsWith(`${cwd}/`) ? p.slice(cwd.length + 1) : p;
-};
-const underTarget = (rp) => target === "." || rp === target || rp.startsWith(`${target}/`);
+// Project root = nearest package.json at/above the FIRST target, bounded by the git toplevel.
+const { targets, projectRoots, projectRoot, relOf, underAny } = resolveTargets(process.argv.slice(2));
+const wholeRepo = targets.some((t) => t.target === ".");
 
-// Source file extensions that can contain executable code (same set as metrics.mjs).
-// StrykerJS only mutates files with executable code — pure type/interface/const-enum
-// files are skipped even in a full run, so they will NOT appear in the mutation report.
-const SRC_EXT = new Set([
-	"ts", "tsx", "js", "jsx", "mjs", "cjs",
-]);
-
-const isSrc = (p) => SRC_EXT.has(p.slice(p.lastIndexOf(".") + 1).toLowerCase());
-const isTest = (p) => /\.(test|spec)\.[a-z]+$/i.test(p) || /(^|\/)__tests__\//.test(p);
+// Multi-project visibility (M2 — never silently anchor). Anchored HERE, not at any
+// single mutation_report emission site: there are four (none/parse-error/empty/head),
+// and a head-only anchor would drop the note on every early-exit branch.
+if (projectRoots.length > 1) {
+	process.stdout.write(`note: targets span ${projectRoots.length} project roots — reports read from the first\n`);
+}
 
 // Enumerate tracked source files under the target (exclude tests, declarations).
+// StrykerJS only mutates files with executable code — pure type/interface/const-enum
+// files are skipped even in a full run, so they will NOT appear in the mutation report.
 /** Returns true if a file is an eligible mutation target (source code, not test/declaration). */
-const isEligible = (p, rp) => isSrc(p) && !isTest(rp) && !rp.endsWith(".d.ts");
+const isEligible = (p, rp) => isSource(p) && !isTest(rp) && !rp.endsWith(".d.ts");
 
 // Tracked files only, via git — same idiom as metrics.mjs. Bounds the enumeration
 // to the repository: an arbitrary argv target can never walk outside the root,
 // and node_modules/.git never appear because they are not tracked.
-const collectSrc = (dir) => {
+const collectSrc = (dirs) => {
 	// Enumerate from the process cwd so paths come back cwd-relative (matching relOf
 	// and the report keys); ls-files still lists tracked files only, so an arbitrary
 	// argv target can never escape the repo and node_modules/.git never appear.
-	const raw = safe(["ls-files", "-z", "--", dir]);
+	// git unions multiple pathspecs natively.
+	const raw = safeGit(["ls-files", "-z", "--", ...dirs]);
 	if (!raw) return [];
 	return raw
 		.split("\0")
@@ -111,10 +83,24 @@ for (const p of reportPaths) {
 }
 
 // --- Scope detection: compare target source files against report coverage ---------
-const targetSrcFiles = target === "." ? [] : collectSrc(target);
+const targetSrcFiles = wholeRepo ? [] : collectSrc(targets.map((t) => t.target));
 const reportFileSet = new Set();
 
 if (!reportPath) {
+	// Broken != absent (M2 / dogfooding B): an HTML-only report means mutation RAN but
+	// is not machine-ingestable — distinct from no report, with the add-json remedy.
+	let htmlOnly = "";
+	try {
+		const html = readdirSync(join(projectRoot, "reports", "mutation")).find((f) => f.endsWith(".html"));
+		if (html) htmlOnly = `reports/mutation/${html}`;
+	} catch {
+		/* reports/mutation dir absent — plain none */
+	}
+	if (htmlOnly) {
+		process.stdout.write(`mutation_report: html-only — ${htmlOnly} (add "json" to stryker reporters for machine ingest)\n`);
+		process.stdout.write(`mutation_scope: target_has=${targetSrcFiles.length} report_covers=0 missing=${targetSrcFiles.length} (html-only)\n`);
+		process.exit(0);
+	}
 	process.stdout.write("mutation_report: none\n");
 	process.stdout.write(`mutation_scope: target_has=${targetSrcFiles.length} report_covers=0 missing=${targetSrcFiles.length} (none)\n`);
 	process.exit(0);
@@ -154,14 +140,14 @@ for (const filePath of Object.keys(files)) {
 // If ALL report files are within the target, the report was scoped to just this area.
 let outsideTarget = 0;
 for (const f of reportFileSet) {
-	if (!underTarget(f)) outsideTarget += 1;
+	if (!underAny(f)) outsideTarget += 1;
 }
 // A report with 3+ files outside the target is almost certainly a full run.
 // A report with 1-2 outside files could be a scoped run that picked up dependencies.
 // Use a threshold: >= 3 outside files or outside files in >= 2 sibling directories.
 const outsideDirs = new Set();
 for (const f of reportFileSet) {
-	if (!underTarget(f)) {
+	if (!underAny(f)) {
 		const slash = f.indexOf("/");
 		const d = slash >= 0 ? f.slice(0, f.lastIndexOf("/")) : ".";
 		outsideDirs.add(d);
@@ -184,7 +170,7 @@ const missing = targetSrcFiles.length - covered;
 //          Missing files might have executable code but weren't mutated.
 // - "detected": target is "." (whole repo) — can't distinguish; treat as "full" but note.
 let scope;
-if (target === ".") {
+if (wholeRepo) {
 	scope = "detected";  // whole-repo target — report IS the target
 } else if (hasOutsideFiles) {
 	scope = "full";      // report covers unrelated directories → full run
@@ -198,7 +184,7 @@ let overallSurvived = 0;
 const rows = [];
 for (const [filePath, data] of Object.entries(files)) {
 	const rp = toPosix(filePath);
-	if (!underTarget(rp) && !underTarget(relOf(rp))) continue;
+	if (!underAny(rp) && !underAny(relOf(rp))) continue;
 
 	const mutants = data.mutants ?? [];
 	if (mutants.length === 0) continue;

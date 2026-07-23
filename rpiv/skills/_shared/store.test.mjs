@@ -16,7 +16,7 @@ import { validateFinding, toSarif, initStore, addFinding, updateFinding, diffRev
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STORE = join(HERE, "store.mjs");
-const FINGERPRINT = join(HERE, "..", "architectural-review", "_helpers", "fingerprint.mjs");
+const FINGERPRINT = join(HERE, "fingerprint.mjs");
 
 // ---- fixtures ----------------------------------------------------------------
 

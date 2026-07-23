@@ -80,11 +80,11 @@ When invoked:
    Spawn the agents below in parallel using the Agent tool. Wait for ALL agents to complete before proceeding.
 
    **Analyzer agent:**
-   - subagent_type: `codebase-analyzer`
+   - subagent_type: `rpiv:codebase-analyzer`
    - Prompt: "Analyze {component} and verify it implements {plan requirement} correctly."
 
    **Pattern finder agent:**
-   - subagent_type: `codebase-pattern-finder`
+   - subagent_type: `rpiv:codebase-pattern-finder`
    - Prompt: "Find patterns similar to {new code} and check if conventions are followed."
 
 ### Step 2: Systematic Validation

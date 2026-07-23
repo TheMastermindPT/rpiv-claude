@@ -30,9 +30,9 @@
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
-import { splitFrontmatter } from "./regen-decisions-index.mjs";
+import { splitFrontmatter } from "./frontmatter.mjs";
+import { isMain } from "./is-main.mjs";
 
 // Universal core — every artifact template's frontmatter carries these.
 const CORE_REQUIRED = ["date", "author", "commit", "branch", "repository", "status"];
@@ -146,14 +146,7 @@ export function stampArtifact(artifactPath) {
 }
 
 // ---- CLI ---------------------------------------------------------------------------------------
-const isMain = (() => {
-	try {
-		return fileURLToPath(import.meta.url) === resolve(process.argv[1] ?? "");
-	} catch {
-		return false;
-	}
-})();
-if (isMain) {
+if (isMain(import.meta.url)) {
 	const args = process.argv.slice(2);
 	const stamp = args.includes("--stamp");
 	const finalizing = args.includes("--finalizing");

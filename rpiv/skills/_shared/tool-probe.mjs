@@ -21,7 +21,7 @@
 // are descriptive stubs (cross-language support is registry growth, not special-casing).
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -38,8 +38,13 @@ const safe = (args, fb = "") => {
 };
 const toPosix = (p) => p.replaceAll("\\", "/");
 const gitTop = toPosix(safe(["rev-parse", "--show-toplevel"])) || toPosix(process.cwd());
-const targetArg = toPosix((process.argv[2] ?? ".").replace(/^['"]|['"]$/g, "")) || ".";
-const targetAbs = isAbsolute(targetArg) ? toPosix(targetArg) : toPosix(resolve(process.cwd(), targetArg));
+const targetArgs = process.argv
+	.slice(2)
+	.map((a) => toPosix(String(a).replace(/^['"]|['"]$/g, "")))
+	.filter((a) => a && !a.startsWith("--"));
+const targetsAbs = (targetArgs.length ? targetArgs : ["."]).map((t) =>
+	isAbsolute(t) ? toPosix(t) : toPosix(resolve(process.cwd(), t)),
+);
 // Project root = nearest package.json at/above the target, bounded by the git
 // toplevel. Assuming the manifest sits AT the git root is wrong whenever the
 // project is nested under the repo (our rpiv/, or a monorepo package): the probe
@@ -54,13 +59,18 @@ const findProjectRoot = (startAbs, top) => {
 		dir = parent;
 	}
 };
-const root = findProjectRoot(targetAbs, gitTop);
+const projectRoots = [...new Set(targetsAbs.map((t) => findProjectRoot(t, gitTop)))];
+const root = projectRoots[0];
 const has = (rel) => existsSync(join(root, rel));
 const firstFile = (rels) => rels.find((r) => has(r)) ?? "";
+let manifestError = "";
 const readJson = (rel) => {
+	const p = join(root, rel);
+	if (!existsSync(p)) return null; // absent — the clean no-manifest path
 	try {
-		return JSON.parse(readFileSync(join(root, rel), "utf-8"));
+		return JSON.parse(readFileSync(p, "utf-8"));
 	} catch {
+		manifestError = `${rel} failed to parse`; // broken != absent — surfaced in the header
 		return null;
 	}
 };
@@ -124,6 +134,7 @@ const ecosystem = pkg
 // so the ---report-status--- footer always has values regardless of ecosystem).
 let covReport = "";
 let strykerReport = "";
+let strykerHtmlOnly = "";
 
 const out = [];
 const row = (tool, lens, status, extras = []) =>
@@ -194,12 +205,23 @@ if (ecosystem === "js-ts") {
 		"reports/mutation/mutation.json", "reports/mutation.json",
 		"stryker-output/mutation.json",
 	]);
+	// Broken != absent (M2 / dogfooding B): an HTML-only report means mutation RAN but
+	// is not machine-ingestable — distinct from no report at all, with a sharper remedy.
+	if (!strykerReport) {
+		try {
+			const html = readdirSync(join(root, "reports", "mutation")).find((f) => f.endsWith(".html"));
+			if (html) strykerHtmlOnly = `reports/mutation/${html}`;
+		} catch {
+			/* no reports/mutation dir — plain absent */
+		}
+	}
 	const strykerStatus = !strykerInst ? "absent"
 		: strykerCfg ? "configured"
 		: "installed-unconfigured";
 	row("stryker", "T", strykerStatus, [
-		`report=${strykerReport || "none"}`,
+		`report=${strykerReport || (strykerHtmlOnly ? `html-only:${strykerHtmlOnly}` : "none")}`,
 		...(strykerCfg ? [`config=${strykerCfg}`] : []),
+		...(strykerHtmlOnly ? ['hint=add "json" to stryker reporters for machine ingest'] : []),
 		...(strykerStatus === "absent" ? ["hint=npm i -D @stryker-mutator/core (mutation testing — catches covered-but-unverified code)"]
 			: strykerStatus === "installed-unconfigured" ? ["hint=run `npx stryker init` to create a config"]
 			: []),
@@ -342,10 +364,12 @@ row("rg", "search", rgBin ? "installed" : "absent",
 
 // --- Report status summary (drives the checkpoint) -------------------------
 const covRpt = covReport ? "present" : "absent";
-const mutRpt = strykerReport ? "present" : "absent";
+const mutRpt = strykerReport ? "present" : strykerHtmlOnly ? "html-only" : "absent";
 const archAstRpt = astgrepArch === "configured" ? "present" : "absent";
 const archOgRpt = opengrepArch === "configured" ? "present" : "absent";
 const dbRpt = hasDbSurface ? "present" : "absent";
 
-process.stdout.write(`root:      ${root}\necosystem: ${ecosystem}\n---tool-coverage---\n${out.join("\n")}\n---report-status---\ncoverage: ${covRpt}\nmutation: ${mutRpt}\narch-lint-ast: ${archAstRpt}\narch-lint-og: ${archOgRpt}\ndb-tools: ${dbRpt}\n`);
+process.stdout.write(
+	`root:      ${root}\n${projectRoots.length > 1 ? `roots_note: targets span ${projectRoots.length} project roots — probing the first\n` : ""}ecosystem: ${ecosystem}\n${manifestError ? `manifest:  error — ${manifestError}\n` : ""}---tool-coverage---\n${out.join("\n")}\n---report-status---\ncoverage: ${covRpt}\nmutation: ${mutRpt}\narch-lint-ast: ${archAstRpt}\narch-lint-og: ${archOgRpt}\ndb-tools: ${dbRpt}\n`,
+);
 process.exit(0);

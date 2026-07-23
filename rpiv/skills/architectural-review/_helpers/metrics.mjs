@@ -51,6 +51,8 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { makeBoundedEmitter } from "./bounded-output.mjs";
+import { ENVY_MIN_REFS, ENVY_MIN_RATIO, SOURCE_EXT, isTest } from "./source-set.mjs";
 
 const OUT_LINE_CAP = 200; // max rows per block
 const OUT_BYTE_CAP = 40 * 1024; // total block-bytes budget
@@ -65,10 +67,6 @@ const CO_CHANGE_MIN_SUPPORT = 3; // a pair must change together at least this ma
 const CO_CHANGE_MIN_CONF = 0.5; // support / (fewer file's total changes) must clear this
 const CO_CHANGE_OUT_CAP = 15; // max emitted co-change pairs
 const CO_CHANGE_GROUP_MIN_SUPPORT = 4; // ripple-group edges need more support than a lone display candidate, so groups stay entity-sized (connected components blow up on weak edges)
-const SOURCE_EXT = new Set([
-	"ts", "tsx", "js", "jsx", "mjs", "cjs", "cts", "mts",
-	"py", "go", "rs", "java", "kt", "cs", "rb", "php", "swift", "scala",
-]);
 const DUP_STOPWORDS = new Set([
 	"index", "types", "type", "utils", "util", "helpers", "helper", "constants",
 	"const", "lib", "src", "main", "core", "common", "shared", "base", "config",
@@ -105,7 +103,6 @@ const extOf = (p) => {
 	return dot < 0 ? "" : b.slice(dot + 1).toLowerCase();
 };
 const baseOf = (p) => p.slice(p.lastIndexOf("/") + 1);
-const isTest = (p) => /\.(test|spec)\.[a-z]+$/i.test(baseOf(p)) || /(^|\/)__tests__\//.test(p);
 const isDecl = (p) => /\.d\.ts$/i.test(p);
 // Generated/vendored files (path-pattern detection) are excluded like tests/.d.ts
 // so a generated schema/types file stops tripping size-based lenses skill-wide.
@@ -129,8 +126,6 @@ const MIX_CATEGORY_MIN = 4; // distinct concern categories => mixing flag (LOC-i
 const COHESION_LOW = 0.4; // a LOC outlier flags only when its cohesion is below this
 const COHESION_LENS_MAX = 0.4; // Lc lens: flag files below this cohesion (tunable apart from COHESION_LOW)
 const LCOM_MIN_SYMBOLS = 6; // Lc lens: need this many BEHAVIORAL symbols (fns/classes) — a const/type bag is exempt
-const ENVY_MIN_REFS = 5; // Fe lens: a module must be referenced at least this many times to count
-const ENVY_MIN_RATIO = 0.6; // Fe lens: external refs / (external + own) must clear this
 const ENVY_INTERNAL_ONLY = true; // Fe lens: only flag envy toward relative/alias imports (not 3rd-party libs)
 const ENVY_INTERNAL_RE = /^(?:\.|~|@\/|@app\/|@lib\/)/; // what counts as an internal module specifier
 const DUP_MIN_RUN = 6; // D lens: a literal copy-paste needs >= this many CONTIGUOUS shared lines (scattered idiom never forms a run; file-size-independent)
@@ -188,8 +183,12 @@ const result = {
 	busFactor: [],
 };
 
-const argv = process.argv[2] ?? "";
-const target = toPosix(stripOuterQuotes(argv)) || ".";
+const argvTargets = process.argv
+	.slice(2)
+	.map((a) => toPosix(stripOuterQuotes(String(a))))
+	.filter((a) => a && !a.startsWith("--"));
+const targets = argvTargets.length ? [...new Set(argvTargets)] : ["."];
+const target = targets.join(" "); // display label — result.target and the empty-note keep it
 result.target = target;
 
 const root = toPosix(safe(["rev-parse", "--show-toplevel"]));
@@ -202,10 +201,10 @@ if (!root) {
 // relative to it, so enumeration (ls-files), history (log), and reads
 // (join(root, rel)) all speak root-relative paths no matter where we were invoked.
 gitCwd = root;
-const rootRelTarget = toPosix(relative(root, resolve(process.cwd(), target))) || ".";
+const rootRelTargets = targets.map((t) => toPosix(relative(root, resolve(process.cwd(), t))) || ".");
 
 // --- Enumerate tracked files under the target -------------------------------
-const lsRaw = safe(["ls-files", "-z", "--", rootRelTarget]);
+const lsRaw = safe(["ls-files", "-z", "--", ...rootRelTargets]);
 const tracked = lsRaw ? lsRaw.split("\0").filter(Boolean).map(toPosix) : [];
 if (tracked.length === 0) {
 	result.note = `no tracked files under target: ${target}`;
@@ -217,11 +216,17 @@ const sourceFiles = tracked.filter(
 );
 const testFilesUnder = tracked.filter((p) => isTest(p) && SOURCE_EXT.has(extOf(p)));
 
-// Test-theater also wants tests that mirror the target by its last path segment
+// Test-theater also wants tests that mirror each target by its last path segment
 // (e.g. target `lib/generation` -> tests under `tests/**/generation/**`).
-const segment = rootRelTarget.replace(/\/+$/, "").split("/").filter(Boolean).pop() ?? "";
+const segments = [
+	...new Set(
+		rootRelTargets
+			.map((t) => t.replace(/\/+$/, "").split("/").filter(Boolean).pop() ?? "")
+			.filter((s) => s && s !== "."),
+	),
+];
 let mirrorTests = [];
-if (segment && segment !== ".") {
+if (segments.length) {
 	const allTestsRaw = safe([
 		"ls-files", "-z", "--",
 		"*.test.ts", "*.test.tsx", "*.spec.ts", "*.spec.tsx",
@@ -229,7 +234,7 @@ if (segment && segment !== ".") {
 	]);
 	const allTests = allTestsRaw ? allTestsRaw.split("\0").filter(Boolean).map(toPosix) : [];
 	mirrorTests = allTests.filter(
-		(p) => p.split("/").includes(segment) && !testFilesUnder.includes(p),
+		(p) => segments.some((s) => p.split("/").includes(s)) && !testFilesUnder.includes(p),
 	);
 }
 const testFiles = [...testFilesUnder, ...mirrorTests];
@@ -264,7 +269,7 @@ result.file_count = locByFile.size;
 // read (path-base mismatch, permissions). Surface it instead of emitting an empty
 // scorecard that reads like a clean module.
 if (result.file_count === 0 && sourceFiles.length > 0) {
-	result.note = `enumerated ${sourceFiles.length} source file(s) under ${rootRelTarget} but none were readable — check the target resolves inside the git repo at ${root}`;
+	result.note = `enumerated ${sourceFiles.length} source file(s) under ${rootRelTargets.join(" ")} but none were readable — check the target resolves inside the git repo at ${root}`;
 	emit();
 }
 const sourceSet = new Set(locByFile.keys()); // tracked source files; reused by the import graph, co-change, and the Fe pre-filter
@@ -581,7 +586,7 @@ result.lowCohesion.sort((a, b) => a.coh - b.coh);
 
 // --- Churn hotspots ---------------------------------------------------------
 const churnRaw = safe([
-	"log", `--since=${CHURN_DAYS}.days`, "--name-only", "--pretty=format:", "--", rootRelTarget,
+	"log", `--since=${CHURN_DAYS}.days`, "--name-only", "--pretty=format:", "--", ...rootRelTargets,
 ]);
 if (churnRaw) {
 	const counts = new Map();
@@ -881,7 +886,7 @@ for (const f of sourceFiles) {
 const importLinked = (a, b) =>
 	Boolean(importGraph.get(a)?.has(b)) || Boolean(importGraph.get(b)?.has(a));
 const coRaw = safe([
-	"log", `--since=${CHURN_DAYS}.days`, "--name-only", "--find-renames", `--pretty=format:${COMMIT_DELIM}`, "--", rootRelTarget,
+	"log", `--since=${CHURN_DAYS}.days`, "--name-only", "--find-renames", `--pretty=format:${COMMIT_DELIM}`, "--", ...rootRelTargets,
 ]);
 if (coRaw) {
 	// First pass: collect each commit's distinct source files, then derive the
@@ -1039,8 +1044,7 @@ function emit() {
 	];
 	if (result.note) head.push(`note:         ${result.note}`);
 
-	let body = `${head.join("\n")}\n`;
-	const budget = { bytes: body.length };
+	const { block, body } = makeBoundedEmitter(OUT_LINE_CAP, OUT_BYTE_CAP, `${head.join("\n")}\n`);
 
 	// Emit paths relative to the invocation cwd — where the skill's lens agents
 	// grep/read and where `store`/`check-citations --root .` resolve. Identical to
@@ -1049,21 +1053,6 @@ function emit() {
 	// internal computation stays toplevel-relative; only the output is rebased.
 	const cwdPrefix = toPosix(relative(root, process.cwd()));
 	const em = (p) => (cwdPrefix && p.startsWith(`${cwdPrefix}/`) ? p.slice(cwdPrefix.length + 1) : p);
-
-	const block = (label, rows) => {
-		let out = `---${label}---\n`;
-		let count = 0;
-		for (const row of rows) {
-			const next = `${row}\n`;
-			if (budget.bytes + out.length + next.length > OUT_BYTE_CAP) break;
-			if (count >= OUT_LINE_CAP) break;
-			out += next;
-			count += 1;
-		}
-		if (count < rows.length) out += `(... ${rows.length - count} more truncated ...)\n`;
-		budget.bytes += out.length;
-		body += out;
-	};
 
 	block("size-outliers", result.sizeOutliers.map((r) => `${em(r.f)}\t${r.loc}\t${r.x}x`));
 	block("godfile-candidates", result.godfileCandidates.map((r) => `${em(r.f)}\t${r.loc}\t${r.x}x\tcats=${r.cats}\tcoh=${r.coh === null ? "?" : r.coh.toFixed(2)}\t${r.reason}`));
@@ -1079,6 +1068,6 @@ function emit() {
 	block("catch-swallows", result.catchSwallows.map((r) => `${em(r.f)}\tswallows=${r.swallows}`));
 	block("bus-factor", result.busFactor.map((r) => `${em(r.f)}\tcommits=${r.commits}\tauthors=${r.authors}\ttop_share=${r.topShare.toFixed(2)}`));
 
-	process.stdout.write(body);
+	process.stdout.write(body());
 	process.exit(0);
 }

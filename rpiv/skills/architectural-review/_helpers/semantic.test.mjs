@@ -192,6 +192,14 @@ try {
 		!dead.some((r) => r.includes(":computeTotal")),
 		`computeTotal (used by behavioral-envier) must NOT be flagged dead\n${out}`,
 	);
+	// 3b. broken != absent (M2): the scan summary must carry the dropped-candidate
+	// counter so an emptied block is distinguishable from a clean one. A normal run
+	// drops nothing -> skipped_on_error=0. (Forcing a real findReferences throw would
+	// require mocking ts-morph internals; non-zero CONSUMPTION is pinned in warrant.test.)
+	assert.ok(
+		/dead_export_scan: examined=\d+ capped=(true|false) skipped_on_error=0/.test(out),
+		`dead_export_scan must report skipped_on_error, got:\n${out}`,
+	);
 
 	// 4. type fragmentation: same-shape-different-name flagged; same-name-drift flagged;
 	//    a trivial 2-prop shape is NOT flagged (FP guard).
@@ -258,4 +266,33 @@ try {
 	console.log("OK (semantic knip-fallback) — knip present -> dead-exports skipped (A delegated to knip, findReferences pass avoided).");
 } finally {
 	rmSync(repoKnip, { recursive: true, force: true });
+}
+
+// --- Multi-target union (dogfooding A): program filtered to the union --------
+const repoMulti = mkdtempSync(join(tmpdir(), "argate-sem-multi-"));
+try {
+	mkdirSync(join(repoMulti, "a"), { recursive: true });
+	mkdirSync(join(repoMulti, "b"), { recursive: true });
+	writeFileSync(join(repoMulti, "tsconfig.json"), JSON.stringify({
+		compilerOptions: { strict: true, target: "ES2022", module: "ESNext", moduleResolution: "Bundler", noEmit: true, skipLibCheck: true },
+		include: ["a", "b"],
+	}));
+	writeFileSync(join(repoMulti, "a", "one.ts"), "export function one() { return 1; }\nconsole.log(one());\n");
+	writeFileSync(join(repoMulti, "b", "two.ts"), "export function two() { return 2; }\nconsole.log(two());\n");
+	git(repoMulti, ["init", "-q"]);
+	git(repoMulti, ["add", "-A"]);
+
+	const both = execFileSync("node", [SEMANTIC, "a", "b"], { cwd: repoMulti, encoding: "utf-8" });
+	assert.ok(/files_in_target:\s+2\b/.test(both), `union run must count a/ + b/ files, got:\n${both}`);
+	assert.ok(/^target:\s+a b$/m.test(both), `union run target line must be "a b", got:\n${both}`);
+	assert.ok(
+		both.includes("targets_note:     multi-target — tsconfig/project anchored on the first target"),
+		`union run must announce the tsconfig anchor, got:\n${both}`,
+	);
+	const single = execFileSync("node", [SEMANTIC, "a"], { cwd: repoMulti, encoding: "utf-8" });
+	assert.ok(/files_in_target:\s+1\b/.test(single), `single-target run counts only a/, got:\n${single}`);
+	assert.ok(!single.includes("targets_note"), `single-target run must have NO targets_note line, got:\n${single}`);
+	console.log("OK (semantic multi-target) — union filters the program to BOTH dirs; anchor announced; single-target unchanged.");
+} finally {
+	rmSync(repoMulti, { recursive: true, force: true });
 }

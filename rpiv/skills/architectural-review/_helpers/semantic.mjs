@@ -26,16 +26,15 @@
 // restricted to declarations/files under <target>. Bounded by SEMANTIC_MAX_FILES (skip a
 // too-large program) and SEMANTIC_REF_EXAMINE_CAP (cap the findReferences hot path).
 
-import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { ENVY_MIN_REFS, ENVY_MIN_RATIO } from "./source-set.mjs";
+import { safeGit, toPosix } from "./target-context.mjs";
 
 const SEMANTIC_MAX_FILES = 4000; // skip programs larger than this (degrade to regex)
 const SEMANTIC_REF_EXAMINE_CAP = 1200; // cap exports examined for dead-code (findReferences is the hot path)
 const ENVY_MIN_BEH = 3; // Fe: require at least this many BEHAVIORAL refs to the envied module
-const ENVY_MIN_REFS = 5; // Fe: total refs to the module (mirrors metrics.mjs envyOf)
-const ENVY_MIN_RATIO = 0.6; // Fe: ext / (ext + own) gate (mirrors metrics.mjs envyOf)
 const TYPE_MIN_PROPS = 3; // C: ignore trivial shapes (< 3 props, e.g. {id:string}) — FP guard
 const TYPE_EXAMINE_CAP = 2000; // C: bound the type-shape scan (AST-only, cheap)
 const PROJ_MIN_PROPS = 8; // M/D: object-literal projections below this are config-object noise
@@ -43,22 +42,19 @@ const PROJ_MIN_SIM = 0.8; // M/D: pairwise Jaccard on property-name sets
 const PROJ_EXAMINE_CAP = 1500; // M/D: bound the literal scan
 const PROJ_MAX_ROWS = 20; // M/D: emit only the strongest pairs
 
-const toPosix = (p) => p.replaceAll("\\", "/");
-const safeGit = (args, fb = "") => {
-	try {
-		return execFileSync("git", args, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-	} catch {
-		return fb;
-	}
-};
-
 const root = toPosix(safeGit(["rev-parse", "--show-toplevel"])) || toPosix(process.cwd());
 // Emitted finding paths are relative to the invocation cwd — the base the skill's
 // lens agents and `store --root .` consume. Identical to the git toplevel on a
 // normal repo (cwd === toplevel); correct when the project is nested under the repo.
 const cwd = toPosix(process.cwd());
-const targetArg = process.argv[2] || ".";
-const targetAbs = toPosix(isAbsolute(targetArg) ? targetArg : resolve(process.cwd(), targetArg));
+const targetArgs = process.argv.slice(2).filter((a) => a && !a.startsWith("--"));
+const targetsAbs = (targetArgs.length ? targetArgs : ["."]).map((a) =>
+	toPosix(isAbsolute(a) ? a : resolve(process.cwd(), a)),
+);
+// tsconfig + project-root discovery anchor on the FIRST target: in-project unions (the
+// dogfooding use case) share one tsconfig; the emitted `target:` line lists every target
+// and the targets_note below makes the anchor visible.
+const targetAbs = targetsAbs[0];
 
 const status = (msg) => {
 	process.stdout.write(`---semantic-status---\n${msg}\n`);
@@ -125,7 +121,7 @@ if (allFiles.length > SEMANTIC_MAX_FILES) {
 const rel = (sf) => toPosix(relative(cwd, sf.getFilePath()));
 const underTarget = (sf) => {
 	const p = toPosix(sf.getFilePath());
-	return p === targetAbs || p.startsWith(`${targetAbs}/`);
+	return targetsAbs.some((t) => p === t || p.startsWith(`${t}/`));
 };
 const targetFiles = allFiles.filter(underTarget);
 
@@ -286,6 +282,7 @@ const knipAvailable = (() => {
 const deadRows = [];
 let examined = 0;
 let capped = false;
+let skippedOnError = 0;
 if (!knipAvailable) {
 	const kindRank = (k) => (k === "FunctionDeclaration" || k === "ClassDeclaration" ? 0 : 1);
 	outer: for (const sf of targetFiles) {
@@ -304,6 +301,7 @@ if (!knipAvailable) {
 						if (refNode.getSourceFile() !== sf) extRefs += 1;
 					}
 				} catch {
+					skippedOnError += 1; // counted: an emptied block must be distinguishable from clean (M2)
 					continue; // overloads / unsupported nodes -> skip rather than crash
 				}
 				if (extRefs === 0) deadRows.push({ f: rel(sf), name, kind: decl.getKindName() });
@@ -416,12 +414,16 @@ projRows.length = Math.min(projRows.length, PROJ_MAX_ROWS);
 
 // --- Emit -------------------------------------------------------------------
 const out = [];
-out.push(`target:           ${toPosix(relative(cwd, targetAbs)) || "."}`);
+out.push(`target:           ${targetsAbs.map((t) => toPosix(relative(cwd, t)) || ".").join(" ")}`);
+// M2 — the anchor choice is never silent (gates on target COUNT: computing per-target
+// tsconfig spans would require parameterizing the findTsconfig/findProjectRoot closures;
+// count>1 is the cheap superset signal). Lands among headers (before the first ---block---).
+if (targetsAbs.length > 1) out.push(`targets_note:     multi-target — tsconfig/project anchored on the first target`);
 out.push(`tsconfig:         ${toPosix(relative(cwd, tsConfigFilePath))}`);
 out.push(`files_in_program: ${allFiles.length}`);
 out.push(`files_in_target:  ${targetFiles.length}`);
 out.push(`write_resolution: resolved=${writeResolved} unresolved=${writeUnresolved}`);
-out.push(`dead_export_scan: ${knipAvailable ? "skipped (knip present — A delegated to knip)" : `examined=${examined} capped=${capped}`}`);
+out.push(`dead_export_scan: ${knipAvailable ? "skipped (knip present — A delegated to knip)" : `examined=${examined} capped=${capped} skipped_on_error=${skippedOnError}`}`);
 out.push(`type_scan:        examined=${typesExamined}`);
 out.push(`proj_scan:        literals=${projExamined}${projCapped ? " capped" : ""} pairs=${projRows.length}`);
 

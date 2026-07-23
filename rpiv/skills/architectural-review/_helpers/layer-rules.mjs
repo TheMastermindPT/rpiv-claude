@@ -33,6 +33,7 @@
 //     layer model tolerates should be downgraded by hand after adoption.
 
 import { readFileSync } from "node:fs";
+import { TEST_EXCLUDE_RE } from "./source-set.mjs";
 
 // ---- arg parsing (warrant.mjs style) ----------------------------------------------
 const args = { forbid: [] };
@@ -154,7 +155,7 @@ const config = {
 	options: {
 		doNotFollow: { path: "node_modules" },
 		// Test files legitimately import across layers; boundary rules target production code.
-		exclude: { path: "\\.(test|spec)\\.[a-z]+$|(^|/)__tests__/" },
+		exclude: { path: TEST_EXCLUDE_RE },
 		tsPreCompilationDeps: true,
 	},
 };

@@ -12,7 +12,7 @@
 For each accepted/deferred finding, compute a fingerprint via the helper:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/_helpers/fingerprint.mjs"
+node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/fingerprint.mjs"
 ```
 
 Feed it one JSON line per finding:

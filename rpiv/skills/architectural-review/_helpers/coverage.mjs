@@ -14,46 +14,24 @@
 // or uncovered+asserted = theater; uncovered branches = missing tests. Reach is deterministic
 // here; the agent still judges assertion meaningfulness.
 
-import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { join } from "node:path";
+import { resolveTargets } from "./target-context.mjs";
 
-const safe = (args, fb = "") => {
-	try {
-		return execFileSync("git", args, { encoding: "utf-8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-	} catch {
-		return fb;
-	}
-};
-const toPosix = (p) => p.replaceAll("\\", "/");
-const root = toPosix(safe(["rev-parse", "--show-toplevel"])) || toPosix(process.cwd());
-const cwd = toPosix(process.cwd());
-const targetArg = toPosix((process.argv[2] ?? ".").replace(/^['"]|['"]$/g, "")) || ".";
-const targetAbs = isAbsolute(targetArg) ? toPosix(targetArg) : toPosix(resolve(process.cwd(), targetArg));
 // Target and file keys are emitted relative to the invocation cwd — the base the
 // skill's T-lens agent and `store --root .` use. Identical to the git toplevel on a
 // normal repo (cwd === toplevel); correct when the project is nested under the repo.
-const target = toPosix(relative(cwd, targetAbs)) || ".";
 // Project root = nearest package.json at/above the target, bounded by the git
 // toplevel: the coverage/ dir lives at the PROJECT root, which is not the git
 // root when the project is nested under the repo (our rpiv/, a monorepo package).
-const findProjectRoot = (startAbs, top) => {
-	let dir = startAbs;
-	for (;;) {
-		if (existsSync(join(dir, "package.json"))) return toPosix(dir);
-		if (toPosix(dir) === top) return top;
-		const parent = dirname(dir);
-		if (parent === dir) return top;
-		dir = parent;
-	}
-};
-const projectRoot = findProjectRoot(targetAbs, root);
+const { projectRoots, projectRoot, relOf, underAny } = resolveTargets(process.argv.slice(2));
 const pct = (covered, total) => (total > 0 ? Math.round((covered / total) * 100) : 100);
-const relOf = (k) => {
-	const p = toPosix(k);
-	return p.startsWith(`${cwd}/`) ? p.slice(cwd.length + 1) : p;
-};
-const underTarget = (rp) => target === "." || rp === target || rp.startsWith(`${target}/`);
+
+// Multi-project visibility (M2 — never silently anchor): the report is read from the
+// FIRST target's project root; say so whenever the targets span more than one.
+if (projectRoots.length > 1) {
+	process.stdout.write(`note: targets span ${projectRoots.length} project roots — coverage read from the first\n`);
+}
 
 const summaryPath = join(projectRoot, "coverage/coverage-summary.json");
 const finalPath = join(projectRoot, "coverage/coverage-final.json");
@@ -72,7 +50,7 @@ if (existsSync(summaryPath)) {
 			continue;
 		}
 		const rp = relOf(k);
-		if (!underTarget(rp)) continue;
+		if (!underAny(rp)) continue;
 		files.push({ f: rp, stmt: v.statements?.pct ?? 0, branch: v.branches?.pct ?? 0, fn: v.functions?.pct ?? 0 });
 	}
 } else if (existsSync(finalPath)) {
@@ -80,7 +58,7 @@ if (existsSync(summaryPath)) {
 	const j = JSON.parse(readFileSync(finalPath, "utf-8"));
 	for (const [k, v] of Object.entries(j)) {
 		const rp = relOf(k);
-		if (!underTarget(rp)) continue;
+		if (!underAny(rp)) continue;
 		const s = Object.values(v.s ?? {});
 		const b = Object.values(v.b ?? {}).flat();
 		const fn = Object.values(v.f ?? {});
@@ -104,7 +82,7 @@ if (existsSync(summaryPath)) {
 		else if (line.startsWith("FNF:")) cur.ff = Number(line.slice(4));
 		else if (line.startsWith("FNH:")) cur.fh = Number(line.slice(4));
 		else if (line === "end_of_record") {
-			if (underTarget(cur.f)) files.push({ f: cur.f, stmt: pct(cur.lh, cur.lf), branch: pct(cur.bh, cur.bf), fn: pct(cur.fh, cur.ff) });
+			if (underAny(cur.f)) files.push({ f: cur.f, stmt: pct(cur.lh, cur.lf), branch: pct(cur.bh, cur.bf), fn: pct(cur.fh, cur.ff) });
 			cur = null;
 		}
 	}

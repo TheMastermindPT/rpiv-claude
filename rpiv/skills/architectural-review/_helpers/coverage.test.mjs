@@ -35,3 +35,49 @@ try {
 } finally {
 	rmSync(repo, { recursive: true, force: true });
 }
+
+// --- Multi-target union (dogfooding A): rows for files under ANY target ------
+const repo2 = mkdtempSync(join(tmpdir(), "cov-multi-"));
+try {
+	mkdirSync(join(repo2, "a"), { recursive: true });
+	mkdirSync(join(repo2, "b"), { recursive: true });
+	mkdirSync(join(repo2, "coverage"), { recursive: true });
+	git(repo2, ["init", "-q"]);
+	const root2 = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: repo2, encoding: "utf-8" }).trim();
+	const cell2 = (pct) => ({ statements: { pct }, branches: { pct }, functions: { pct }, lines: { pct } });
+	writeFileSync(
+		join(repo2, "coverage/coverage-summary.json"),
+		JSON.stringify({
+			total: cell2(50),
+			[`${root2}/a/x.ts`]: cell2(80),
+			[`${root2}/b/y.ts`]: cell2(60),
+		}),
+	);
+
+	const both = execFileSync("node", [COV, "a", "b"], { cwd: repo2, encoding: "utf-8" });
+	assert.ok(both.includes("a/x.ts") && both.includes("b/y.ts"), `union run must emit rows for BOTH targets\n${both}`);
+	const single = execFileSync("node", [COV, "a"], { cwd: repo2, encoding: "utf-8" });
+	assert.ok(single.includes("a/x.ts") && !single.includes("b/y.ts"), `single-target run must emit only a/x.ts\n${single}`);
+	assert.ok(!both.includes("note: targets span"), `same project root -> no span note\n${both}`);
+	console.log("OK (coverage multi-target) — union emits rows under ANY target; single-target unchanged.");
+} finally {
+	rmSync(repo2, { recursive: true, force: true });
+}
+
+// --- Multi-PROJECT targets: the report anchor is announced (M2) --------------
+const repo3 = mkdtempSync(join(tmpdir(), "cov-span-"));
+try {
+	mkdirSync(join(repo3, "pkgA"), { recursive: true });
+	mkdirSync(join(repo3, "pkgB"), { recursive: true });
+	writeFileSync(join(repo3, "pkgA", "package.json"), JSON.stringify({ name: "a" }));
+	writeFileSync(join(repo3, "pkgB", "package.json"), JSON.stringify({ name: "b" }));
+	git(repo3, ["init", "-q"]);
+	const out3 = execFileSync("node", [COV, "pkgA", "pkgB"], { cwd: repo3, encoding: "utf-8" });
+	assert.ok(
+		out3.includes("note: targets span 2 project roots — coverage read from the first"),
+		`multi-project targets must announce the coverage anchor, got:\n${out3}`,
+	);
+	console.log("OK (coverage span note) — multi-project anchor announced, never silent.");
+} finally {
+	rmSync(repo3, { recursive: true, force: true });
+}

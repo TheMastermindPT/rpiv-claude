@@ -14,7 +14,7 @@ Substitute those three values wherever this file writes `<write-step>` / `<revie
 
 ```
 Agent({
-  subagent_type: "artifact-code-reviewer",
+  subagent_type: "rpiv:artifact-code-reviewer",
   description: "post-finalization plan code review",
   prompt: `Plan artifact: {<write-step> Write file_path, ls-verified}
 
@@ -22,7 +22,7 @@ Review the finalized plan against the live codebase at HEAD. Walk every Phase co
 })
 
 Agent({
-  subagent_type: "artifact-coverage-reviewer",
+  subagent_type: "rpiv:artifact-coverage-reviewer",
   description: "post-finalization plan coverage review",
   prompt: `Plan artifact: {<write-step> Write file_path, ls-verified}
 

@@ -69,7 +69,7 @@ The final artifact feeds design or blueprint.
    - Dispatch scope-tracer with the anchors appended to the topic:
    ```
    Agent({
-     subagent_type: "scope-tracer",
+     subagent_type: "rpiv:scope-tracer",
      description: "trace scope",
      prompt: "$ARGUMENTS\n\nStructural anchors (ground truth — open and verify, do not narrativise):\n{digested anchor rows; omit this block entirely when the pre-sweep was skipped}"
    })

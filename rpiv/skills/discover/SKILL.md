@@ -126,7 +126,7 @@ Goal: ground the upcoming interview in concrete codebase evidence, with the prob
 2. **Spawn the chosen agent(s) in parallel using the Agent tool.** Draft each prompt yourself from the developer's stated intent — keep the slice narrow (one component, one seam) and avoid breadth phrasing like "everything related to X". Shape per call:
    ```
    Agent({
-     subagent_type: "codebase-locator",   // or "codebase-analyzer"
+     subagent_type: "rpiv:codebase-locator",   // or "rpiv:codebase-analyzer"
      description: "<3-5 word task>",
      prompt: "<your narrow-slice prompt, scoped to stated intent>"
    })

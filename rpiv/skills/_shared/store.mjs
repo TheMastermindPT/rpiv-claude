@@ -20,11 +20,11 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { basenameCounts, fileIndex, isAmbiguous, resolveInIndex } from "./citation-grammar.mjs";
-import { splitFrontmatter } from "./regen-decisions-index.mjs";
+import { splitFrontmatter } from "./frontmatter.mjs";
 import { stampArtifact, validateArtifact } from "./validate-artifact.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const FINGERPRINT = join(HERE, "..", "architectural-review", "_helpers", "fingerprint.mjs");
+const FINGERPRINT = join(HERE, "fingerprint.mjs");
 
 // ---- schema ------------------------------------------------------------------
 

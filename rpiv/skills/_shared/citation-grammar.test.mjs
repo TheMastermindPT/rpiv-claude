@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 
-import { CITE_RE, EXEMPT_RE, citesIn, basenameCounts, isAmbiguous } from "./citation-grammar.mjs";
+import { CITE_RE, EXEMPT_RE, citesIn, basenameCounts, fileIndex, isAmbiguous } from "./citation-grammar.mjs";
 
 // 1. CITE_RE captures the range end; citesIn surfaces line-only, line-range, and
 //    no-line cites distinctly.
@@ -65,6 +65,44 @@ import { CITE_RE, EXEMPT_RE, citesIn, basenameCounts, isAmbiguous } from "./cita
 		assert.equal(isAmbiguous("ghost.ts", counts), false, "0 matches is out of scope (hallucination check elsewhere)");
 
 		console.log("OK — basenameCounts + isAmbiguous: skip-dirs, .github edge, path-qualified + zero-match exclusions.");
+	} finally {
+		rmSync(tmp, { recursive: true, force: true });
+	}
+}
+
+// 4. Golden characterization of the walk semantics shared by basenameCounts and
+//    fileIndex (L0-03 dedup) — these cases pass BEFORE and AFTER the walkTree
+//    extraction, proving the refactor behaviour-preserving: SKIP dirs and dot-dirs
+//    excluded, .github kept, relative POSIX paths, ambiguity unchanged.
+{
+	const tmp = mkdtempSync(join(tmpdir(), "cite-walk-"));
+	try {
+		mkdirSync(join(tmp, "sub"), { recursive: true });
+		mkdirSync(join(tmp, "node_modules"), { recursive: true });
+		mkdirSync(join(tmp, ".hidden"), { recursive: true });
+		mkdirSync(join(tmp, ".github"), { recursive: true });
+		writeFileSync(join(tmp, "a.mjs"), "export const a = 1;\n");
+		writeFileSync(join(tmp, "sub", "a.mjs"), "export const a2 = 1;\n");
+		writeFileSync(join(tmp, "sub", "b.txt"), "text\n");
+		writeFileSync(join(tmp, "node_modules", "x.mjs"), "export const x = 1;\n");
+		writeFileSync(join(tmp, ".hidden", "y.mjs"), "export const y = 1;\n");
+		writeFileSync(join(tmp, ".github", "wf.yml"), "name: wf\n");
+
+		assert.deepEqual(
+			fileIndex(tmp).sort(),
+			[".github/wf.yml", "a.mjs", "sub/a.mjs", "sub/b.txt"],
+			"fileIndex: SKIP + dot-dirs excluded, .github kept, relative POSIX paths",
+		);
+		const counts = basenameCounts(tmp);
+		assert.equal(counts.get("a.mjs"), 2, "a.mjs counted at root and sub/");
+		assert.equal(counts.get("b.txt"), 1, "b.txt counted once");
+		assert.equal(counts.get("wf.yml"), 1, ".github walked");
+		assert.equal(counts.get("x.mjs"), undefined, "node_modules skipped");
+		assert.equal(counts.get("y.mjs"), undefined, "dot-dir skipped");
+		assert.equal(isAmbiguous("a.mjs", counts), true, "duplicated basename ambiguous");
+		assert.equal(isAmbiguous("sub/a.mjs", counts), false, "path-qualified never ambiguous");
+
+		console.log("OK — golden walk semantics: fileIndex + basenameCounts agree on skip/keep rules.");
 	} finally {
 		rmSync(tmp, { recursive: true, force: true });
 	}

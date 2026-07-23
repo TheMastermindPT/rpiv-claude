@@ -172,3 +172,103 @@ try {
 } finally {
 	rmSync(repo5, { recursive: true, force: true });
 }
+
+// --- Test 6: source-set union — .cts enumerates; non-JS is unknown, never clean ---
+
+const repo6 = mkdtempSync(join(tmpdir(), "mut-union-"));
+try {
+	mkdirSync(join(repo6, "src"), { recursive: true });
+	mkdirSync(join(repo6, "reports", "mutation"), { recursive: true });
+	writeFileSync(join(repo6, "src", "a.cts"), "module.exports = { c: () => 7 };\n");
+	writeFileSync(join(repo6, "src", "a.py"), "def p():\n    return 8\n");
+	// Report covers a.cts only — a.py has no mutation data.
+	const report = makeStrykerReport(["src/a.cts"]);
+	writeFileSync(join(repo6, "reports", "mutation", "mutation.json"), report);
+	git(repo6, ["init", "-q"]);
+	git(repo6, ["add", "-A"]);
+
+	const out = execFileSync("node", [MUTATION, "src"], { cwd: repo6, encoding: "utf-8" });
+	// Drift fix: .cts is in the shared SOURCE_EXT union (mutation's old 6-ext SRC_EXT
+	// dropped it). Multi-language never-clean pin: a.py enumerates as source too, and
+	// with no mutation data it counts as missing — unknown, never silently clean.
+	assert.ok(/target_has=2\b/.test(out), `union: a.cts AND a.py must enumerate, got: ${out}`);
+	assert.ok(/report_covers=1\b/.test(out), `union: report covers only a.cts, got: ${out}`);
+	assert.ok(/missing=1\b/.test(out), `union: a.py missing from report — unknown, not clean, got: ${out}`);
+	console.log("OK — source-set union: .cts enumerated, .py missing (unknown, never clean).");
+} finally {
+	rmSync(repo6, { recursive: true, force: true });
+}
+
+// --- Test 7: multi-target union — N dirs reviewed as one scope (dogfooding A) ---
+
+const repo7 = mkdtempSync(join(tmpdir(), "mut-multi-"));
+try {
+	mkdirSync(join(repo7, "a"), { recursive: true });
+	mkdirSync(join(repo7, "b"), { recursive: true });
+	mkdirSync(join(repo7, "reports", "mutation"), { recursive: true });
+	writeFileSync(join(repo7, "a", "x.ts"), "export function ax() { return 1; }\n");
+	writeFileSync(join(repo7, "b", "y.ts"), "export function by() { return 2; }\n");
+	writeFileSync(join(repo7, "reports", "mutation", "mutation.json"), makeStrykerReport(["a/x.ts", "b/y.ts"]));
+	git(repo7, ["init", "-q"]);
+	git(repo7, ["add", "-A"]);
+
+	const both = execFileSync("node", [MUTATION, "a", "b"], { cwd: repo7, encoding: "utf-8" });
+	assert.ok(/target_has=2\b/.test(both), `multi-target: a AND b must both enumerate, got: ${both}`);
+	const single = execFileSync("node", [MUTATION, "a"], { cwd: repo7, encoding: "utf-8" });
+	assert.ok(/target_has=1\b/.test(single), `single-target regression pin: only a/ counts, got: ${single}`);
+	console.log("OK — multi-target union: `a b` reviews both dirs; single-target unchanged.");
+} finally {
+	rmSync(repo7, { recursive: true, force: true });
+}
+
+// --- Test 8: multi-PROJECT targets — the anchor choice is announced (M2) ---
+
+const repo8 = mkdtempSync(join(tmpdir(), "mut-span-"));
+try {
+	mkdirSync(join(repo8, "pkgA", "src"), { recursive: true });
+	mkdirSync(join(repo8, "pkgB", "src"), { recursive: true });
+	writeFileSync(join(repo8, "pkgA", "package.json"), JSON.stringify({ name: "a" }));
+	writeFileSync(join(repo8, "pkgB", "package.json"), JSON.stringify({ name: "b" }));
+	writeFileSync(join(repo8, "pkgA", "src", "x.ts"), "export function x() { return 1; }\n");
+	writeFileSync(join(repo8, "pkgB", "src", "y.ts"), "export function y() { return 2; }\n");
+	git(repo8, ["init", "-q"]);
+	git(repo8, ["add", "-A"]);
+
+	const out = execFileSync("node", [MUTATION, "pkgA", "pkgB"], { cwd: repo8, encoding: "utf-8" });
+	assert.ok(
+		out.includes("note: targets span 2 project roots — reports read from the first"),
+		`multi-project targets must announce the anchor (even on the no-report early exit), got: ${out}`,
+	);
+	console.log("OK — multi-project span note emitted on the early-exit branch too.");
+} finally {
+	rmSync(repo8, { recursive: true, force: true });
+}
+
+// --- Test 9: HTML-only report is distinct from none (dogfooding B, M2) -------
+
+const repo9 = mkdtempSync(join(tmpdir(), "mut-htmlonly-"));
+try {
+	mkdirSync(join(repo9, "a"), { recursive: true });
+	mkdirSync(join(repo9, "reports", "mutation"), { recursive: true });
+	writeFileSync(join(repo9, "a", "x.ts"), "export function x() { return 1; }\n");
+	writeFileSync(join(repo9, "reports", "mutation", "store.html"), "<html></html>");
+	git(repo9, ["init", "-q"]);
+	git(repo9, ["add", "-A"]);
+
+	const out = execFileSync("node", [MUTATION, "a"], { cwd: repo9, encoding: "utf-8" });
+	const lines = out.split("\n");
+	assert.equal(
+		lines[0],
+		'mutation_report: html-only — reports/mutation/store.html (add "json" to stryker reporters for machine ingest)',
+		`html-only repo line 1 must announce the html report + remedy, got: ${lines[0]}`,
+	);
+	assert.ok(lines[1].endsWith("(html-only)"), `line 2 must end (html-only), got: ${lines[1]}`);
+
+	rmSync(join(repo9, "reports"), { recursive: true, force: true });
+	const none = execFileSync("node", [MUTATION, "a"], { cwd: repo9, encoding: "utf-8" });
+	assert.ok(none.includes("mutation_report: none"), `no reports dir -> none (unchanged), got: ${none}`);
+	assert.ok(none.includes("(none)"), `no reports dir -> scope (none) unchanged, got: ${none}`);
+	console.log("OK — html-only report distinct from none; plain none unchanged; exit 0 both ways.");
+} finally {
+	rmSync(repo9, { recursive: true, force: true });
+}

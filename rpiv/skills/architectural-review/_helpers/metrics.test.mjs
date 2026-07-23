@@ -789,3 +789,56 @@ try {
 } finally {
 	rmSync(repo4, { recursive: true, force: true });
 }
+
+// --- Multi-target union (dogfooding A): enumeration, churn, AND mirror tests ---
+// Sources in a/ and b/, each committed >= 2 times inside the churn window (the
+// churn-hotspots block filters at commits >= 2). A fixture test file matched via
+// the SECOND target's path segment (tests/x/b/sample.test.ts for target `b`)
+// appears in test-density only on the `a b` run — the mirror-tests union pin.
+const repo5 = mkdtempSync(join(tmpdir(), "argate-multi-"));
+try {
+	mkdirSync(join(repo5, "a"), { recursive: true });
+	mkdirSync(join(repo5, "b"), { recursive: true });
+	mkdirSync(join(repo5, "tests", "x", "b"), { recursive: true });
+	const w5 = (rel, body) => writeFileSync(join(repo5, rel), body);
+	const gitc5 = (args) =>
+		git(repo5, ["-c", "user.email=a@b.c", "-c", "user.name=t", "-c", "commit.gpgsign=false", ...args]);
+	w5("a/one.ts", normal(50));
+	w5("b/two.ts", normal(51));
+	w5("tests/x/b/sample.test.ts", `it("mirrored", () => {});\n`);
+	gitc5(["init", "-q"]);
+	gitc5(["add", "-A"]);
+	gitc5(["commit", "-q", "-m", "init"]);
+	// second commit per source file -> churn >= 2 for both
+	w5("a/one.ts", `${normal(50)}\nexport function extraA() { return 1; }\n`);
+	gitc5(["add", "-A"]);
+	gitc5(["commit", "-q", "-m", "touch a"]);
+	w5("b/two.ts", `${normal(51)}\nexport function extraB() { return 2; }\n`);
+	gitc5(["add", "-A"]);
+	gitc5(["commit", "-q", "-m", "touch b"]);
+
+	const both = execFileSync("node", [METRICS, "a", "b"], { cwd: repo5, encoding: "utf-8" });
+	const fcBoth = Number((both.match(/^file_count:\s*(\d+)/m) ?? [])[1]);
+	assert.equal(fcBoth, 2, `union run must count a/one.ts + b/two.ts, got file_count=${fcBoth}\n--- out ---\n${both}`);
+	assert.ok(/^target:\s+a b$/m.test(both), `union run header target must be "a b"\n--- out ---\n${both}`);
+	const churnBoth = extractBlock(both, "churn-hotspots");
+	assert.ok(
+		churnBoth.some((r) => r.startsWith("a/one.ts")) && churnBoth.some((r) => r.startsWith("b/two.ts")),
+		`churn-hotspots must cover BOTH dirs on the union run\n--- out ---\n${both}`,
+	);
+	assert.ok(
+		extractBlock(both, "test-density").some((r) => r.includes("tests/x/b/sample.test.ts")),
+		`mirror test matched via the SECOND target's segment must appear on the union run\n--- out ---\n${both}`,
+	);
+
+	const single = execFileSync("node", [METRICS, "a"], { cwd: repo5, encoding: "utf-8" });
+	const fcSingle = Number((single.match(/^file_count:\s*(\d+)/m) ?? [])[1]);
+	assert.equal(fcSingle, 1, `single-target run must still count only a/, got file_count=${fcSingle}`);
+	assert.ok(
+		!extractBlock(single, "test-density").some((r) => r.includes("tests/x/b/sample.test.ts")),
+		`the b-segment mirror test must NOT appear on the single-target a run\n--- out ---\n${single}`,
+	);
+	console.log("OK (multi-target) — union enumerates, churns, and mirrors across BOTH dirs; single-target unchanged.");
+} finally {
+	rmSync(repo5, { recursive: true, force: true });
+}

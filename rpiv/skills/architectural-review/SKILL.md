@@ -1,6 +1,6 @@
 ---
 name: architectural-review
-description: Run a deep, anti-slop architecture review of a module or path — quantify structural health, ingest the repo's own linters as ground truth, build a top-down entity/data-flow model, then run the slop lenses linters miss (semantic duplication, concept fragmentation, god-files, dead abstractions, test theater, boundary erosion, missing abstraction, state-ownership, temporal coupling, low-cohesion, feature-envy, failure propagation), verify every finding before triage, and write a phased polish plan to .rpiv/artifacts/architecture-reviews/. Use this whenever the user wants an architecture review, an anti-slop or code-health sweep of a module, a pre-1.0 hardening pass, or a post-refactor cleanup — even if they don't use the words "architectural review". Language-agnostic.
+description: Run a deep, anti-slop architecture review of a module or path — quantify structural health, ingest the repo's own linters as ground truth, build a top-down entity/data-flow model, then run the slop lenses linters miss (semantic duplication, concept fragmentation, god-files, dead abstractions, test theater, boundary erosion, module security, missing abstraction, state-ownership, temporal coupling, low-cohesion, feature-envy, failure propagation, persistence health), verify every finding before triage, and write a phased polish plan to .rpiv/artifacts/architecture-reviews/. Use this whenever the user wants an architecture review, an anti-slop or code-health sweep of a module, a pre-1.0 hardening pass, or a post-refactor cleanup — even if they don't use the words "architectural review". Language-agnostic.
 argument-hint: "[target path: file, directory, or module — empty auto-picks the densest source root]"
 shell-timeout: 10
 contract:
@@ -44,7 +44,7 @@ contract:
 You are tasked with conducting a deep, anti-slop architecture review of a target module: a single living artifact that **quantifies** structural health, hunts the **judgment-level slop** that linters (dependency-cruiser, knip, biome, tsc) cannot see, **verifies** every agent-found finding before it reaches the developer, **tracks drift** against the prior review, and ends in a phased polish plan downstream skills consume.
 
 The review runs in three phases:
-- **A. Measure & detect** (Steps 1-6.5) — automated, quantified, agent-driven in **two waves** (Wave 1: structural lenses G+Lc+D with a lightweight interaction pass; steering checkpoint; Wave 2: cross-cutting lenses C+A+T+L+M+S+Fe); ends with the **full Interaction Sweep** that re-joins ALL waves' findings into root-caused compound defects.
+- **A. Measure & detect** (Steps 1-6.5) — automated, quantified, agent-driven in **two waves** (Wave 1: structural lenses G+Lc+D with a lightweight interaction pass; steering checkpoint; Wave 2: cross-cutting lenses C+A+T+L+Sec+M+S+Fe+Fp+P (P db-gated)); ends with the **full Interaction Sweep** that re-joins ALL waves' findings into root-caused compound defects.
 - **B. Per-layer review & triage** (Step 7) — interactive, top-down, human judgment.
 - **C. Synthesize** (Steps 8-13) — drift delta via **content-hash fingerprints** (survive renames), **cluster discovery**, root-caused themes, compound-risk-promoted phased plan, chain-out.
 
@@ -71,7 +71,7 @@ A. Measure & detect
    -> 4. Skeleton artifact (Health Scorecard + System Model) -> 4.5 LikeC4 model (current-state)
    -> 5a. Wave 1: G + Lc + D (structural, metric-gated) -> 5b. Wave 1 sweeper (lightweight, over G+Lc+D)
    -> 5c. Steering checkpoint (skip/full/narrow Wave 2)
-   -> 5d. Wave 2: C + A + T + L + M + S + Fe (cross-cutting, full-scope, informed by Wave 1)
+   -> 5d. Wave 2: C + A + T + L + Sec + M + S + Fe + Fp + P (cross-cutting, full-scope, informed by Wave 1; P db-gated)
    -> 6. Verify gate -> 6.5 Full interaction sweep (all waves, root-cause compounds)
 B. Per-layer review & triage
    7. Per-layer loop: read -> 10-dim sweep -> merge verified slop + interactions -> triage -> persist -> tally
@@ -218,9 +218,9 @@ Emission is **additive and non-blocking**: on any CLI unavailability it degrades
   ```
   Lens agents receive `Known Context: target pre-indexed — prefer ctx_search(source: "arch-review-target", queries: [...]) over Read for structural scans`. If the target is < 20 files, skip — the index overhead exceeds the benefit. If ctx_index is unavailable (offline/no-FTS5), skip silently — agents fall back to grep/read as before.
 
-Detect the judgment-level slop linters miss. Instead of dispatching all 10 lenses at once, dispatch in two waves. **Wave 1** runs the structural lenses — god-file (G), low-cohesion (Lc), and duplication (D) — which are metric-gated (run only on the files metrics flagged), cheap, and produce findings immediately actionable at the steering checkpoint. **Wave 2** runs the cross-cutting lenses — fragmentation (C), dead abstraction (A), test theater (T), leaky boundary (L), module security (Sec), missing abstraction (M), state ownership (S), feature envy (Fe), and persistence health (P) — which search the full codebase and are more expensive. A lightweight sweeper between waves finds G+Lc+D interactions; a **warrant-driven** steering checkpoint (Step 5c) then decides — from the FULL deterministic seed surface, not just the Wave-1 findings — whether to skip Wave 2, run it selectively (only the warranted lenses), or run it in full.
+Detect the judgment-level slop linters miss. Instead of dispatching all 13 lenses at once, dispatch in two waves. **Wave 1** runs the structural lenses — god-file (G), low-cohesion (Lc), and duplication (D) — which are metric-gated (run only on the files metrics flagged), cheap, and produce findings immediately actionable at the steering checkpoint. **Wave 2** runs the cross-cutting lenses — fragmentation (C), dead abstraction (A), test theater (T), leaky boundary (L), module security (Sec), missing abstraction (M), state ownership (S), feature envy (Fe), failure propagation (Fp), and persistence health (P) — which search the full codebase and are more expensive. A lightweight sweeper between waves finds G+Lc+D interactions; a **warrant-driven** steering checkpoint (Step 5c) then decides — from the FULL deterministic seed surface, not just the Wave-1 findings — whether to skip Wave 2, run it selectively (only the warranted lenses), or run it in full.
 
-**M and L always fire whenever Wave 2 runs** — missing-abstraction and boundary have no cheap metric seed, so they run in every selective or full wave (skipped only when the wave is skipped entirely). **S is seed-gated**: it fires when `write-sites` shows `writers >= 2` OR the System Model has an `owner: NONE` entity (a `writers=1` path with a clear owner is clean by design), so the warrant runs it only where an ownership concern actually exists.
+**M, L, and Sec always fire whenever Wave 2 runs** — missing-abstraction, boundary, and security have no cheap metric seed, so they run in every selective or full wave (skipped only when the wave is skipped entirely). **S is seed-gated**: it fires when `write-sites` shows `writers >= 2` OR the System Model has an `owner: NONE` entity (a `writers=1` path with a clear owner is clean by design), so the warrant runs it only where an ownership concern actually exists. **P is db-gated**: it fires only when write-sites shows `table:`/`rpc:` rows — no persistence surface, no P agent.
 
 #### 5a. Build the Slop Map (shared across both waves)
 
@@ -277,11 +277,11 @@ node "${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/_helpers/warrant.mjs" \
 It applies each lens's DEFECT PREDICATE — not raw row counts (`export-usage` and `write-sites` are dominated by non-defect rows; A is knip-primary) — and returns one JSON line: `band` (`skip` / `selective` / `full`), `liveLenses`, `selectiveWave2` (the exact Wave-2 lens set to dispatch), `prompt`, `reason`. Act on `band`:
 
 - **`skip`** (nothing warranted — no cross-cutting seed AND no structural finding) — auto-skip Wave 2 + verify gate + full sweeper; go straight to the per-layer 10-dim sweep (Step 7). Record "Wave 2 skipped — warrant 0" and the per-lens vector in the artifact. **No prompt.**
-- **`selective`** (1–3 lenses warranted, < 100 files, not pre-1.0) — auto-run Step 5d on **exactly `selectiveWave2`** — the live cross-cutting lenses plus the always-on M and L. The dead seed-driven lenses are skipped (e.g. no A agent dispatched when nothing is dead). Record the vector + which lenses ran. **No prompt** — it is cheap and targeted.
+- **`selective`** (1–3 lenses warranted, < 100 files, not pre-1.0) — auto-run Step 5d on **exactly `selectiveWave2`** — the live cross-cutting lenses plus the always-on M, L, and Sec. The dead seed-driven lenses are skipped (e.g. no A agent dispatched when nothing is dead). Record the vector + which lenses ran. **No prompt** — it is cheap and targeted.
 - **`full`** (`prompt: true` — ≥ 4 lenses warranted, or ≥ 100 files, or pre-1.0) — the expensive path, and the ONLY band that stops for input. Present the warrant via `ask_user_question`:
 
-  "Warrant: {liveLenses, each with its seed count}. {file_count} files. {reason}. Run the full Wave 2 (7 lenses)?" Header "Wave 2". Options:
-  - **"Run full Wave 2 (Recommended)"** — execute Step 5d on all seven cross-cutting lenses.
+  "Warrant: {liveLenses, each with its seed count}. {file_count} files. {reason}. Run the full Wave 2 (up to 10 lenses; P db-gated)?" Header "Wave 2". Options:
+  - **"Run full Wave 2 (Recommended)"** — execute Step 5d on the full band set (all ten; P only when db write-sites exist).
   - **"Narrow scope"** — run Wave 2 only on files touched by Wave 1 findings + their direct consumers (from integration-scanner). The orchestrator computes the restricted file set and passes it to each lens.
   - **"Pause — I'll fix findings first"** — STOP. Print "Review paused. Re-run /rpiv:architectural-review after fixing findings." and stop.
 
@@ -291,9 +291,9 @@ The warrant never overrides a developer choice — on the `full` band the develo
 
 #### 5d. Wave 2 — Cross-cutting lenses (C, A, T, L, Sec, M, S, Fe, Fp, P)
 
-**Dispatch only the lenses the checkpoint selected.** On the `full` band, dispatch all nine. On the `selective` band, dispatch exactly the warrant's `selectiveWave2` set (the live cross-cutting lenses + always-on M, L, Sec, and P) — skip the rest and note them as "no seed — not dispatched" in the artifact. Below, each lens is described in full; run the subset that applies. Send them in a single multi-Agent message. Each receives the full Slop Map + the Wave 1 findings + IX compounds as context (they CAN see each other's output — Wave 2 lenses run cooperatively, not isolated from Wave 1).
+**Dispatch only the lenses the checkpoint selected.** On the `full` band, dispatch the warrant's `selectiveWave2` set (the full band set — all ten, P db-gated). On the `selective` band, dispatch exactly the warrant's `selectiveWave2` set (the live cross-cutting lenses + always-on M, L, and Sec) — skip the rest and note them as "no seed — not dispatched" in the artifact. Below, each lens is described in full; run the subset that applies. Send them in a single multi-Agent message. Each receives the full Slop Map + the Wave 1 findings + IX compounds as context (they CAN see each other's output — Wave 2 lenses run cooperatively, not isolated from Wave 1).
 
-Read `references/wave2-lenses.md` NOW (only on a dispatching band — never when Wave 2 is skipped) and use its nine lens prompts verbatim for the selected subset, plus its `precedent-locator` dispatch in the same message.
+Read `references/wave2-lenses.md` NOW (only on a dispatching band — never when Wave 2 is skipped) and use its ten lens prompts verbatim for the selected subset, plus its `precedent-locator` dispatch in the same message.
 
 Wait for all Wave 2 agents. Collect their findings alongside the Wave 1 findings — together they form the complete **candidate slop findings** set, each keyed to a file and its layer, with a provisional `L<layer>-<seq>` ID and lens tag (G, Lc, D, C, A, T, L, Sec, M, S, Fe, Fp, P).
 
@@ -466,7 +466,7 @@ Architectural review written to:
 `.rpiv/artifacts/architecture-reviews/{filename}.md`
 
 Health:       {health_score} — {file_count} files, median {loc_median} LOC, {outlier_count} outliers
-Slop:         {D} dup · {C} fragmentation · {G} god-file · {A} dead-abstraction · {T} test-theater · {L} leaky-boundary · {M} missing-abstraction · {S} state-flow · {Lc} low-cohesion · {Fe} feature-envy · {Fp} failure-propagation · {Tc} hidden-coupling
+Slop:         {D} dup · {C} fragmentation · {G} god-file · {A} dead-abstraction · {T} test-theater · {L} leaky-boundary · {Sec} module-security · {M} missing-abstraction · {S} state-flow · {Lc} low-cohesion · {Fe} feature-envy · {Fp} failure-propagation · {Tc} hidden-coupling · {P} persistence
 Synthesis:    {IX} interaction compounds · {clusters_discovered} clusters discovered · {themes} root-caused themes
 Verification: {V} verified · {W} weakened · {F} falsified (dropped)
 Drift:        Resolved {R} · Regressed {Rg} · Still-open {S} · NEW {N} · Net Δ {+/-Δ}   (or "Baseline review")
@@ -541,7 +541,7 @@ Spawn agents in parallel only when searching for different things. Wave 1 lenses
   - Wave 1 (Step 5b): ALWAYS run G, Lc, D context-isolated — each lens gets the Slop Map + its file list, nothing else. Pasting raw agent dumps causes narrativisation.
   - ALWAYS run the Wave 1 sweeper (Step 5b2) when >= 4 findings span >= 2 files — it surfaces G+Lc+D interactions that inform the steering checkpoint.
   - ALWAYS present the steering checkpoint (Step 5c) BEFORE Wave 2 — the developer decides whether Wave 2 runs, and their choice gates cost.
-  - Wave 2 (Step 5d): C, A, T, L, M, S, Fe, Fp receive Wave 1 findings + IX compounds as context. They run cooperatively (not fully isolated) over the full codebase.
+  - Wave 2 (Step 5d): the dispatched WAVE2 subset (C, A, T, L, Sec, M, S, Fe, Fp, P) receives Wave 1 findings + IX compounds as context. They run cooperatively (not fully isolated) over the full codebase.
   - ALWAYS run the verify gate (Step 6) BEFORE the per-layer triage — the developer must never triage a Falsified slop finding.
   - ALWAYS run the full Interaction Sweep (Step 6.5) over the VERIFIED set from BOTH waves (after Step 6, before triage), and ALWAYS run cluster discovery (Step 9.5) BEFORE themes (Step 10) — these two are the systemic-synthesis core.
   - ALWAYS confirm the layer split (Step 3) BEFORE the skeleton (Step 4).

@@ -21,6 +21,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMain } from "./is-main.mjs";
 
 /** Recursively collect every `.md` file under `dir`. */
 function walkMarkdown(dir) {
@@ -41,20 +42,41 @@ export function availableAgents(root) {
 	return new Set(readdirSync(dir).filter((f) => f.endsWith(".md")).map((f) => f.replace(/\.md$/, "")));
 }
 
-/** Extract dispatched agent names from one skill file. Strips quotes/backticks + `plugin:` prefix;
- *  skips any match on a line carrying `validate-skills:ignore` (illustrative prose opt-out). */
-export function referencedAgents(text) {
-	const refs = [];
+/** Every subagent_type match with quotes/backticks stripped and the plugin prefix KEPT,
+ *  honoring the `validate-skills:ignore` opt-out. Internal scanner shared by
+ *  referencedAgents / unprefixedReferences. */
+const scanDispatches = (text) => {
+	const out = [];
 	const re = /subagent_type:\s*["`']?([A-Za-z][\w:-]*)/g;
 	let m;
 	while ((m = re.exec(text)) !== null) {
 		const lineStart = text.lastIndexOf("\n", m.index) + 1;
 		const lineEnd = text.indexOf("\n", m.index) === -1 ? text.length : text.indexOf("\n", m.index);
 		if (text.slice(lineStart, lineEnd).includes("validate-skills:ignore")) continue;
-		const raw = m[1];
-		refs.push(raw.includes(":") ? raw.slice(raw.lastIndexOf(":") + 1) : raw);
+		out.push(m[1]);
 	}
-	return refs;
+	return out;
+};
+
+/** Extract dispatched agent names from one skill file (prefix stripped — existence check). */
+export function referencedAgents(text) {
+	return scanDispatches(text).map((raw) => (raw.includes(":") ? raw.slice(raw.lastIndexOf(":") + 1) : raw));
+}
+
+/** Returns [{ file, agent }] for every dispatch of a KNOWN plugin agent lacking a prefix.
+ *  Closes the strip-then-resolve gap: a bare name that IS a plugin agent resolves in-repo
+ *  but fails at runtime on any harness that namespaces plugin agents (the live
+ *  research/SKILL.md "Agent type 'scope-tracer' not found" bug). Built-in agents
+ *  (general-purpose, Explore, Plan) are not in agents/ and pass untouched. */
+export function unprefixedReferences(root) {
+	const agents = availableAgents(root);
+	const bare = [];
+	for (const file of walkMarkdown(join(root, "skills"))) {
+		for (const raw of scanDispatches(readFileSync(file, "utf-8"))) {
+			if (!raw.includes(":") && agents.has(raw)) bare.push({ file, agent: raw });
+		}
+	}
+	return bare;
 }
 
 /** Returns [{ file, agent }] for every subagent_type that does not resolve to an agents/*.md. */
@@ -77,6 +99,37 @@ export function danglingReferences(root) {
  *  - `unpaired-placeholder`— a `{{TOKEN}}` appears once (a substitution site needs its inline
  *                            instruction, and vice versa — one occurrence means one of them was lost)
  *  A mention prefixed `skills/<other>/references/...` resolves against THAT skill's directory. */
+/** Dangling-reference problems for one SKILL.md text; fills `ownMentions` as it scans. */
+function mentionProblems(skillsDir, entry, text, ownMentions) {
+	const problems = [];
+	for (const m of text.matchAll(/(?:skills\/([\w-]+)\/)?references\/([\w.-]+\.md)/g)) {
+		const owner = m[1] ?? entry;
+		if (owner === entry) ownMentions.add(m[2]);
+		if (!existsSync(join(skillsDir, owner, "references", m[2]))) {
+			problems.push({ skill: entry, kind: "dangling-reference", detail: `${m[0]} mentioned but the file does not exist` });
+		}
+	}
+	return problems;
+}
+
+/** Orphaned references/*.md files never mentioned by their own SKILL.md. */
+function orphanProblems(dir, entry, ownMentions) {
+	const refDir = join(dir, "references");
+	if (!existsSync(refDir)) return [];
+	return readdirSync(refDir)
+		.filter((f) => f.endsWith(".md") && !ownMentions.has(f))
+		.map((f) => ({ skill: entry, kind: "orphan-reference", detail: `references/${f} exists but SKILL.md never points to it` }));
+}
+
+/** `{{TOKEN}}` placeholders appearing exactly once (site or instruction lost). */
+function placeholderProblems(entry, text) {
+	const phCounts = new Map();
+	for (const m of text.matchAll(/\{\{([A-Z][A-Z0-9_]*)\}\}/g)) phCounts.set(m[1], (phCounts.get(m[1]) ?? 0) + 1);
+	return [...phCounts]
+		.filter(([, n]) => n < 2)
+		.map(([ph, n]) => ({ skill: entry, kind: "unpaired-placeholder", detail: `{{${ph}}} appears ${n}x — substitution site and its instruction must both be present` }));
+}
+
 export function referenceIntegrity(root) {
 	const problems = [];
 	const skillsDir = join(root, "skills");
@@ -88,37 +141,15 @@ export function referenceIntegrity(root) {
 		if (!existsSync(skillMd)) continue;
 		const text = readFileSync(skillMd, "utf-8");
 		const ownMentions = new Set();
-		for (const m of text.matchAll(/(?:skills\/([\w-]+)\/)?references\/([\w.-]+\.md)/g)) {
-			const owner = m[1] ?? entry;
-			if (owner === entry) ownMentions.add(m[2]);
-			if (!existsSync(join(skillsDir, owner, "references", m[2]))) {
-				problems.push({ skill: entry, kind: "dangling-reference", detail: `${m[0]} mentioned but the file does not exist` });
-			}
-		}
-		const refDir = join(dir, "references");
-		if (existsSync(refDir)) {
-			for (const f of readdirSync(refDir).filter((f) => f.endsWith(".md"))) {
-				if (!ownMentions.has(f)) problems.push({ skill: entry, kind: "orphan-reference", detail: `references/${f} exists but SKILL.md never points to it` });
-			}
-		}
-		const phCounts = new Map();
-		for (const m of text.matchAll(/\{\{([A-Z][A-Z0-9_]*)\}\}/g)) phCounts.set(m[1], (phCounts.get(m[1]) ?? 0) + 1);
-		for (const [ph, n] of phCounts) {
-			if (n < 2) problems.push({ skill: entry, kind: "unpaired-placeholder", detail: `{{${ph}}} appears ${n}x — substitution site and its instruction must both be present` });
-		}
+		problems.push(...mentionProblems(skillsDir, entry, text, ownMentions));
+		problems.push(...orphanProblems(dir, entry, ownMentions));
+		problems.push(...placeholderProblems(entry, text));
 	}
 	return problems;
 }
 
 // ---- CLI ---------------------------------------------------------------------------------------
-const isMain = (() => {
-	try {
-		return fileURLToPath(import.meta.url) === resolve(process.argv[1] ?? "");
-	} catch {
-		return false;
-	}
-})();
-if (isMain) {
+if (isMain(import.meta.url)) {
 	const args = process.argv.slice(2);
 	const rootIdx = args.indexOf("--root");
 	// Default: this file lives at <plugin-root>/skills/_shared/, so the plugin root is two up.
@@ -129,6 +160,14 @@ if (isMain) {
 			process.stderr.write(`ERROR ${file}: subagent_type "${agent}" has no agents/${agent}.md\n`);
 		}
 		process.stderr.write(`\nvalidate-skills: ${dangling.length} dangling agent reference(s)\n`);
+		process.exit(1);
+	}
+	const bare = unprefixedReferences(root);
+	if (bare.length > 0) {
+		for (const { file, agent } of bare) {
+			process.stderr.write(`ERROR ${file}: subagent_type "${agent}" must be namespaced "rpiv:${agent}" (bare plugin-agent names fail at dispatch time)\n`);
+		}
+		process.stderr.write(`\nvalidate-skills: ${bare.length} unprefixed agent reference(s)\n`);
 		process.exit(1);
 	}
 	const refProblems = referenceIntegrity(root);

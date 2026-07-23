@@ -176,7 +176,7 @@ Matches become the `Architectural smells: {N} matches` Discovery Map row. `conso
 Spawn ALL of the following in parallel at T=0 in a **single message with multiple Agent tool calls**. Do NOT wait for integration-scanner before dispatching precedents / dependencies / CVE — they do not consume Discovery-Map output, only `ChangedFiles` and the manifest diff (both orchestrator-produced in Step 1).
 
 **Agent — Integration map:**
-- subagent_type: `integration-scanner`
+- subagent_type: `rpiv:integration-scanner`
 - Prompt: "Map inbound references, outbound dependencies, and infrastructure wiring for the following changed files: {ChangedFiles, one per line}. Flag any auth-boundary crossings (middleware, guards, interceptors, authorize-style decorators) and config/DI/event registration touching these paths. Do NOT analyse code quality — connections only, in your standard output format."
 
 **Agent — Precedents** (always): use the `precedent-locator` prompt defined in Step 3 below — dispatch it here, not in Wave-2. Input it needs: `ChangedFiles` only.
@@ -185,9 +185,9 @@ Spawn ALL of the following in parallel at T=0 in a **single message with multipl
 
 **Agent — CVE / advisory** (only when `ManifestChanged`): use the `web-search-researcher` prompt defined in Step 3 below — dispatch here. Input it needs: parsed `name@version` list from the manifest diff (orchestrator extracts and hands over directly).
 
-**Agent — Peer-Mirror** (only when `len(PeerPairs) > 0`): `subagent_type: peer-comparator`. Input: the `PeerPairs` list verbatim, nothing else — no Discovery Map (it isn't built yet and the agent doesn't need it), no patch path (the work is peer-vs-new entity comparison, not diff analysis). Prompt: Read §Peer-Mirror in `references/gated-prompts.md` and use its fenced block byte-for-byte, substituting only the `{list of (new_file, peer_file) tuples}` placeholder.
+**Agent — Peer-Mirror** (only when `len(PeerPairs) > 0`): `subagent_type: rpiv:peer-comparator`. Input: the `PeerPairs` list verbatim, nothing else — no Discovery Map (it isn't built yet and the agent doesn't need it), no patch path (the work is peer-vs-new entity comparison, not diff analysis). Prompt: Read §Peer-Mirror in `references/gated-prompts.md` and use its fenced block byte-for-byte, substituting only the `{list of (new_file, peer_file) tuples}` placeholder.
 
-**Agent — Sink-candidate sweep** (only when opengrep is unavailable — probe `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/tool-probe.mjs" "."` if not already run; when opengrep runs, SKIP — opengrep owns grep-tier recall): `subagent_type: diff-auditor`. Input: the resolved `<patch_path>` only — no Discovery Map (its candidates feed INTO the map). Prompt: Read §Sink-candidate sweep in `references/gated-prompts.md` and use its fenced block byte-for-byte, substituting `<patch_path>`. Digest returned rows into the Discovery Map's `Grep sink candidates` row — CANDIDATES the Security lens must trace, never findings.
+**Agent — Sink-candidate sweep** (only when opengrep is unavailable — probe `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/tool-probe.mjs" "."` if not already run; when opengrep runs, SKIP — opengrep owns grep-tier recall): `subagent_type: rpiv:diff-auditor`. Input: the resolved `<patch_path>` only — no Discovery Map (its candidates feed INTO the map). Prompt: Read §Sink-candidate sweep in `references/gated-prompts.md` and use its fenced block byte-for-byte, substituting `<patch_path>`. Digest returned rows into the Discovery Map's `Grep sink candidates` row — CANDIDATES the Security lens must trace, never findings.
 
 While these agents run, the orchestrator produces the rest of the Discovery Map inline from Step 1's data:
 - `ChangedFiles`, `ManifestChanged`, `LockstepSelfReview`, `ReviewType`
