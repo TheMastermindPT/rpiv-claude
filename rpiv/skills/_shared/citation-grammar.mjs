@@ -45,20 +45,25 @@ export function citesIn(chunk) {
 // never diverge.
 const SKIP = new Set(["node_modules", "coverage", "reports", "playwright-report", "dist", "build", "out", ".stryker-tmp"]);
 
-/** Single recursive walker: skips SKIP dirs and dot-dirs except .github, tolerates
- * unreadable entries, and calls onFile(entryName, relPath) for every file. */
+/** Single recursive walker: skips SKIP dirs and dot-DIRS except .github, tolerates
+ * unreadable entries, and calls onFile(entryName, relPath) for every file. Dot-FILES
+ * (.env.example, .gitignore, ...) are indexed — they are tracked, citable evidence
+ * targets; only dot-directories (.git, .vscode, ...) are pruned (dogfooding: a
+ * dot-blind walk made `store add` reject `.env.example` as "not a repo file"). */
 const walkTree = (root, onFile) => {
 	(function walk(dir, base) {
 		let entries;
 		try { entries = readdirSync(dir); } catch { return; }
 		for (const e of entries) {
-			if ((e.startsWith(".") && e !== ".github") || SKIP.has(e)) continue;
+			if (SKIP.has(e)) continue;
 			const p = join(dir, e);
 			const rel = base ? `${base}/${e}` : e;
 			let st;
 			try { st = statSync(p); } catch { continue; }
-			if (st.isDirectory()) walk(p, rel);
-			else onFile(e, rel);
+			if (st.isDirectory()) {
+				if (e.startsWith(".") && e !== ".github") continue;
+				walk(p, rel);
+			} else onFile(e, rel);
 		}
 	})(root, "");
 };

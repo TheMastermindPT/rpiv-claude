@@ -21,7 +21,7 @@
 // are descriptive stubs (cross-language support is registry growth, not special-casing).
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
@@ -135,6 +135,7 @@ const ecosystem = pkg
 let covReport = "";
 let strykerReport = "";
 let strykerHtmlOnly = "";
+let strykerStale = "";
 
 const out = [];
 const row = (tool, lens, status, extras = []) =>
@@ -184,10 +185,20 @@ if (ecosystem === "js-ts") {
 	else if (covTool === "jest") covCmd = "npx jest --coverage";
 	else if (covTool === "c8") covCmd = "npx c8 node --test";
 	else if (covTool === "nyc") covCmd = "npx nyc --reporter=lcov node --test";
+	// Vitest delegates coverage to a separate provider package it does NOT depend on —
+	// `npx vitest run --coverage` without one dies asking for the provider (dogfooding
+	// #8). Pre-detect so the "Generate (~30s)" checkpoint can warn BEFORE offering it.
+	const covProvider = covTool === "vitest"
+		? (installed("@vitest/coverage-v8") || has("node_modules/@vitest/coverage-v8") ? "@vitest/coverage-v8"
+			: installed("@vitest/coverage-istanbul") || has("node_modules/@vitest/coverage-istanbul") ? "@vitest/coverage-istanbul"
+			: "absent")
+		: "";
 	row("coverage", "T", covStatus, [
 		`tool=${covTool || "none"}`,
 		`report=${covReport || "none"}`,
+		...(covProvider ? [`provider=${covProvider}`] : []),
 		...(covCmd ? [`cmd=${covCmd}`] : []),
+		...(covProvider === "absent" ? ["hint=npm i -D @vitest/coverage-v8 first — vitest cannot generate coverage without a provider"] : []),
 		...(covStatus === "absent" ? ["hint=npm i -D vitest (or jest) + add a coverage script"]
 			: covStatus === "installed-unconfigured" ? ["hint=add a `test:coverage` script or run `${covCmd}`"]
 			: covScript ? [`script:${covScript}`] : []),
@@ -215,12 +226,30 @@ if (ecosystem === "js-ts") {
 			/* no reports/mutation dir — plain absent */
 		}
 	}
+	// Stale != present (dogfooding #2): with an html-only reporter config the last json
+	// survives untouched, so "present" could be weeks old while the html is fresh. A
+	// sibling html markedly newer than the json (60s slack covers same-run reporter
+	// ordering) flags stale-json so the checkpoint re-offers the run instead of parsing it.
+	if (strykerReport) {
+		try {
+			const dir = join(root, "reports", "mutation");
+			const jsonM = statSync(join(root, strykerReport)).mtimeMs;
+			let newestHtml = 0;
+			for (const f of readdirSync(dir)) {
+				if (f.endsWith(".html")) newestHtml = Math.max(newestHtml, statSync(join(dir, f)).mtimeMs);
+			}
+			if (newestHtml - jsonM > 60_000) strykerStale = "stale";
+		} catch {
+			/* no html sibling — nothing to cross-check */
+		}
+	}
 	const strykerStatus = !strykerInst ? "absent"
 		: strykerCfg ? "configured"
 		: "installed-unconfigured";
 	row("stryker", "T", strykerStatus, [
-		`report=${strykerReport || (strykerHtmlOnly ? `html-only:${strykerHtmlOnly}` : "none")}`,
+		`report=${strykerStale ? `stale-json:${strykerReport}` : strykerReport || (strykerHtmlOnly ? `html-only:${strykerHtmlOnly}` : "none")}`,
 		...(strykerCfg ? [`config=${strykerCfg}`] : []),
+		...(strykerStale ? ['hint=mutation.json predates the html report — add "json" to stryker reporters and re-run'] : []),
 		...(strykerHtmlOnly ? ['hint=add "json" to stryker reporters for machine ingest'] : []),
 		...(strykerStatus === "absent" ? ["hint=npm i -D @stryker-mutator/core (mutation testing — catches covered-but-unverified code)"]
 			: strykerStatus === "installed-unconfigured" ? ["hint=run `npx stryker init` to create a config"]
@@ -364,7 +393,7 @@ row("rg", "search", rgBin ? "installed" : "absent",
 
 // --- Report status summary (drives the checkpoint) -------------------------
 const covRpt = covReport ? "present" : "absent";
-const mutRpt = strykerReport ? "present" : strykerHtmlOnly ? "html-only" : "absent";
+const mutRpt = strykerReport ? (strykerStale ? "stale-json" : "present") : strykerHtmlOnly ? "html-only" : "absent";
 const archAstRpt = astgrepArch === "configured" ? "present" : "absent";
 const archOgRpt = opengrepArch === "configured" ? "present" : "absent";
 const dbRpt = hasDbSurface ? "present" : "absent";

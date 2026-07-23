@@ -6,7 +6,9 @@
 //   node "${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/_helpers/mutation.mjs" "<target>"
 //
 // Output:
-//   mutation_report:  <which file was parsed | none>
+//   mutation_report:  <which file was parsed | none | html-only — ... | stale-json — ...
+//                      (json predates a sibling html: an html-only reporter config left an
+//                       old json in place — refused, never parsed as current data)>
 //   mutation_overall: killed=N survived=N score=R%
 //   mutation_scope:   target_has=N report_covers=M missing=K  (<"full" | "partial" | "none">)
 //   ---mutation---  path \t killed=N \t survived=N \t noCoverage=N \t timeout=N \t score=R%
@@ -23,7 +25,7 @@
 // When mutation_scope is "partial," the T lens treats missing mutation data as an unknown
 // signal rather than evidence of clean code.
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { isSource, isTest } from "./source-set.mjs";
 import { resolveTargets, safeGit, toPosix } from "./target-context.mjs";
@@ -104,6 +106,38 @@ if (!reportPath) {
 	process.stdout.write("mutation_report: none\n");
 	process.stdout.write(`mutation_scope: target_has=${targetSrcFiles.length} report_covers=0 missing=${targetSrcFiles.length} (none)\n`);
 	process.exit(0);
+}
+
+// Freshness cross-check (dogfooding #2): an HTML-only reporter config leaves the last
+// json in place, so a fresh 20-minute run can silently "produce" a weeks-old json.
+// A sibling .html markedly newer than the json means the json is from an EARLIER run —
+// a distinct broken state (degrade-distinguishes-broken), never parsed as current data.
+// 60s of slack covers same-run reporter ordering (html and json written seconds apart).
+{
+	let htmlPath = "";
+	let htmlMtime = 0;
+	try {
+		const dir = join(projectRoot, "reports", "mutation");
+		for (const f of readdirSync(dir)) {
+			if (!f.endsWith(".html")) continue;
+			const m = statSync(join(dir, f)).mtimeMs;
+			if (m > htmlMtime) {
+				htmlMtime = m;
+				htmlPath = `reports/mutation/${f}`;
+			}
+		}
+	} catch {
+		/* no reports/mutation dir — nothing to cross-check */
+	}
+	const lag = htmlMtime - statSync(reportPath).mtimeMs;
+	if (htmlPath && lag > 60_000) {
+		const age = lag >= 86_400_000 ? `${(lag / 86_400_000).toFixed(1)}d` : `${(lag / 3_600_000).toFixed(1)}h`;
+		process.stdout.write(
+			`mutation_report: stale-json — ${reportName} is ${age} older than ${htmlPath} (json is from an earlier run; add "json" to stryker reporters and re-run, or extract ${htmlPath}'s embedded report — it is a JS assignment, not plain JSON)\n`,
+		);
+		process.stdout.write(`mutation_scope: target_has=${targetSrcFiles.length} report_covers=0 missing=${targetSrcFiles.length} (stale-json)\n`);
+		process.exit(0);
+	}
 }
 
 // Parse the StrykerJS JSON report.

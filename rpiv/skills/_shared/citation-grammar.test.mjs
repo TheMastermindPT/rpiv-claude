@@ -87,11 +87,13 @@ import { CITE_RE, EXEMPT_RE, citesIn, basenameCounts, fileIndex, isAmbiguous } f
 		writeFileSync(join(tmp, "node_modules", "x.mjs"), "export const x = 1;\n");
 		writeFileSync(join(tmp, ".hidden", "y.mjs"), "export const y = 1;\n");
 		writeFileSync(join(tmp, ".github", "wf.yml"), "name: wf\n");
+		writeFileSync(join(tmp, ".env.example"), "API_KEY=\n");
+		writeFileSync(join(tmp, "sub", ".gitignore"), "dist\n");
 
 		assert.deepEqual(
 			fileIndex(tmp).sort(),
-			[".github/wf.yml", "a.mjs", "sub/a.mjs", "sub/b.txt"],
-			"fileIndex: SKIP + dot-dirs excluded, .github kept, relative POSIX paths",
+			[".env.example", ".github/wf.yml", "a.mjs", "sub/.gitignore", "sub/a.mjs", "sub/b.txt"],
+			"fileIndex: SKIP + dot-DIRS excluded, .github kept, dot-FILES indexed, relative POSIX paths",
 		);
 		const counts = basenameCounts(tmp);
 		assert.equal(counts.get("a.mjs"), 2, "a.mjs counted at root and sub/");
@@ -99,10 +101,14 @@ import { CITE_RE, EXEMPT_RE, citesIn, basenameCounts, fileIndex, isAmbiguous } f
 		assert.equal(counts.get("wf.yml"), 1, ".github walked");
 		assert.equal(counts.get("x.mjs"), undefined, "node_modules skipped");
 		assert.equal(counts.get("y.mjs"), undefined, "dot-dir skipped");
+		// Dot-FILES are tracked, citable evidence targets — a dot-blind walk made
+		// `store add` reject `.env.example` as "not a repo file" (dogfooding #3).
+		assert.equal(counts.get(".env.example"), 1, "root dot-file indexed");
+		assert.equal(counts.get(".gitignore"), 1, "nested dot-file indexed");
 		assert.equal(isAmbiguous("a.mjs", counts), true, "duplicated basename ambiguous");
 		assert.equal(isAmbiguous("sub/a.mjs", counts), false, "path-qualified never ambiguous");
 
-		console.log("OK — golden walk semantics: fileIndex + basenameCounts agree on skip/keep rules.");
+		console.log("OK — golden walk semantics: fileIndex + basenameCounts agree on skip/keep rules; dot-files indexed.");
 	} finally {
 		rmSync(tmp, { recursive: true, force: true });
 	}

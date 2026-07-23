@@ -55,6 +55,14 @@ try {
 	// must NOT read as an unfilled artifact token — artifact placeholders are never $-prefixed
 	r = validateArtifact(write("tokjs.md", artifact({}, "\nsee `appliedRules.add(`limitation:${region}:${severity}`)`) in the loop\n")), root);
 	assert.ok(!r.errors.some((e) => e.includes("template token")), `quoted \${...} template literal is not an artifact token: ${r.errors}`);
+	// a URL / route template quoted from the code under review is prose, not an unfilled
+	// artifact placeholder (dogfooding #5: `/v1/databases/{id}/query` inside a finding
+	// false-failed the finalize gate) — slash-adjacent braces are exempt on either side
+	r = validateArtifact(write("tokurl.md", artifact({}, "\nthe handler serves /v1/databases/{id}/query and /v1/teams/{teamId}\n")), root);
+	assert.ok(!r.errors.some((e) => e.includes("template token")), `slash-adjacent route templates are not artifact tokens: ${r.errors}`);
+	// ...while a standalone unfilled token on the same line still fails
+	r = validateArtifact(write("tokmix.md", artifact({}, "\nsee /v1/databases/{id}/query in {target module}\n")), root);
+	assert.ok(r.errors.some((e) => e.includes("{target module}")) && !r.errors.some((e) => e.includes("{id}")), `route template exempt, real token still caught: ${r.errors}`);
 
 	// tokens are only enforced once status: ready (a draft may still hold them) ...
 	const draftPath = write("draft.md", artifact({ status: "in-progress" }, "\nfill {plan path}\n"));

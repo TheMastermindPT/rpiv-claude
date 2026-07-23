@@ -19,7 +19,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { basenameCounts, fileIndex, isAmbiguous, resolveInIndex } from "./citation-grammar.mjs";
+import { basenameCounts, citesIn, fileIndex, isAmbiguous, resolveInIndex } from "./citation-grammar.mjs";
 import { splitFrontmatter } from "./frontmatter.mjs";
 import { stampArtifact, validateArtifact } from "./validate-artifact.mjs";
 
@@ -187,6 +187,36 @@ function validateDrFields(f) {
 	return errors;
 }
 
+/** Prose fields that RENDER as body text: an ambiguous bare-basename cite in any of
+ *  them fails the Step-11.7 citation gate long after insert — inside a sentinel region
+ *  hand-Edits are forbidden, so a bad cite that got in could not get out (dogfooding #1).
+ *  Reject at write time instead, with the same ambiguity rule as evidence paths (a
+ *  unique basename greps fine and stays legal). Shared by add and update re-validate. */
+function validateProseCites(f, counts) {
+	const prose = [
+		["title", f.title], ["anchor", f.anchor], ["what", f.what], ["why", f.why],
+		["fix", f.fix], ["alt", f.alt], ["statusNote", f.statusNote], ["verifyNote", f.verifyNote],
+		...(isPlainObject(f.remediation)
+			? [
+					...(Array.isArray(f.remediation.steps) ? f.remediation.steps.map((s, i) => [`remediation.steps[${i}]`, s]) : []),
+					...(Array.isArray(f.remediation.acceptance) ? f.remediation.acceptance.map((s, i) => [`remediation.acceptance[${i}]`, s]) : []),
+					["remediation.testStrategy", f.remediation.testStrategy],
+					["remediation.tradeoff", f.remediation.tradeoff],
+				]
+			: []),
+	];
+	const errors = [];
+	for (const [field, text] of prose) {
+		if (typeof text !== "string") continue;
+		for (const c of citesIn(text)) {
+			if (isAmbiguous(c.tok, counts)) {
+				errors.push(`${field} cites ambiguous bare basename ${c.raw} (${counts.get(c.tok)} files named ${c.tok} in repo — write it repo-relative from the repository root)`);
+			}
+		}
+	}
+	return errors;
+}
+
 /** Drift fields — optional, validated when present (either kind). */
 function validateDriftFields(f) {
 	const errors = [];
@@ -208,6 +238,7 @@ export function validateFinding(f, counts, priorIds = new Set()) {
 		...validateShape(f, kind, priorIds),
 		...validateSharedEnums(f, kind),
 		...validateEvidence(f, counts),
+		...validateProseCites(f, counts),
 	];
 	if (kind === "ar") errors.push(...validateArFields(f));
 	else if (kind === "dr") errors.push(...validateDrFields(f));
@@ -648,11 +679,27 @@ function applyFalsified(f, patch) {
 	f.status = "withdrawn"; // retire-not-delete — the record stays (append-only)
 }
 
-/** patch shape gate — id (string) + verify ∈ {Verified, Weakened, Falsified}. */
+// Content fields update may patch (each REPLACES the stored value wholesale, then the
+// whole record re-validates like add). id is the selector; kind/layer/lens/fp and the
+// drift fields (baselineState/driftClass/priorFp/priorId) stay immutable — identity,
+// render-home, and store-diff-owned state respectively.
+const PATCHABLE = ["title", "anchor", "what", "why", "evidence", "remediation", "severity", "effort", "blastRadius", "class", "symbol", "entityStage", "crossCutTag", "dependsOn", "fix", "alt"];
+const PATCH_KEYS = new Set(["id", "verify", "verifyNote", "status", "statusNote", ...PATCHABLE]);
+
+/** patch shape gate — id (string) required; an unknown/immutable key is a HARD error
+ *  (a silently ignored patch field was dogfooding #1's exact failure mode); verify,
+ *  when present, must be a valid verdict; and the patch must carry something to apply. */
 function assertUpdatablePatch(patch) {
 	if (!isNonEmptyStr(patch?.id)) throw new Error("update: patch.id (string) is required");
-	if (!["Verified", "Weakened", "Falsified"].includes(patch.verify)) {
-		throw new Error(`update: verify must be one of Verified | Weakened | Falsified (got: ${patch.verify})`);
+	const unknown = Object.keys(patch).filter((k) => !PATCH_KEYS.has(k));
+	if (unknown.length > 0) {
+		throw new Error(`update: unknown or immutable patch field(s): ${unknown.join(", ")} (updatable: verify, verifyNote, status, statusNote, ${PATCHABLE.join(", ")})`);
+	}
+	if (patch.verify != null && !AR_ENUMS.verify.includes(patch.verify)) {
+		throw new Error(`update: verify must be one of ${AR_ENUMS.verify.join(" | ")} (got: ${patch.verify})`);
+	}
+	if (Object.keys(patch).every((k) => k === "id")) {
+		throw new Error("update: patch carries only id — nothing to apply");
 	}
 }
 
@@ -662,21 +709,42 @@ function revalidateAfterUpdate(f, root) {
 	if (errors.length > 0) throw new Error(errors.map((e) => `invalid finding after update: ${e}`).join("\n"));
 }
 
-/** Apply a verify verdict to an existing stored finding, in place, then re-render its layer.
- *  Verified: stands. Weakened: demote one tier. Falsified: retire (status→withdrawn). An
- *  explicit status/statusNote in the patch overrides. Returns the updated record. */
+/** Apply a patch to an existing stored finding, in place, then re-render its layer.
+ *  Two patch families compose (content first, verdict second):
+ *  - CONTENT fields (PATCHABLE) each REPLACE the stored value wholesale, and the whole
+ *    record re-validates like `add` — including evidence re-grounding and a fingerprint
+ *    recompute when evidence/symbol change. The store is the only sanctioned writer
+ *    inside sentinel regions, so it must accept the full finding shape (dogfooding #1:
+ *    it used to silently drop every field but the verdict).
+ *  - VERIFY verdict (optional): Verified stands. Weakened: demote one tier (from the
+ *    PATCHED severity, when both ride one patch). Falsified: retire (status→withdrawn).
+ *  An explicit status/statusNote in the patch overrides. Returns the updated record. */
 export function updateFinding(artifactPath, root, patch) {
 	assertUpdatablePatch(patch);
 	const { storePath, store } = loadStore(artifactPath);
 	const f = store.findings.find((x) => x.id === patch.id);
 	if (!f) throw new Error(`update: no finding with id ${patch.id}`);
 	const kind = f.kind ?? "ar";
-	f.verify = patch.verify;
-	if (patch.verify === "Weakened") applyWeakened(f, kind, patch);
-	else if (patch.verify === "Falsified") applyFalsified(f, patch);
+	const touched = PATCHABLE.filter((k) => k in patch);
+	for (const k of touched) f[k] = patch[k];
+	if (patch.verify != null) {
+		f.verify = patch.verify;
+		if (patch.verify === "Weakened") applyWeakened(f, kind, patch);
+		else if (patch.verify === "Falsified") applyFalsified(f, patch);
+		else if (isNonEmptyStr(patch.verifyNote)) f.verifyNote = patch.verifyNote.trim();
+	} else if (isNonEmptyStr(patch.verifyNote)) {
+		f.verifyNote = patch.verifyNote.trim();
+	}
 	if (typeof patch.status === "string") f.status = patch.status;
 	if (typeof patch.statusNote === "string") f.statusNote = patch.statusNote.trim();
 	revalidateAfterUpdate(f, root);
+	if (touched.includes("evidence")) {
+		const grounding = checkEvidenceGrounding(f, root);
+		if (grounding.length > 0) throw new Error(grounding.map((e) => `invalid finding after update: ${e}`).join("\n"));
+	}
+	// fp hashes { id, lens, quoted, symbol } — recompute when its inputs moved, so the
+	// next `store diff` sees the edited finding as changed content, not the old one.
+	if (touched.includes("evidence") || touched.includes("symbol")) f.fp = computeFingerprint(f);
 	saveStore(storePath, store);
 	if (kind === "ar") renderInto(artifactPath, store, f.layer); // DR whole-doc re-render: Slice 8
 	return f;
@@ -1063,7 +1131,10 @@ export function toSarif(store) {
 const USAGE = [
 	"usage: store.mjs init --artifact <review.md> [--root <dir>] < {target,layers:[{n,name}]}.json",
 	"       store.mjs add --artifact <review.md> [--root <dir>] < finding.json",
-	"       store.mjs update --artifact <review.md> [--root <dir>] < {id,verify,verifyNote?,status?,statusNote?}.json",
+	"       store.mjs update --artifact <review.md> [--root <dir>] < {id,verify?,verifyNote?,status?,statusNote?,<content fields>}.json",
+	"           (content fields — title, anchor, what, why, evidence, remediation, severity, effort,",
+	"            blastRadius, class, symbol, entityStage, crossCutTag, dependsOn, fix, alt — each",
+	"            REPLACES the stored value and the record re-validates like add)",
 	"       store.mjs diff --artifact <review.md> --prior <prior-review.json> [--root <dir>]",
 	"       store.mjs query --clusters --artifact <review.md>",
 	"       store.mjs render --review --artifact <review.md>   (DR write-once)",
@@ -1106,7 +1177,7 @@ function cmdAdd(ctx) {
 
 function cmdUpdate(ctx) {
 	if (!ctx.artifact) return usageExit(ctx);
-	const raw = stdinOrNull(ctx, "store update: empty stdin — pipe { id, verify, verifyNote?, status?, statusNote? } JSON\n");
+	const raw = stdinOrNull(ctx, "store update: empty stdin — pipe { id, verify?, verifyNote?, status?, statusNote?, <content fields> } JSON\n");
 	if (raw === null) return 2;
 	const rec = updateFinding(resolve(ctx.artifact), ctx.root, JSON.parse(raw));
 	ctx.stdout.write(`updated ${rec.id}: verify ${rec.verify}, severity ${rec.severity}, status ${rec.status}\n`);

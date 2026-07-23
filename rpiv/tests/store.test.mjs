@@ -880,6 +880,102 @@ it("P4.5 update re-renders the finding's layer (demoted severity shows in the .m
 	rmSync(fx.tmp, { recursive: true, force: true });
 });
 
+// ---- Phase 4b: store update content patches (dogfooding #1 — the only sanctioned
+// writer inside sentinel regions must accept the full finding shape, not just verdicts).
+
+// P4.6 content fields persist AND re-render — no verify needed in the patch.
+it("P4.6 update content fields persist and re-render without a verify verdict.", () => {
+	const fx = mkUpdateFixture();
+	const rec = updateFinding(fx.artifact, fx.root, {
+		id: "L0-01",
+		anchor: "1178 LOC = 11.9x median; 41 inbound",
+		what: "Rewritten what: the service accretes IO on top of planning.",
+		remediation: { steps: ["Split IO into lib/x/io.ts."], acceptance: ["service < 3x median"], testStrategy: "characterize first", tradeoff: "none" },
+	});
+	assert.equal(rec.anchor, "1178 LOC = 11.9x median; 41 inbound", "anchor replaced");
+	assert.equal(rec.verify, "Verified", "verify untouched by a content-only patch");
+	const persisted = JSON.parse(readFileSync(fx.storePath, "utf-8")).findings[0];
+	assert.equal(persisted.what, "Rewritten what: the service accretes IO on top of planning.", "what persisted");
+	assert.deepEqual(persisted.remediation.steps, ["Split IO into lib/x/io.ts."], "remediation replaced wholesale");
+	const md = readFileSync(fx.artifact, "utf-8");
+	const region = md.slice(md.indexOf("<!-- BEGIN store:findings layer=0 -->"), md.indexOf("<!-- END store:findings layer=0 -->"));
+	assert.ok(region.includes("1178 LOC = 11.9x median; 41 inbound"), "new anchor rendered");
+	assert.ok(region.includes("Rewritten what"), "new what rendered");
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
+// P4.7 unknown/immutable patch keys are a HARD error; an id-only patch has nothing to apply.
+it("P4.7 update rejects unknown and immutable patch fields loudly; id-only patch rejected.", () => {
+	const fx = mkUpdateFixture();
+	assert.equal(
+		throwMsg(() => updateFinding(fx.artifact, fx.root, { id: "L0-01", anchour: "typo" })).split(" (updatable:")[0],
+		"update: unknown or immutable patch field(s): anchour",
+		"a typo'd field must never be silently dropped",
+	);
+	assert.throws(() => updateFinding(fx.artifact, fx.root, { id: "L0-01", layer: 1 }), /unknown or immutable patch field\(s\): layer/, "layer is immutable (render home)");
+	assert.throws(() => updateFinding(fx.artifact, fx.root, { id: "L0-01", lens: "D" }), /unknown or immutable patch field\(s\): lens/, "lens is immutable (identity)");
+	assert.throws(() => updateFinding(fx.artifact, fx.root, { id: "L0-01" }), /patch carries only id — nothing to apply/, "id-only patch rejected");
+	const persisted = JSON.parse(readFileSync(fx.storePath, "utf-8")).findings[0];
+	assert.equal(persisted.anchor, VALID_FINDING.anchor, "rejected patches persist nothing");
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
+// P4.8 an evidence patch re-grounds against the repo and recomputes the fingerprint.
+it("P4.8 update evidence re-grounds and recomputes fp; a bad quote persists nothing.", () => {
+	const fx = mkFixture({ seed: { "lib/x/service.ts": "export const x = 1;\nexport const y = 2;\n" } });
+	addFinding(fx.artifact, fx.root, VALID_FINDING);
+	const fpBefore = JSON.parse(readFileSync(fx.storePath, "utf-8")).findings[0].fp;
+	assert.throws(
+		() => updateFinding(fx.artifact, fx.root, { id: "L0-01", evidence: [{ path: "lib/x/service.ts", startLine: 1, endLine: null, quoted: ["not the real line"] }] }),
+		/invalid finding after update: evidence\[0\]\.quoted not found/,
+		"ungroundable evidence rejected",
+	);
+	assert.equal(JSON.parse(readFileSync(fx.storePath, "utf-8")).findings[0].fp, fpBefore, "rejected evidence patch persists nothing");
+	const rec = updateFinding(fx.artifact, fx.root, { id: "L0-01", evidence: [{ path: "lib/x/service.ts", startLine: 2, endLine: null, quoted: ["export const y = 2;"] }] });
+	assert.notEqual(rec.fp, fpBefore, "fp recomputed for the changed quote");
+	assert.equal(JSON.parse(readFileSync(fx.storePath, "utf-8")).findings[0].fp, rec.fp, "new fp persisted");
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
+// P4.9 verify + content compose in one patch: content lands first, Weakened demotes from it.
+it("P4.9 update composes content + verdict: Weakened demotes from the patched severity.", () => {
+	const fx = mkUpdateFixture();
+	const rec = updateFinding(fx.artifact, fx.root, { id: "L0-01", severity: "Med", verify: "Weakened", verifyNote: "narrower than stated" });
+	assert.equal(rec.severity, "Low", "patched Med, then demoted one tier -> Low");
+	assert.equal(rec.verify, "Weakened", "verdict applied");
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
+// P4.10 prose-citation gate at write time (dogfooding #1 fix-candidate b): an ambiguous
+// bare-basename cite in a PROSE field bounces at add AND at update — it must never get
+// into a sentinel region only the store may edit, to be flagged at the Step-11.7 gate.
+it("P4.10 ambiguous bare-basename cites in prose fields bounce at add and update.", () => {
+	const fx = mkFixture({ seed: { "lib/x/service.ts": "export const x = 1;\n", "lib/y/service.ts": "export const y = 1;\n" } });
+	const bad = { ...VALID_FINDING, what: "Callers re-derive the rule in service.ts:3 on every save." };
+	assert.throws(
+		() => addFinding(fx.artifact, fx.root, bad),
+		/what cites ambiguous bare basename service\.ts:3 \(2 files named service\.ts in repo/,
+		"ambiguous prose cite bounces at insert",
+	);
+	assert.equal(JSON.parse(readFileSync(fx.storePath, "utf-8")).findings.length, 0, "nothing persisted");
+	// The gate reads EVERY prose field — the base fixture's title and acceptance also
+	// carry bare `service.ts`, so the passing record must qualify all of them.
+	addFinding(fx.artifact, fx.root, {
+		...VALID_FINDING,
+		title: "god-file lib/x/service.ts",
+		what: "Callers re-derive the rule in lib/x/service.ts:3 on every save.",
+		remediation: { ...VALID_FINDING.remediation, acceptance: ["metrics.mjs reports lib/x/service.ts < 3x median"] },
+	});
+	assert.throws(
+		() => updateFinding(fx.artifact, fx.root, { id: "L0-01", anchor: "3 copies of service.ts logic" }),
+		/anchor cites ambiguous bare basename service\.ts/,
+		"ambiguous prose cite bounces at update re-validate",
+	);
+	const ok = updateFinding(fx.artifact, fx.root, { id: "L0-01", anchor: "3 copies of lib/x/service.ts logic" });
+	assert.equal(ok.anchor, "3 copies of lib/x/service.ts logic", "repo-relative cite passes");
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
 // ---- Phase 5: store diff (drift classification) -----------------------------
 
 /** A .md with the store:drift region + a seeded review.json (findings carry fp). */

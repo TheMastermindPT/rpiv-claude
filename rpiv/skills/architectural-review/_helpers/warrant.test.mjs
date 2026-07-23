@@ -205,14 +205,45 @@ const empties = (...labels) => labels.map((l) => block(l)).join("");
   assert.equal(rpc.lenses.P, true, "rpc row -> P live");
   assert.ok(rpc.liveLenses.includes("P") && rpc.band === "selective" && rpc.selectiveWave2.includes("P"), "P warranted, dispatched on selective");
 
-  // an EMPTY semantic write-sites supersedes a metric row -> P dead.
-  const supersede = warrant(
+  // an EMPTY semantic write-sites does NOT supersede a metric row (dogfooding #6):
+  // semantic.mjs always emits the header, so a target whose table names it cannot
+  // resolve would read "no db surface" while the regex plainly saw table:/rpc: rows.
+  // Empty semantic block -> fall back to the metric rows; P stays live.
+  const metricRow =
+    "file_count: 12\n" +
+    empties("godfile-candidates", "low-cohesion", "dup-candidates", "feature-envy-candidates", "export-usage", "co-change-groups", "test-density") +
+    block("write-sites", ["table:x\twriters=1"]);
+  const emptySem = warrant(metricRow, {
+    knipDead: 0,
+    semantic: `files_in_target: 12\n${block("write-sites-semantic")}${block("feature-envy-semantic")}${block("dead-exports-semantic")}${block("type-fragmentation-semantic")}`,
+  });
+  assert.equal(emptySem.lenses.P, true, "empty semantic block falls back to metric rows -> P live");
+
+  // a NON-empty semantic write-sites still supersedes: its resolved rows are the
+  // signal, the metric rows drop to corroboration (S reads writers from semantic).
+  const resolvedSem = warrant(
     "file_count: 12\n" +
       empties("godfile-candidates", "low-cohesion", "dup-candidates", "feature-envy-candidates", "export-usage", "co-change-groups", "test-density") +
-      block("write-sites", ["table:x\twriters=1"]),
-    { knipDead: 0, semantic: `files_in_target: 12\n${block("write-sites-semantic")}${block("feature-envy-semantic")}${block("dead-exports-semantic")}${block("type-fragmentation-semantic")}` },
+      block("write-sites", ["table:x\twriters=2\tfiles=a.ts, b.ts"]),
+    {
+      knipDead: 0,
+      semantic: `files_in_target: 12\n${block("write-sites-semantic", ["table:x\twriters=1\tfiles=a.ts"])}${block("feature-envy-semantic")}${block("dead-exports-semantic")}${block("type-fragmentation-semantic")}`,
+    },
   );
-  assert.equal(supersede.lenses.P, false, "semantic supersedes: no semantic db rows -> P dead");
+  assert.equal(resolvedSem.lenses.P, true, "resolved semantic db rows -> P live");
+  assert.equal(resolvedSem.lenses.S, false, "non-empty semantic still supersedes S: writers=1 resolved beats the regex writers=2");
+
+  // and the S fallback mirrors P: metric writers=2 with an EMPTY semantic block stays live.
+  const sFallback = warrant(
+    "file_count: 12\n" +
+      empties("godfile-candidates", "low-cohesion", "dup-candidates", "feature-envy-candidates", "export-usage", "co-change-groups", "test-density") +
+      block("write-sites", ["table:x\twriters=2\tfiles=a.ts, b.ts"]),
+    {
+      knipDead: 0,
+      semantic: `files_in_target: 12\n${block("write-sites-semantic")}${block("feature-envy-semantic")}${block("dead-exports-semantic")}${block("type-fragmentation-semantic")}`,
+    },
+  );
+  assert.equal(sFallback.lenses.S, true, "empty semantic block falls back to metric rows -> S live at writers=2");
 }
 
 // ── Sec: only-absent-on-skip pin (the sole state without Sec) ──────────────

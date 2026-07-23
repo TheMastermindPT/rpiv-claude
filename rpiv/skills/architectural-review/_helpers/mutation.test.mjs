@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -271,4 +271,40 @@ try {
 	console.log("OK — html-only report distinct from none; plain none unchanged; exit 0 both ways.");
 } finally {
 	rmSync(repo9, { recursive: true, force: true });
+}
+
+// --- Test 10: stale json (html newer) is distinct from present (dogfooding #2) ----
+// An html-only reporter config leaves the last json in place: a fresh run refreshes
+// the html while mutation.json stays weeks old, and parsing it as current data is the
+// silent trap. A sibling html newer by > 60s must flag stale-json and NOT emit rows.
+
+const repo10 = mkdtempSync(join(tmpdir(), "mut-stale-"));
+try {
+	mkdirSync(join(repo10, "a"), { recursive: true });
+	mkdirSync(join(repo10, "reports", "mutation"), { recursive: true });
+	writeFileSync(join(repo10, "a", "x.ts"), "export function x() { return 1; }\n");
+	const jsonPath = join(repo10, "reports", "mutation", "mutation.json");
+	writeFileSync(jsonPath, JSON.stringify(makeStrykerReport(["a/x.ts"])));
+	writeFileSync(join(repo10, "reports", "mutation", "store.html"), "<html></html>");
+	git(repo10, ["init", "-q"]);
+	git(repo10, ["add", "-A"]);
+
+	// Fresh json + html (same-run mtimes, within slack): parses normally.
+	const fresh = execFileSync("node", [MUTATION, "a"], { cwd: repo10, encoding: "utf-8" });
+	assert.ok(fresh.includes("mutation_report: reports/mutation/mutation.json"), `same-run mtimes parse normally, got: ${fresh.split("\n")[0]}`);
+
+	// Age the json 6 days behind the html: stale-json, distinct diagnostic, no rows.
+	const old = (Date.now() - 6 * 86_400_000) / 1000;
+	utimesSync(jsonPath, old, old);
+	const stale = execFileSync("node", [MUTATION, "a"], { cwd: repo10, encoding: "utf-8" });
+	const l = stale.split("\n");
+	assert.ok(l[0].startsWith("mutation_report: stale-json — reports/mutation/mutation.json is "), `stale line 1 must announce stale-json + age, got: ${l[0]}`);
+	assert.ok(l[0].includes("older than reports/mutation/store.html"), `stale line 1 names the newer html, got: ${l[0]}`);
+	assert.ok(l[0].includes('add "json" to stryker reporters'), `stale line 1 carries the re-run remedy, got: ${l[0]}`);
+	assert.ok(l[0].includes("JS assignment, not plain JSON"), `stale line 1 warns the html embed is JS, got: ${l[0]}`);
+	assert.ok(l[1].endsWith("(stale-json)"), `line 2 must end (stale-json), got: ${l[1]}`);
+	assert.ok(!stale.includes("---mutation---"), `stale output must not emit per-file rows, got: ${stale}`);
+	console.log("OK — stale json (html newer) flagged stale-json, no rows; same-run mtimes unaffected.");
+} finally {
+	rmSync(repo10, { recursive: true, force: true });
 }

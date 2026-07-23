@@ -3,7 +3,7 @@
 // detection works WITHOUT running or installing anything. Prints "OK" on success.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, utimesSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -164,9 +164,10 @@ try {
 const repo7 = mkdtempSync(join(tmpdir(), "probe-htmlonly-"));
 try {
 	const seed = () => {
+		// vitest WITHOUT a @vitest/coverage-* provider — exercises the provider pre-detect.
 		writeFileSync(join(repo7, "package.json"), JSON.stringify({
 			name: "x",
-			devDependencies: { "@stryker-mutator/core": "^9" },
+			devDependencies: { "@stryker-mutator/core": "^9", vitest: "^4" },
 		}));
 		writeFileSync(join(repo7, "stryker.config.json"), JSON.stringify({ mutate: ["src/x.ts"] }));
 	};
@@ -188,12 +189,29 @@ try {
 	);
 	assert.ok(/^mutation: html-only$/m.test(htmlOnly), `footer must be exactly 'mutation: html-only', got:\n${htmlOnly}`);
 
-	// with a json report present, the html file is irrelevant -> present (unchanged, pinned)
+	// with a FRESH json report present, the html file is irrelevant -> present (unchanged, pinned)
 	writeFileSync(join(repo7, "reports", "mutation", "mutation.json"), JSON.stringify({ files: {} }));
 	const withJson = execFileSync("node", [PROBE, "."], { cwd: repo7, encoding: "utf-8" });
 	const jsonRow = withJson.split("\n").find((l) => l.startsWith("stryker\t")) ?? "";
 	assert.ok(jsonRow.includes("report=reports/mutation/mutation.json"), `json report preferred, got: ${jsonRow}`);
 	assert.ok(/^mutation: present$/m.test(withJson), `footer stays 'mutation: present' with json, got:\n${withJson}`);
+
+	// a json markedly OLDER than the sibling html is from an earlier run -> stale-json
+	// (dogfooding #2: an html-only reporter config leaves the last json in place).
+	const old = (Date.now() - 6 * 86_400_000) / 1000;
+	utimesSync(join(repo7, "reports", "mutation", "mutation.json"), old, old);
+	const stale = execFileSync("node", [PROBE, "."], { cwd: repo7, encoding: "utf-8" });
+	const staleRow = stale.split("\n").find((l) => l.startsWith("stryker\t")) ?? "";
+	assert.ok(staleRow.includes("report=stale-json:reports/mutation/mutation.json"), `stale json named distinctly, got: ${staleRow}`);
+	assert.ok(staleRow.includes("hint=mutation.json predates the html report"), `stale row carries the re-run hint, got: ${staleRow}`);
+	assert.ok(/^mutation: stale-json$/m.test(stale), `footer must be 'mutation: stale-json', got:\n${stale}`);
+
+	// vitest without a coverage provider package: `npx vitest run --coverage` would die
+	// asking for one — the probe pre-detects it (dogfooding #8) so the Generate (~30s)
+	// checkpoint can warn instead of promising a run that fails.
+	const covRow = stale.split("\n").find((l) => l.startsWith("coverage\t")) ?? "";
+	assert.ok(covRow.includes("provider=absent"), `vitest without @vitest/coverage-* must flag provider=absent, got: ${covRow}`);
+	assert.ok(covRow.includes("hint=npm i -D @vitest/coverage-v8 first"), `provider=absent row carries the install-first hint, got: ${covRow}`);
 
 	// with neither -> absent (unchanged)
 	rmSync(join(repo7, "reports"), { recursive: true, force: true });

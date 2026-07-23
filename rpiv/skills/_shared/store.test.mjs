@@ -917,6 +917,31 @@ function mkUpdateFixture() {
 	console.log("OK — P4 update re-renders layer: demoted severity shows in the .md.");
 }
 
+// P4.6 update accepts content-field patches (dogfooding #1): text fields persist +
+// re-render without a verify verdict; unknown/immutable keys are a HARD error; an
+// ambiguous bare-basename cite in a prose field bounces at add.
+{
+	const fx = mkUpdateFixture();
+	const rec = updateFinding(fx.artifact, fx.root, { id: "L0-01", anchor: "1178 LOC = 11.9x median; 41 inbound" });
+	assert.equal(rec.anchor, "1178 LOC = 11.9x median; 41 inbound", "anchor replaced");
+	assert.equal(rec.verify, "Verified", "verify untouched by a content-only patch");
+	assert.equal(JSON.parse(readFileSync(fx.storePath, "utf-8")).findings[0].anchor, rec.anchor, "persisted");
+	const md = readFileSync(fx.artifact, "utf-8");
+	assert.ok(regionContent(md, "findings", 0).includes("41 inbound"), "new anchor rendered");
+	assert.throws(() => updateFinding(fx.artifact, fx.root, { id: "L0-01", anchour: "typo" }), /unknown or immutable patch field\(s\): anchour/, "typo'd field never silently dropped");
+	assert.throws(() => updateFinding(fx.artifact, fx.root, { id: "L0-01", layer: 1 }), /unknown or immutable patch field\(s\): layer/, "layer immutable");
+	assert.throws(() => updateFinding(fx.artifact, fx.root, { id: "L0-01" }), /nothing to apply/, "id-only patch rejected");
+	rmSync(fx.tmp, { recursive: true, force: true });
+	const fx2 = mkFixture({ seed: { "lib/x/service.ts": "export const x = 1;\n", "lib/y/service.ts": "export const y = 1;\n" } });
+	assert.throws(
+		() => addFinding(fx2.artifact, fx2.root, { ...VALID_FINDING, what: "Callers re-derive the rule in service.ts:3 on every save." }),
+		/what cites ambiguous bare basename service\.ts:3/,
+		"ambiguous prose cite bounces at insert",
+	);
+	rmSync(fx2.tmp, { recursive: true, force: true });
+	console.log("OK — P4 update content patches: replace + re-render + re-validate; unknown keys hard-error; prose cites gated at add.");
+}
+
 // ---- Phase 5: store diff (drift classification) -----------------------------
 
 /** A .md with the store:drift region + a seeded review.json (findings carry fp). */

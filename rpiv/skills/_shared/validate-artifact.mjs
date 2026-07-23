@@ -98,9 +98,12 @@ export function validateArtifact(artifactPath, root, { verifyHash = true, finali
 	// 2. Unfilled template tokens in prose. `$`-prefixed braces are JS template-literal
 	// syntax quoted from source code (a nested backtick inside an inline code span breaks
 	// stripCode's span regex and leaks e.g. `${region}` into "prose") — artifact
-	// placeholders are never $-prefixed, so exclude them.
+	// placeholders are never $-prefixed, so exclude them. Slash-adjacent braces are URL /
+	// route templates quoted from the code under review (`/v1/databases/{id}/query`), not
+	// artifact placeholders — exclude them too (zero-false-positive beats recall here;
+	// a genuinely unfilled path token is nearly always inside a code span anyway).
 	if (finalizingOrReady) {
-		const tokens = prose.match(/(?<!\$)\{[a-zA-Z][^{}\n]{0,50}\}/g) ?? [];
+		const tokens = prose.match(/(?<![$/])\{[a-zA-Z][^{}\n]{0,50}\}(?!\/)/g) ?? [];
 		for (const t of new Set(tokens)) errors.push(`unfilled template token in prose: ${t}`);
 	}
 

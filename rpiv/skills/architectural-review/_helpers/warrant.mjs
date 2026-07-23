@@ -106,18 +106,26 @@ function feLive() {
   });
 }
 
+// write-sites source: semantic when it RESOLVED anything, else the regex block.
+// Presence of the semantic HEADER is not enough (dogfooding #6): semantic.mjs always
+// emits the header, so on a target whose table names it cannot resolve (unsupported
+// db client, non-literal names) the empty block superseded the regex rows and the
+// gate read "no persistence surface" while `write-sites` plainly showed table:/rpc:
+// rows — S and P went dead on a target with a real db surface. An empty semantic
+// block therefore falls back to the metric rows; a NON-empty one still supersedes.
+const writeSiteRows = () =>
+  rows("write-sites-semantic").length > 0 ? rows("write-sites-semantic") : rows("write-sites");
+
 function sLive() {
   // second seed: a System-Model entity with no owner is an ownership defect even at writers=1
   if (toNum(flags["owner-none"]) >= 1) return true;
-  const src = present("write-sites-semantic") ? "write-sites-semantic" : "write-sites";
-  return rows(src).some((r) => toNum(field(r, /writers=(\d+)/)) >= 2); // writers=1 is clean by design
+  return writeSiteRows().some((r) => toNum(field(r, /writers=(\d+)/)) >= 2); // writers=1 is clean by design
 }
 
 function pLive() {
   // P is db-gated: it fires only when the target HAS persistence write-sites
   // (table:/rpc: rows, metric or semantic source) — no db surface, nothing to review.
-  const src = present("write-sites-semantic") ? "write-sites-semantic" : "write-sites";
-  return rows(src).some((r) => /^(table|rpc):/.test(r));
+  return writeSiteRows().some((r) => /^(table|rpc):/.test(r));
 }
 
 function aLive() {
