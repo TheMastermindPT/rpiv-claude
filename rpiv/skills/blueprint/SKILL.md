@@ -142,6 +142,8 @@ After the design summary is confirmed, decompose the feature into vertical slice
      ### TDD Standard (standing)
      Every behavior-changing phase MUST carry a `### Test Contract:` with at least one **Behavior** whose **Oracle** pins exact input -> expected-output values (the strongest checkable oracle; any weakening justified inline) and an **Expected red** reason. Non-behavioral phases/items carry explicit `TDD-exempt` markers with reasons. Recorded as a commitment so slice-verifier's commitments audit flags violations per slice.
      ```
+
+     **Standing decisions (opt-in promotion):** any decision here that must outlive this feature and bind future work — a testing standard, a boundary rule, a technology choice — can be promoted to the repo's decision ledger. To opt in, add three lines to its `###` entry: `scope: standing`, `key: <kebab-case>`, and `rule: <one sentence>` (the `rule` is what lands in the CLAUDE.md Standing Decisions block). Default is feature-local — no tag, stays in this artifact only. The TDD entry above is enforced structurally by slice-verifier's commitments audit and is NOT promoted — do not tag it. Full protocol: `${CLAUDE_PLUGIN_ROOT}/skills/_shared/decision-ledger.md`.
    - **## Phase N: {slice name}** (one per slice, in slice order):
      - `### Overview`: one sentence describing what this phase delivers + parallelism note from `Depends on:` (e.g., "Depends on Phase 1; can run in parallel with Phase 3.").
      - `### Changes Required:` — one `#### N. path/to/file.ext` subsection per file in this slice. Each subsection has `**File**: path`, `**Changes**: {NEW | MODIFY — summary}`, and an empty code fence (filled in Step 6.4). NEW files get full implementation. MODIFY files get only modified/added code — no "Current" block, the original is on disk.
@@ -323,7 +325,7 @@ Run the shared reviewer-dispatch protocol in `${CLAUDE_PLUGIN_ROOT}/skills/_shar
    **Order and batching**: blockers sequentially (resolution may invalidate later rows). Concerns and suggestions: batch up to 4 independent rows per `ask_user_question` call (Step 4's rule). Independent = different files / different intents AND neither recommendation references the other's location; otherwise sequential.
 
 2. **Promote standing decisions, lint, then flip status**: once every row has a `resolution` (or the table is empty per Step 8's no-findings / failure-fallback path):
-   - **Standing decisions**: apply the decision-ledger protocol (`${CLAUDE_PLUGIN_ROOT}/skills/_shared/decision-ledger.md`) for any `## Decisions` entry tagged `scope: standing`, then regenerate the CLAUDE.md Standing Decisions block. Skip when nothing is tagged (the standing TDD decision is already in the ledger — do not re-tag it).
+   - **Standing decisions**: apply the decision-ledger protocol (`${CLAUDE_PLUGIN_ROOT}/skills/_shared/decision-ledger.md`) for any `## Decisions` entry tagged `scope: standing`, then regenerate the CLAUDE.md Standing Decisions block. Skip when nothing is tagged (the standing TDD decision is enforced structurally, never promoted — do not tag it).
    - **Finalization lint**: run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <the plan artifact path> --finalizing --stamp`. If it exits non-zero, FIX the errors and re-run — never flip on a failing lint. On success it stamps `content_hash:` (last body-affecting action).
    - **Flip**: Edit frontmatter `status: in-review` → `status: ready`. Artifact is now implement-ready.
 

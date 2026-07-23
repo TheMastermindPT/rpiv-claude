@@ -9,10 +9,19 @@ artifact's `## Decisions` and are NOT promoted. Promotion is **opt-in by tag** �
 
 ## Step 1 — find the standing decisions
 
-Scan the artifact's `## Decisions` for entries that carry a `scope: standing` line. If there are
-none, do nothing and continue finalization. (The standing TDD decision that `design`/`blueprint`
-include verbatim is already in the ledger as `.rpiv/decisions/tdd-standard.md` — do NOT tag or
-re-write it. Only tag genuinely new standing decisions.)
+Scan the artifact's `## Decisions` for entries that carry a `scope: standing` line, then:
+
+- **One or more tagged** — continue to Step 2 for each.
+- **None tagged, but feature-local decisions exist** — print exactly ONE non-blocking line so the
+  opt-in stays visible, then continue finalization:
+  `Standing decisions: N recorded feature-local, none promoted. If any must bind future work, tag it (scope: standing + key: + rule:) before the status flip.`
+  Do NOT ask a question and do NOT block — promotion is opt-in, never auto-prompted.
+- **No decisions at all** — do nothing and continue.
+
+The standing TDD decision that `design`/`blueprint` include verbatim (`### TDD Standard (standing)`)
+is enforced structurally by the pipeline — slice-verifier's commitments audit flags per-slice
+violations — and is deliberately NOT promoted to the ledger. Do NOT tag, promote, or re-write it.
+Only tag genuinely new standing decisions.
 
 Each `scope: standing` entry MUST also carry:
 

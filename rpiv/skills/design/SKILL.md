@@ -141,6 +141,8 @@ After the design summary is confirmed, decompose the feature into vertical slice
      ### TDD Standard (standing)
      Every behavior-changing slice MUST carry a `#### Test Contract:` with at least one **Behavior** whose **Oracle** pins exact input -> expected-output values (the strongest checkable oracle; any weakening justified inline) and an **Expected red** reason. Non-behavioral slices/items carry explicit `TDD-exempt` markers with reasons. Recorded as a commitment so slice-verifier's commitments audit flags violations per slice.
      ```
+
+     **Standing decisions (opt-in promotion):** any decision here that must outlive this feature and bind future work — a testing standard, a boundary rule, a technology choice — can be promoted to the repo's decision ledger. To opt in, add three lines to its `###` entry: `scope: standing`, `key: <kebab-case>`, and `rule: <one sentence>` (the `rule` is what lands in the CLAUDE.md Standing Decisions block). Default is feature-local — no tag, stays in this artifact only. The TDD entry above is enforced structurally by slice-verifier's commitments audit and is NOT promoted — do not tag it. Full protocol: `${CLAUDE_PLUGIN_ROOT}/skills/_shared/decision-ledger.md`.
    - **## Architecture**: `###` per file with NEW/MODIFY label. Empty code fences in skeleton (filled in Step 6.4). NEW files get full implementation. MODIFY files get only modified/added code — no "Current" block.
    - **## Slices**: `### Slice N: {name}` per slice from the decomposition. In skeleton, each subsection contains a `**Files**:` line listing the slice's file paths AND empty `#### Test Contract:` / `#### Automated Verification:` / `#### Manual Verification:` subsections (filled in Step 6.4 from 6.1's Test Contract + Success Criteria). This section is the contract handed to `/rpiv:plan`: slice ≡ phase 1:1, contracts and criteria pass through unchanged.
    - **## Desired End State**: Usage examples showing the feature in use from a consumer's perspective — concrete code, not prose.
@@ -288,7 +290,7 @@ The artifact was created as a skeleton in Step 5 and filled progressively in Ste
 
 4. **Verify template completeness**: Ensure all sections from the template reference in Step 5 are present and filled. Edit to fix any gaps. Do this BEFORE the stamp in step 6 — the stamp pins the finalized body, so no body edits may follow it.
 
-5. **Promote standing decisions**: apply the decision-ledger protocol (`${CLAUDE_PLUGIN_ROOT}/skills/_shared/decision-ledger.md`) — promote any `## Decisions` entry tagged `scope: standing` to `.rpiv/decisions/<key>.md` and regenerate the CLAUDE.md Standing Decisions block. Skip when nothing is tagged (the standing TDD decision is already in the ledger — do not re-tag it).
+5. **Promote standing decisions**: apply the decision-ledger protocol (`${CLAUDE_PLUGIN_ROOT}/skills/_shared/decision-ledger.md`) — promote any `## Decisions` entry tagged `scope: standing` to `.rpiv/decisions/<key>.md` and regenerate the CLAUDE.md Standing Decisions block. Skip when nothing is tagged (the standing TDD decision is enforced structurally, never promoted — do not tag it).
 
 6. **Finalization lint, then flip status**: run
    `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <the design artifact path> --finalizing --stamp`.
