@@ -147,4 +147,26 @@ const EDGES = {
 	assert.match(run([]), /note: {10}graph file unreadable: \(missing --graph\)/);
 }
 
-console.log("OK (stability) — Martin folder metrics + SDP threshold + Tarjan cycles (2- and 3-cycles, path order) + churn x afferent hubs + both flavors + target filter + degradation.");
+// ── Case 8: module-order — Kahn levels, entry points first, deterministic ────
+{
+	const graph = write("graph.json", depcruiseJson(EDGES));
+	const rows = blockOf(run([`--graph=${graph}`]), "module-order");
+	assert.equal(rows.length, 12, `every module gets an order row: ${rows}`);
+	assert.ok(rows.includes("ui/a.ts\tlevel=0\tin=0\tout=2"), `entry point at level 0: ${rows}`);
+	assert.ok(rows.includes("ui/b.ts\tlevel=0\tin=0\tout=1"), "second entry point at level 0");
+	assert.ok(rows.includes("core/x.ts\tlevel=1\tin=2\tout=1"), "consumer-of-entries at level 1 with distinct-importer count");
+	assert.ok(rows.includes("flux/f.ts\tlevel=2\tin=1\tout=2"), "next hop at level 2");
+	assert.ok(rows.includes("helpers/h1.ts\tlevel=3\tin=1\tout=0"), "deepest vocabulary at the last level");
+	const idx = (frag) => rows.findIndex((r) => r.startsWith(frag));
+	assert.ok(idx("ui/a.ts") < idx("core/x.ts") && idx("core/x.ts") < idx("flux/f.ts") && idx("flux/f.ts") < idx("helpers/h1.ts"),
+		"rows are level-grouped: public surface before deeper vocabulary");
+	// Cycle members still get rows (deterministic break), and the block is stable across runs.
+	assert.ok(rows.some((r) => r.startsWith("cyc/p.ts\t")) && rows.some((r) => r.startsWith("cyc2/r.ts\t")), "cycle members present");
+	assert.deepEqual(blockOf(run([`--graph=${graph}`]), "module-order"), rows, "deterministic across runs");
+
+	const scoped = blockOf(run([`--graph=${graph}`, "--target=core"]), "module-order");
+	assert.deepEqual(scoped, ["core/x.ts\tlevel=1\tin=2\tout=1", "core/y.ts\tlevel=1\tin=1\tout=0"],
+		"--target filters rows but levels/degrees stay computed on the full graph");
+}
+
+console.log("OK (stability) — Martin folder metrics + SDP threshold + Tarjan cycles (2- and 3-cycles, path order) + churn x afferent hubs + module-order Kahn levels + both flavors + target filter + degradation.");

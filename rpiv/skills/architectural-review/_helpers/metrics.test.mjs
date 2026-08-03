@@ -842,3 +842,40 @@ try {
 } finally {
 	rmSync(repo5, { recursive: true, force: true });
 }
+
+// ── complexity: approximate branch-point context block ───────────────────────
+const repo6 = mkdtempSync(join(tmpdir(), "metrics-cx-"));
+try {
+	execFileSync("git", ["init", "-q"], { cwd: repo6 });
+	execFileSync("git", ["config", "user.email", "t@t.test"], { cwd: repo6 });
+	execFileSync("git", ["config", "user.name", "t"], { cwd: repo6 });
+	writeFileSync(
+		join(repo6, "calc.ts"),
+		[
+			"export function calc(x) {",
+			"\tif (x > 0 && x < 10) return 1;",
+			"\tif (x === 2 || x === 3) return 2;",
+			"\tif (x > 100) return 3;",
+			"\tfor (let i = 0; i < x; i += 1) {",
+			"\t\twhile (x > 0 && i < 3) { x -= 1; }",
+			"\t}",
+			"\tswitch (x) {",
+			"\t\tcase 1: return 4;",
+			"\t}",
+			"\ttry { return 5; } catch { return 6; }",
+			"}",
+			"",
+		].join("\n"),
+	);
+	writeFileSync(join(repo6, "flat.ts"), "export const K = 1;\n");
+	execFileSync("git", ["add", "-A"], { cwd: repo6 });
+	execFileSync("git", ["commit", "-q", "-m", "cx"], { cwd: repo6 });
+	const out = execFileSync("node", [METRICS, "."], { cwd: repo6, encoding: "utf-8" });
+	const cx = extractBlock(out, "complexity");
+	assert.equal(cx.length, 1, `only the branchy file gets a complexity row (flat.ts has 0 decisions)\n${out}`);
+	assert.match(cx[0], /^calc\.ts\tdecisions=10\tper100=\d+(\.\d)?\tloc=\d+$/,
+		"3 if + for + while + case + catch (7 kw) + 2 && + 1 || = decisions=10; switch itself uncounted");
+	console.log("OK (complexity) — branch-point context block: keyword + operator count, zero-decision files omitted.");
+} finally {
+	rmSync(repo6, { recursive: true, force: true });
+}

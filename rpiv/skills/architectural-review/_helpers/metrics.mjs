@@ -20,6 +20,7 @@
 //   ---size-outliers---     path \t loc \t x_median   (loc > max(3*median, 1.5*p90); raw LOC context only)
 //   ---godfile-candidates--- path \t loc \t x_median \t cats=N \t coh=R \t reason   (the G gate: union of mixing + low-cohesion size)
 //   ---low-cohesion---      path \t coh=R \t syms=N \t islands=K   (Lc lens: disjoint responsibilities at any size; excludes G candidates)
+//   ---complexity---        path \t decisions=N \t per100=R \t loc=N   (approximate branch-point count: if/for/while/case/catch + &&/||; top files only. CONTEXT/severity anchor for G/Lc — never a gate, never a finding by itself; JS/TS files only this iteration)
 //   ---feature-envy-candidates--- path \t envies=<module> \t ext=N \t own=M \t ratio=R   (Fe pre-signal: file leans on one internal module > its own symbols)
 //   ---churn-hotspots---    path \t commits            (commits in churn window, desc)
 //   ---export-usage---      path \t exports=N \t inbound=M   (speculative-generality signal)
@@ -181,6 +182,7 @@ const result = {
 	featureEnvy: [],
 	catchSwallows: [],
 	busFactor: [],
+	complexity: [],
 };
 
 const argvTargets = process.argv
@@ -530,7 +532,17 @@ for (const f of sourceFiles) {
 	if (envy) result.featureEnvy.push({ f, ...envy });
 	const swallows = countSwallows(text);
 	if (swallows > 0) result.catchSwallows.push({ f, swallows });
+	// Approximate branch-point count (cyclomatic-ish; strings/comments included by
+	// design — same lossy tier as the other regex signals). Context anchor only.
+	const decisions =
+		(text.match(/\b(if|for|while|case|catch)\b/g)?.length ?? 0) + (text.match(/&&|\|\|/g)?.length ?? 0);
+	const flines = text.split("\n").length;
+	if (decisions > 0) {
+		result.complexity.push({ f, decisions, per100: (decisions / Math.max(flines, 1)) * 100, loc: flines });
+	}
 }
+result.complexity.sort((a, b) => b.decisions - a.decisions || a.f.localeCompare(b.f));
+result.complexity = result.complexity.slice(0, 15);
 result.catchSwallows.sort((a, b) => b.swallows - a.swallows || a.f.localeCompare(b.f));
 result.featureEnvy.sort((a, b) => b.ratio - a.ratio || b.ext - a.ext);
 // Fe pre-filter: feature-envy requires the envied module to expose BEHAVIOR to misplace.
@@ -1057,6 +1069,7 @@ function emit() {
 	block("size-outliers", result.sizeOutliers.map((r) => `${em(r.f)}\t${r.loc}\t${r.x}x`));
 	block("godfile-candidates", result.godfileCandidates.map((r) => `${em(r.f)}\t${r.loc}\t${r.x}x\tcats=${r.cats}\tcoh=${r.coh === null ? "?" : r.coh.toFixed(2)}\t${r.reason}`));
 	block("low-cohesion", result.lowCohesion.map((r) => `${em(r.f)}\tcoh=${r.coh.toFixed(2)}\tsyms=${r.syms}\tislands=${r.islands}`));
+	block("complexity", result.complexity.map((r) => `${em(r.f)}\tdecisions=${r.decisions}\tper100=${r.per100.toFixed(1)}\tloc=${r.loc}`));
 	block("feature-envy-candidates", result.featureEnvy.map((r) => `${em(r.f)}\tenvies=${em(r.module)}\text=${r.ext}\town=${r.own}\tratio=${r.ratio.toFixed(2)}`));
 	block("churn-hotspots", result.churnHotspots.map((r) => `${em(r.f)}\t${r.c}`));
 	block("export-usage", result.exportUsage.map((r) => `${em(r.f)}\texports=${r.exports}\tinbound=${r.inbound === null ? "?" : r.inbound}`));

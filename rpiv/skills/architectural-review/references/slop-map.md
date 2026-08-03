@@ -8,6 +8,7 @@ Metrics: median {loc_median} LOC, p90 {loc_p90}
 Size outliers: {path  loc  x_median rows — raw LOC context}
 God-file candidates (G gate): {path  loc  x_median  cats  coh  reason rows from ---godfile-candidates---}
 Low-cohesion (Lc): {path  coh  syms  islands rows from ---low-cohesion--- — disjoint responsibilities, any size}
+Complexity (context): {path  decisions  per100  loc rows from ---complexity--- — severity anchor for G/Lc, NOT a gate}
 Export-usage flags: {path  exports  inbound rows where inbound is 0 or low; PLUS dead-exports-semantic rows when semantic.mjs ran}
 Test-density flags: {path  cases  asserts  ratio rows}
 Dup-candidates: {jscpd clones when present = AUTHORITATIVE; ---dup-candidates--- = corroboration + structural-Type-2 supplement}
