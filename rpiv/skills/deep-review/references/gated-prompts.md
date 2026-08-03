@@ -79,17 +79,22 @@
   ```
   Look up CVEs / GitHub Advisories / OSS Index entries for the target versions. Return LINKS. Per vulnerability: severity (Critical/High/Moderate/Low), affected range, whether bumped-to version is fixed.
 
+  Advisory-gate rows (deterministic OSV/audit lookup — when present these are the KNOWN set):
+  {folded Advisory-gate ids | "gate unavailable — full discovery is yours"}
+
+  When gate rows are present: VERIFY each id (link, affected range, bumped-to fixed?) and search only for advisories newer than or missed by the database — do NOT re-discover the folded set from scratch.
+
   Dependencies:
   {name@version per line — orchestrator-extracted}
   ```
 
-## Predicate-Trace (Step 4a — gate: `HasGatingPredicate` AND ≥2 Predicate-set coherence rows; agent: `codebase-analyzer`)
+## Predicate-Trace (Step 4a — gate: `HasGatingPredicate` AND ≥2 Predicate-set coherence rows; agent: `diff-analyst`)
 
   ```
   Coherence rows (Quality — Predicate-set coherence): {paste verbatim}
   Gating predicates in diff: {`file:line` list}
 
-  Per predicate, return: `predicate file:line | inputs | promise (what TRUE/matching branch implies) | consumer file:line | consumer filter | fulfils? | gap`.
+  Emit ONE review-scope table (your Step-4 contract — a named section at review scope, not per-file tables), heading `### Predicate-Trace`, one row per predicate: `predicate file:line | inputs | promise (what TRUE/matching branch implies) | consumer file:line | consumer filter | fulfils? | gap`.
 
   Flag:
   - *False promise* — matching branch depends on a consumer/filter elsewhere that excludes this entity's source/type/state.

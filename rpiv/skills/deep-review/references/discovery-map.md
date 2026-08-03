@@ -23,8 +23,13 @@ Outbound deps: {integration-scanner}
 Wiring/config: {integration-scanner}
 Peer mirrors: {peer-mirror agent output verbatim — Missing/Diverged rows only; Mirrored and Intentionally-absent rows are summarised as counts}
 **Deterministic gates (Pre-Wave-1, authoritative):**
+Typecheck gate: {N errors citing ChangedFiles (🔴, file:line) + M outside-diff (🟡 count)} | unavailable — lens fallback active
+Lint gate ({biome|eslint}): {N errors (M warnings) on changed files — file:line — rule} | unavailable — lens fallback active
 Architecture gate (depcruiser): {depcruise violations intersecting ChangedFiles — E errors, W warnings, file:line}
 Knip audit: {N dead exports, M dead files touched by this diff, K dangling imports — knip report}
+Advisory gate (osv/npm-audit): {GHSA/CVE ids on ADDED/BUMPED-TO deps — severity} | only when ManifestChanged; unavailable — CVE lens keeps full discovery
+Duplication gate (jscpd): {N clones touching the diff — file:line ↔ file:line pairs — CANDIDATES} | omitted when jscpd absent
+Companion candidates (review-range): {file — driver=changed file — support/conf rows — CANDIDATES, never findings} | omitted when the helper block is empty
 Architectural smells (ast-grep): {N smell matches — sg output} | omitted when no matches
 SQLFluff gate (migration changes): {N lint violations on changed migrations — sqlfluff output} | omitted when no migration changes
 Security sink detection (ast-grep): {N structural sink matches — sg output} | omitted when no matches
