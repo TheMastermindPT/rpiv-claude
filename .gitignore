@@ -3,3 +3,12 @@
 
 # eval workspace (dev artifacts: run outputs, benchmarks, viewers, audits — not plugin source)
 skill-evals/
+
+# Dependencies and generated tooling output.
+# No leading slash, so each pattern matches a directory of that name at ANY depth — this
+# covers rpiv/ and the repo root alike. rpiv/.gitignore repeats them deliberately: rpiv/
+# ships as a standalone plugin and has to stay self-contained if it is ever extracted.
+node_modules/
+coverage/
+reports/
+.stryker-tmp/
