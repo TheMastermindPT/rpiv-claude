@@ -37,6 +37,30 @@ assert.equal(a1.fp, c1.fp, "whitespace change → same fingerprint");
 const [d1] = fingerprint([{ id: "5", lens: "G", quotedLines: ["const y = 2;"], symbol: "GodFile" }]);
 assert.notEqual(a1.fp, d1.fp, "different code → different fingerprint");
 
+// 4b. Normalisation v2 — language-aware comment grammar via optional `ext`.
+{
+	// Python floor division is NOT a comment: // 2 vs // 3 must hash DIFFERENTLY.
+	const [py2] = fingerprint([{ id: "p1", lens: "S", quotedLines: ["a = b // 2"], symbol: "calc", ext: "py" }]);
+	const [py3] = fingerprint([{ id: "p2", lens: "S", quotedLines: ["a = b // 3"], symbol: "calc", ext: "py" }]);
+	assert.notEqual(py2.fp, py3.fp, "ext:py — floor division preserved (the v1 false-identical bug)");
+	// Python's own comment grammar (#) IS stripped.
+	const [pyc] = fingerprint([{ id: "p3", lens: "S", quotedLines: ["a = b // 2  # halve"], symbol: "calc", ext: "py" }]);
+	assert.equal(py2.fp, pyc.fp, "ext:py — # comment stripped");
+	// SQL -- comments stripped; unknown ext strips nothing.
+	const [sq1] = fingerprint([{ id: "q1", lens: "P", quotedLines: ["SELECT a FROM t -- note"], symbol: null, ext: "sql" }]);
+	const [sq2] = fingerprint([{ id: "q2", lens: "P", quotedLines: ["SELECT a FROM t"], symbol: null, ext: "sql" }]);
+	assert.equal(sq1.fp, sq2.fp, "ext:sql — -- comment stripped");
+	const [md1] = fingerprint([{ id: "m1", lens: "G", quotedLines: ["a // b"], symbol: null, ext: "md" }]);
+	const [md2] = fingerprint([{ id: "m2", lens: "G", quotedLines: ["a"], symbol: null, ext: "md" }]);
+	assert.notEqual(md1.fp, md2.fp, "unknown ext — nothing stripped");
+	// Missing ext keeps the exact v1 behavior (// stripped) — stored JS/TS fps must not shift.
+	const [v1a] = fingerprint([{ id: "v1", lens: "G", quotedLines: ["const x = 1; // note"], symbol: "GodFile" }]);
+	assert.equal(v1a.fp, a1.fp, "missing ext — v1-compatible // strip (no stored-fp drift)");
+	// ext steers grammar only — it is NOT hashed: same line, same-grammar languages agree.
+	const [tsx] = fingerprint([{ id: "x1", lens: "G", quotedLines: ["const x = 1;"], symbol: "GodFile", ext: "ts" }]);
+	assert.equal(tsx.fp, a1.fp, "ext not part of the pre-image");
+}
+
 // 5. Different lens → different fingerprint
 const [e1] = fingerprint([{ id: "6", lens: "Lc", quotedLines: ["const x = 1;"], symbol: "GodFile" }]);
 assert.notEqual(a1.fp, e1.fp, "different lens → different fingerprint");

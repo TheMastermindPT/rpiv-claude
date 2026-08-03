@@ -8,8 +8,9 @@
  * different file or line → same fingerprint.  Different code → different
  * fingerprint.
  *
- * Usage (one-off):
- *   echo '{"lens":"D","quoted":"const x = 1","symbol":"validate"}' \
+ * Usage (one-off; `ext` is the optional evidence-path extension steering the
+ * comment grammar — omit it for v1-compatible `//` stripping):
+ *   echo '{"lens":"D","quoted":"const x = 1","symbol":"validate","ext":"ts"}' \
  *     | node fingerprint.mjs
  *
  * Usage (batch — one JSON object per line):
@@ -22,6 +23,16 @@
  * caller's "one output line per input line" reconciliation stays exact, and the
  * bad finding is visible (filter on `fp === null` before matching). All human
  * diagnostics and the run summary go to stderr — stdout carries data only.
+ *
+ * NORMALISATION v2 (language-aware): comment stripping now follows the finding's
+ * language via the OPTIONAL `ext` input field (the evidence path's extension,
+ * supplied by store.mjs). v1 stripped `//` unconditionally — JS-only grammar that
+ * destroyed Python floor division (`a = b // 2` and `a = b // 3` both normalised
+ * to `a = b`: false-identical fingerprints in drift matching). Now: slash-family
+ * exts strip `//`, hash-family (py/rb/sh/yaml/...) strip `#`, dash-family
+ * (sql/lua) strip `--`, unknown exts strip NOTHING, and a MISSING ext keeps the
+ * exact v1 behavior — so fingerprints already stored for JS/TS findings do not
+ * shift and no false mass-drift occurs.
  */
 
 import { createHash } from "node:crypto";
@@ -31,20 +42,38 @@ import { createInterface } from "node:readline";
 // Normalisation — strip whitespace / formatting that does not change meaning
 // ---------------------------------------------------------------------------
 
+// Line-comment grammar by extension (normalisation v2, header). A missing ext
+// keeps v1's unconditional `//` strip so already-stored JS/TS fps do not shift.
+const SLASH_EXT = new Set(["js", "jsx", "ts", "tsx", "mjs", "cjs", "cts", "mts", "go", "java", "kt", "kts", "cs", "swift", "scala", "rs"]);
+const HASH_EXT = new Set(["py", "rb", "ex", "exs", "sh", "bash", "zsh", "yaml", "yml", "toml", "r", "pl"]);
+const DASH_EXT = new Set(["sql", "lua"]);
+
+function stripComment(s, ext) {
+  const e = ext == null || ext === "" ? null : String(ext).toLowerCase().replace(/^\./, "");
+  const slash = e === null || SLASH_EXT.has(e) || e === "php";
+  const hash = e !== null && (HASH_EXT.has(e) || e === "php");
+  const dash = e !== null && DASH_EXT.has(e);
+  let out = s;
+  if (slash) out = out.replace(/(?<!:)\/\/.*$/, ""); // not URLs (://)
+  if (hash) out = out.replace(/#.*$/, "");
+  if (dash) out = out.replace(/--.*$/, "");
+  return out; // unknown ext: strip nothing — better no comment-invariance than a wrong grammar
+}
+
 /**
  * Collapse a quoted code line into its "structural skeleton":
  *  - trim leading/trailing whitespace
  *  - collapse runs of whitespace to a single space
- *  - remove JS/TS line comments (// …) — they are noise that varies by file
+ *  - remove line comments per the finding's LANGUAGE (`ext`) — they are noise
+ *    that varies by file; see the v2 note in the header
  *
  * This is LOSSY enough to survive comment changes and re-indentation, but
  * PRESERVES identifier / operator / literal structure so a genuinely changed
  * line produces a different hash.
  */
-function normalise(line) {
+function normalise(line, ext) {
   let s = line.trim();
-  // strip // line comments (but not URLs)
-  s = s.replace(/(?<!:)\/\/.*$/, "");
+  s = stripComment(s, ext);
   // collapse whitespace
   s = s.replace(/\s+/g, " ");
   // trim whitespace around structural tokens where it never changes meaning
@@ -61,10 +90,12 @@ function normalise(line) {
  * Build the raw pre-image that goes into the hash.
  * Order: lens_class, normalised quoted evidence, canonical symbol name.
  */
-function preImage(lens, quotedLines, symbol) {
+function preImage(lens, quotedLines, symbol, ext) {
   // quotedLines may be a single string or an array (multi-line evidence)
   const lines = Array.isArray(quotedLines) ? quotedLines : [quotedLines];
-  const normLines = lines.map(normalise).filter(Boolean);
+  // ext steers comment-grammar only — it is NOT part of the pre-image, so the
+  // same line in two same-grammar languages hashes identically.
+  const normLines = lines.map((l) => normalise(l, ext)).filter(Boolean);
   // Use a sentinel for nil symbols so two symbol-less findings don't collide
   const sym = symbol == null ? "<no-symbol>" : symbol;
   return [lens, ...normLines, sym].join("\x00");
@@ -76,7 +107,7 @@ function preImage(lens, quotedLines, symbol) {
  * or null when the finding is well-formed. `symbol` is intentionally optional
  * (co-change pairs and other symbol-less findings use the nil sentinel).
  */
-function validate(lens, quoted) {
+function validate(lens, quoted, ext) {
   if (typeof lens !== "string" || !lens.trim()) return "missing or empty 'lens'";
   if (quoted == null) return "missing 'quoted'/'quotedLines'";
   const lines = Array.isArray(quoted) ? quoted : [quoted];
@@ -84,12 +115,12 @@ function validate(lens, quoted) {
   if (lines.some((l) => typeof l !== "string")) {
     return "'quoted' must be a string or an array of strings";
   }
-  const hasEvidence = lines.map(normalise).some(Boolean);
+  const hasEvidence = lines.map((l) => normalise(l, ext)).some(Boolean);
   return hasEvidence ? null : "'quoted' evidence is empty after normalisation";
 }
 
-function fingerprint(lens, quotedLines, symbol) {
-  const raw = preImage(lens, quotedLines, symbol);
+function fingerprint(lens, quotedLines, symbol, ext) {
+  const raw = preImage(lens, quotedLines, symbol, ext);
   // 16 hex chars (64 bits) — collision risk is negligible for the expected
   // scale of per-project review history (~10³–10⁴ fingerprints).
   return createHash("sha256").update(raw).digest("hex").slice(0, 16);
@@ -123,7 +154,7 @@ async function main() {
     }
 
     const quoted = obj.quoted ?? obj.quotedLines;
-    const err = validate(obj.lens, quoted);
+    const err = validate(obj.lens, quoted, obj.ext);
     if (err) {
       bad++;
       process.stderr.write(`fingerprint: invalid finding ${obj.id ?? "<no-id>"}: ${err}\n`);
@@ -137,7 +168,7 @@ async function main() {
     process.stdout.write(
       JSON.stringify({
         id: obj.id ?? null,
-        fp: fingerprint(obj.lens, quoted, obj.symbol),
+        fp: fingerprint(obj.lens, quoted, obj.symbol, obj.ext),
         lens: obj.lens,
         symbol: obj.symbol ?? null,
       }) + "\n"

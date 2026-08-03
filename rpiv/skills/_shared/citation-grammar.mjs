@@ -21,9 +21,21 @@
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-/** `path/to/file.ext:line-end` — group 1 token, group 2 line, group 3 range end. */
-export const CITE_RE =
-	/([\w@$()./\\-]+\.(?:tsx?|mjs|cjs|jsx?|sql|css|scss|json|ya?ml|toml|md))(?::(\d+)(?:-(\d+))?)?/g;
+import { CITE_EXT } from "./source-vocab.mjs";
+
+/** `path/to/file.ext:line-end` — group 1 token, group 2 line, group 3 range end.
+ * Extension alternation is built from the OWNED language-open vocabulary
+ * (source-vocab.mjs CITE_EXT) — the old inline JS/web-only whitelist made the
+ * ambiguity gates silently no-op on Python/Go/etc. cites. Longest-first ordering
+ * is load-bearing: with `ts` before `tsx` the alternation would capture
+ * `file.tsx` as `file.ts`. */
+const CITE_EXT_ALT = [...CITE_EXT]
+	.sort((a, b) => b.length - a.length || a.localeCompare(b))
+	.join("|");
+export const CITE_RE = new RegExp(
+	`([\\w@$()./\\\\-]+\\.(?:${CITE_EXT_ALT}))(?::(\\d+)(?:-(\\d+))?)?`,
+	"g",
+);
 
 /** Tokens that are never codebase citations: artifact self-paths, URLs, glob and
  * template fragments, and the plugin's own helper scripts cited as tool provenance. */

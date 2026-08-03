@@ -5,12 +5,17 @@
 // Detects which external analysis tools are available and which review LENS each one
 // sharpens, classifying each as:
 //   configured              — has a config file or a dedicated npm script
+//   installed               — the binary is present; the tool needs no config to run
+//                             (jscpd, madge, ast-grep, opengrep, rg emit this)
 //   installed-unconfigured  — the binary/dep is present but nothing configures it
 //   absent                  — not installed
 //
-// It NEVER runs the heavy tools and NEVER installs anything — it only reads the
-// manifest + checks for config files / installed binaries. The skill (Step 2) decides
-// what to RUN (with consent) and what to SUGGEST. execFileSync-only; always exit 0.
+// It NEVER runs the heavy analysis tools and NEVER installs anything — it only reads
+// the manifest + checks for config files / installed binaries (note: binary detection
+// version-checks candidate executables, including repo-local ones like bin/atlas — a
+// probe of an untrusted repo does execute that repo's binary). The skill (Step 2)
+// decides what to RUN (with consent) and what to SUGGEST. execFileSync-only; always
+// exit 0.
 //
 // Output:
 //   root:      <repo-relative toplevel>
