@@ -21,6 +21,8 @@ import { fileURLToPath } from "node:url";
 
 import { basenameCounts, citesIn, fileIndex, isAmbiguous, resolveInIndex } from "./citation-grammar.mjs";
 import { splitFrontmatter } from "./frontmatter.mjs";
+import { isMain } from "./is-main.mjs";
+import { extOf } from "./source-vocab.mjs";
 import { stampArtifact, validateArtifact } from "./validate-artifact.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -301,11 +303,14 @@ export function checkEvidenceGrounding(finding, root) {
 
 /** Content-hash fingerprint via fingerprint.mjs, honoring the drift-fingerprints
  * 8a assertions: exactly one stdout line per input line, and fp:null is an
- * insert rejection (invalid evidence), surfaced with the helper's own error. */
+ * insert rejection (invalid evidence), surfaced with the helper's own error.
+ * `ext` (primary evidence path's extension) steers the helper's language-aware
+ * comment grammar — see fingerprint.mjs's normalisation-v2 note. */
 export function computeFingerprint(finding) {
 	const quoted = finding.evidence.flatMap((ev) => ev.quoted);
-	const input = JSON.stringify({ id: finding.id, lens: finding.lens, quoted, symbol: finding.symbol ?? null });
-	const res = spawnSync("node", [FINGERPRINT], { input: `${input}\n`, encoding: "utf-8" });
+	const ext = extOf(finding.evidence[0]?.path ?? "");
+	const input = JSON.stringify({ id: finding.id, lens: finding.lens, quoted, symbol: finding.symbol ?? null, ext });
+	const res = spawnSync(process.execPath, [FINGERPRINT], { input: `${input}\n`, encoding: "utf-8" });
 	if (res.error) throw new Error(`fingerprint.mjs failed to spawn: ${res.error.message}`);
 	if (res.status !== 0) throw new Error(`fingerprint.mjs exited ${res.status}: ${(res.stderr ?? "").trim()}`);
 	const lines = (res.stdout ?? "").trim().split("\n").filter(Boolean);
@@ -575,8 +580,38 @@ function ambiguousEvidence(findings, counts) {
 	return out;
 }
 
-/** Finalize gate — every finding triaged, no evidence went ambiguous since insert, body lint
- *  clean. Throws on the first failing gate; runs entirely BEFORE any write. */
+/** Phases-frontmatter gate: the `phases:` array the orchestrator rebuilds by hand must
+ *  agree with the body's `### Phase N — <title>` headings — a wrong hand-rebuild would
+ *  otherwise ship contract-schema-invalid frontmatter through the flip unchecked.
+ *  Deliberately a CONSISTENCY check, not a rebuild: `depends_on`/`effort` are judgment
+ *  fields the template body does not carry in parseable form. Returns an error string
+ *  or null. */
+function phasesGate(text) {
+	const headings = [...text.matchAll(/^### Phase (\d+) — .+$/gm)].map((m) => Number(m[1]));
+	if (headings.length === 0) {
+		return "no `### Phase N — <title>` headings in the body — write the polish plan before finalize";
+	}
+	const fmEnd = text.indexOf("\n---", 3);
+	const fmText = fmEnd < 0 ? "" : text.slice(0, fmEnd);
+	const block = fmText.match(/^phases:\s*\n((?:[ \t]+-[^\n]*\n?)+)/m);
+	if (!block) return "frontmatter `phases:` array missing/empty — rebuild it from the `### Phase` headings";
+	const entryLines = [...block[1].matchAll(/^[ \t]+-.*$/gm)].map((m) => m[0]);
+	const ns = [];
+	for (const line of entryLines) {
+		const n = line.match(/\bn:\s*(\d+)/);
+		if (!n) return `phases entry missing \`n:\` — ${line.trim()}`;
+		if (!/\btitle\s*:/.test(line)) return `phases entry missing \`title:\` — ${line.trim()}`;
+		ns.push(Number(n[1]));
+	}
+	const hs = [...new Set(headings)].sort((a, b) => a - b).join(",");
+	const es = [...new Set(ns)].sort((a, b) => a - b).join(",");
+	if (hs !== es) return `frontmatter phases n-set [${es}] != body \`### Phase\` headings [${hs}]`;
+	return null;
+}
+
+/** Finalize gate — every finding triaged, no evidence went ambiguous since insert, phases
+ *  frontmatter consistent with the body plan, body lint clean. Throws on the first failing
+ *  gate; runs entirely BEFORE any write. */
 function finalizeGate(artifactPath, store, root) {
 	const open = openIds(store);
 	if (open.length > 0) throw new Error(`untriaged findings remain: ${open.join(", ")}`);
@@ -584,6 +619,8 @@ function finalizeGate(artifactPath, store, root) {
 	if (ambiguous.length > 0) {
 		throw new Error(`evidence went ambiguous since insert (repo gained same-named files): ${ambiguous.join("; ")}`);
 	}
+	const phasesErr = phasesGate(readFileSync(artifactPath, "utf-8"));
+	if (phasesErr) throw new Error(`phases gate: ${phasesErr}`);
 	const lint = validateArtifact(artifactPath, root, { finalizing: true, verifyHash: false });
 	if (lint.errors.length > 0) {
 		throw new Error(`body fails the finalization lint (resolve before finalizing):\n${lint.errors.map((e) => `  ${e}`).join("\n")}`);
@@ -919,6 +956,72 @@ export function queryClusters(store) {
 	return { clusters, discovered: clusters.length, unanticipated: clusters.filter((c) => !c.anticipated).length };
 }
 
+// ---- query --plan (Step 11 topo order + base ranking, absorbed) --------------
+
+const PLAN_SEV_W = { High: 3, Med: 2, Low: 1 };
+const PLAN_BLAST_W = { "cross-module": 4, "public-API": 3, "on-disk": 3, internal: 1 };
+const PLAN_EFFORT_W = { S: 1, M: 2, L: 3 };
+
+/** Deterministic Step-11 inputs over the ACCEPTED findings: Kahn topo order along
+ *  `dependsOn` (dependency-free findings first; cycles broken at the smallest id and
+ *  flagged) plus the base `severity x blast-radius / effort` ranking the Risk Rollup
+ *  starts from. Weights are documented in the rendered header. The compound-risk
+ *  promotion rule and the volatile-hub/bus-factor weighting stay judgment-tier —
+ *  they need IX/theme/metrics context the store does not hold. READ-ONLY. */
+export function queryPlan(store) {
+	const active = store.findings.filter((f) => f.status === "accepted");
+	const ids = new Set(active.map((f) => f.id));
+	const rowOf = (f) => {
+		const blast = (Array.isArray(f.blastRadius) ? f.blastRadius : []).reduce(
+			(best, b) => Math.max(best, PLAN_BLAST_W[b] ?? 2),
+			0,
+		);
+		const score = ((PLAN_SEV_W[f.severity] ?? 2) * (blast || 2)) / (PLAN_EFFORT_W[f.effort] ?? 2);
+		return { id: f.id, sev: f.severity, blast: (f.blastRadius ?? []).join("+") || "-", effort: f.effort, score, dependsOn: (f.dependsOn ?? []).filter((d) => ids.has(d)), cycle: false };
+	};
+	const rows = new Map(active.map((f) => [f.id, rowOf(f)]));
+	// Kahn: in-degree = # in-set dependencies not yet emitted; deps land before dependents.
+	const remaining = new Map([...rows.values()].map((r) => [r.id, r.dependsOn.length]));
+	const dependents = new Map();
+	for (const r of rows.values()) {
+		for (const d of r.dependsOn) {
+			if (!dependents.has(d)) dependents.set(d, []);
+			dependents.get(d).push(r.id);
+		}
+	}
+	const sortedIds = [...rows.keys()].sort();
+	const done = new Set();
+	const order = [];
+	while (done.size < rows.size) {
+		let pick = sortedIds.find((id) => !done.has(id) && remaining.get(id) === 0);
+		if (pick == null) {
+			pick = sortedIds.find((id) => !done.has(id)); // dependency cycle — break at the smallest id
+			rows.get(pick).cycle = true;
+		}
+		done.add(pick);
+		order.push(rows.get(pick));
+		for (const dep of dependents.get(pick) ?? []) {
+			if (!done.has(dep)) remaining.set(dep, remaining.get(dep) - 1);
+		}
+	}
+	const ranked = [...order].sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+	return { order, ranked };
+}
+
+/** Render the plan report for stdout. */
+export function renderPlan({ order, ranked }) {
+	const fmt = (r) =>
+		`${r.id}\tsev=${r.sev}\tblast=${r.blast}\teffort=${r.effort}\tscore=${r.score.toFixed(2)}\tdependsOn=${r.dependsOn.join(",") || "-"}${r.cycle ? "\tCYCLE-BROKEN" : ""}`;
+	const lines = [
+		`Plan: ${order.length} accepted finding(s). score = severity(High3/Med2/Low1) x max-blast(cross-module4/public-API3/on-disk3/other2/internal1) / effort(S1/M2/L3).`,
+		"---plan-order---",
+		...order.map(fmt),
+		"---plan-rank---",
+		...ranked.map(fmt),
+	];
+	return `${lines.join("\n")}\n`;
+}
+
 /** Render the cluster report for stdout. */
 export function renderClusters({ clusters, discovered, unanticipated }) {
 	const lines = [`Clusters: ${discovered} discovered (${unanticipated} un-anticipated).`];
@@ -1137,6 +1240,7 @@ const USAGE = [
 	"            REPLACES the stored value and the record re-validates like add)",
 	"       store.mjs diff --artifact <review.md> --prior <prior-review.json> [--root <dir>]",
 	"       store.mjs query --clusters --artifact <review.md>",
+	"       store.mjs query --plan --artifact <review.md>",
 	"       store.mjs render --review --artifact <review.md>   (DR write-once)",
 	"       store.mjs render --artifact <review.md> --layer <n> [--tally]",
 	"       store.mjs finalize --artifact <review.md> --health-score <healthy|drifting|degraded> [--root <dir>]",
@@ -1185,9 +1289,12 @@ function cmdUpdate(ctx) {
 }
 
 function cmdQuery(ctx) {
-	if (!ctx.artifact || !ctx.rest.includes("--clusters")) return usageExit(ctx);
+	const wantClusters = ctx.rest.includes("--clusters");
+	const wantPlan = ctx.rest.includes("--plan");
+	if (!ctx.artifact || (!wantClusters && !wantPlan)) return usageExit(ctx);
 	const { store } = loadStore(resolve(ctx.artifact));
-	ctx.stdout.write(`${renderClusters(queryClusters(store))}\n`);
+	if (wantClusters) ctx.stdout.write(`${renderClusters(queryClusters(store))}\n`);
+	if (wantPlan) ctx.stdout.write(renderPlan(queryPlan(store)));
 	return 0;
 }
 
@@ -1266,11 +1373,4 @@ export function dispatch(argv, { readStdin = () => readFileSync(0, "utf-8"), std
 	}
 }
 
-const isMain = (() => {
-	try {
-		return fileURLToPath(import.meta.url) === resolve(process.argv[1] ?? "");
-	} catch {
-		return false;
-	}
-})();
-if (isMain) process.exit(dispatch(process.argv.slice(2)));
+if (isMain(import.meta.url)) process.exit(dispatch(process.argv.slice(2)));

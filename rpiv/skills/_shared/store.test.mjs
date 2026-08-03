@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { validateFinding, toSarif, initStore, addFinding, updateFinding, diffReview, queryClusters, renderDrFinding, renderReview, renderFinding, renderTally, spliceRegion, sentinelsFor, renderInto, loadStore } from "./store.mjs";
+import { validateFinding, toSarif, initStore, addFinding, updateFinding, diffReview, queryClusters, queryPlan, renderPlan, renderDrFinding, renderReview, renderFinding, renderTally, spliceRegion, sentinelsFor, renderInto, loadStore } from "./store.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const STORE = join(HERE, "store.mjs");
@@ -105,9 +105,11 @@ function mkReviewFixture({ seed = { "lib/x/service.ts": "export const x = 1;\n" 
 		"last_updated: 2026-07-19T00:00:00+0100",
 		"last_updated_by: Test",
 		`health_score: ${health}`,
+		"phases:",
+		'  - { n: 1, title: "Foundation", depends_on: [], blast_radius: internal, effort: S }',
 		"---",
 	].join("\n");
-	writeFileSync(artifact, `${fm}\n${DEFAULT_BODY}`);
+	writeFileSync(artifact, `${fm}\n${DEFAULT_BODY}\n### Phase 1 — Foundation\n\n**Goal:** test fixture phase.\n`);
 	const storePath = artifact.replace(/\.md$/, ".json");
 	// Phase-3 migration: seed the sibling envelope (no lazy-init).
 	writeFileSync(storePath, `${JSON.stringify({ schema: 1, artifact: "review.md", target: "", findings: [] }, null, 2)}\n`);
@@ -1241,6 +1243,64 @@ function mkDrFixture({ findings = [], mdBody = "# DR\n" } = {}) {
 	assert.ok(md.includes("## 🔴 Critical"), "critical section");
 	rmSync(fx.tmp, { recursive: true, force: true });
 	console.log("OK — P8 cli render --review: writes the whole DR .md write-once.");
+}
+
+// ---- Phase 9: query --plan + the finalize phases gate -----------------------
+
+/** Accepted findings with a dependency edge + one deferred (excluded from the plan). */
+const planFindings = () => [
+	{ id: "L0-01", severity: "High", blastRadius: ["cross-module"], effort: "M", status: "accepted", dependsOn: [] },
+	{ id: "L0-02", severity: "Med", blastRadius: ["internal"], effort: "S", status: "accepted", dependsOn: ["L0-01"] },
+	{ id: "L1-01", severity: "Low", blastRadius: ["public-API", "internal"], effort: "L", status: "accepted", dependsOn: [] },
+	{ id: "L1-02", severity: "High", blastRadius: ["internal"], effort: "M", status: "deferred", dependsOn: [] },
+];
+
+// P9.1 topo order (deps before dependents), documented weights, score ranking.
+{
+	const { order, ranked } = queryPlan({ findings: planFindings() });
+	assert.deepEqual(order.map((r) => r.id), ["L0-01", "L0-02", "L1-01"], "deps first; deferred excluded");
+	assert.equal(order[0].score, 6, "High x cross-module / M = 3*4/2 = 6");
+	assert.deepEqual(ranked.map((r) => r.id), ["L0-01", "L0-02", "L1-01"], "ranked score desc");
+	const out = renderPlan({ order, ranked });
+	assert.match(out, /---plan-order---\nL0-01\tsev=High\tblast=cross-module\teffort=M\tscore=6\.00\tdependsOn=-/, "row shape");
+	assert.match(out, /score = severity\(High3\/Med2\/Low1\)/, "weights documented in the header line");
+	console.log("OK — P9 queryPlan: topo order + documented severity x blast / effort ranking.");
+}
+
+// P9.2 a dependsOn cycle is broken at the smallest id and FLAGGED, never silent.
+{
+	const { order } = queryPlan({
+		findings: [
+			{ id: "A-01", severity: "Med", blastRadius: ["internal"], effort: "S", status: "accepted", dependsOn: ["A-02"] },
+			{ id: "A-02", severity: "Med", blastRadius: ["internal"], effort: "S", status: "accepted", dependsOn: ["A-01"] },
+		],
+	});
+	assert.deepEqual(order.map((r) => [r.id, r.cycle]), [["A-01", true], ["A-02", false]], "cycle broken at smallest id, flagged");
+	console.log("OK — P9 queryPlan: dependency cycle broken deterministically with a CYCLE-BROKEN flag.");
+}
+
+// P9.3 finalize phases gate: missing/mismatched phases frontmatter blocks the flip.
+{
+	const fx = mkReviewFixture();
+	writeFileSync(fx.artifact, readFileSync(fx.artifact, "utf-8").replace(/phases:\n(?:[ \t]+-[^\n]*\n)+/, ""));
+	const r = runFinalize(fx, "drifting");
+	assert.equal(r.status, 1, "missing phases frontmatter blocks finalize");
+	assert.match(r.stderr, /phases gate: frontmatter `phases:` array missing/, "names the gate");
+	rmSync(fx.tmp, { recursive: true, force: true });
+
+	const fx2 = mkReviewFixture();
+	writeFileSync(fx2.artifact, readFileSync(fx2.artifact, "utf-8").replace("### Phase 1 — Foundation", "### Phase 2 — Foundation"));
+	const r2 = runFinalize(fx2, "drifting");
+	assert.equal(r2.status, 1, "phases/heading n-set mismatch blocks finalize");
+	assert.match(r2.stderr, /phases n-set \[1\] != body/, "mismatch named with both sets");
+	rmSync(fx2.tmp, { recursive: true, force: true });
+
+	const fx3 = mkReviewFixture();
+	const r3 = spawnSync("node", [STORE, "query", "--plan", "--artifact", fx3.artifact], { encoding: "utf-8" });
+	assert.equal(r3.status, 0, `query --plan exits 0 (stderr: ${r3.stderr})`);
+	assert.match(r3.stdout, /Plan: 0 accepted finding\(s\)/, "empty-store plan renders");
+	rmSync(fx3.tmp, { recursive: true, force: true });
+	console.log("OK — P9 finalize phases gate blocks missing/mismatched phases; query --plan CLI smoke.");
 }
 
 console.log("OK");
