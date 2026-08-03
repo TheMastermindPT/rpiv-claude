@@ -40,10 +40,30 @@ const lcovPath = join(projectRoot, "coverage/lcov.info");
 const files = [];
 let overall = null;
 let reportName = "none";
+// Broken != absent: a report that EXISTS but cannot be parsed must emit a distinct
+// parse-error diagnostic (mutation.mjs's stale-json precedent), never crash and
+// never read as "none"/clean — the T lens trusts this signal.
+let parseError = null;
+const readJson = (p) => {
+	try {
+		return JSON.parse(readFileSync(p, "utf-8"));
+	} catch (e) {
+		parseError = String(e.message ?? e).split("\n")[0];
+		return null;
+	}
+};
+const readText = (p) => {
+	try {
+		return readFileSync(p, "utf-8");
+	} catch (e) {
+		parseError = String(e.message ?? e).split("\n")[0];
+		return null;
+	}
+};
 
 if (existsSync(summaryPath)) {
 	reportName = "coverage-summary.json";
-	const j = JSON.parse(readFileSync(summaryPath, "utf-8"));
+	const j = readJson(summaryPath) ?? {};
 	for (const [k, v] of Object.entries(j)) {
 		if (k === "total") {
 			overall = { stmt: v.statements?.pct ?? 0, branch: v.branches?.pct ?? 0, fn: v.functions?.pct ?? 0 };
@@ -55,7 +75,7 @@ if (existsSync(summaryPath)) {
 	}
 } else if (existsSync(finalPath)) {
 	reportName = "coverage-final.json";
-	const j = JSON.parse(readFileSync(finalPath, "utf-8"));
+	const j = readJson(finalPath) ?? {};
 	for (const [k, v] of Object.entries(j)) {
 		const rp = relOf(k);
 		if (!underAny(rp)) continue;
@@ -72,7 +92,7 @@ if (existsSync(summaryPath)) {
 } else if (existsSync(lcovPath)) {
 	reportName = "lcov.info";
 	let cur = null;
-	for (const line of readFileSync(lcovPath, "utf-8").split(/\r?\n/)) {
+	for (const line of (readText(lcovPath) ?? "").split(/\r?\n/)) {
 		if (line.startsWith("SF:")) cur = { f: relOf(line.slice(3)), lf: 0, lh: 0, bf: 0, bh: 0, ff: 0, fh: 0 };
 		else if (!cur) continue;
 		else if (line.startsWith("LF:")) cur.lf = Number(line.slice(3));
@@ -89,7 +109,7 @@ if (existsSync(summaryPath)) {
 }
 
 files.sort((a, b) => a.branch - b.branch || a.stmt - b.stmt);
-const head = [`coverage_report:  ${reportName}`];
+const head = [`coverage_report:  ${reportName}${parseError ? ` (parse-error: ${parseError})` : ""}`];
 if (overall) head.push(`coverage_overall: stmt=${overall.stmt}% branch=${overall.branch}% fn=${overall.fn}%`);
 process.stdout.write(`${head.join("\n")}\n---coverage---\n${files.map((r) => `${r.f}\tstmt=${r.stmt}%\tbranch=${r.branch}%\tfn=${r.fn}%`).join("\n")}\n`);
 process.exit(0);

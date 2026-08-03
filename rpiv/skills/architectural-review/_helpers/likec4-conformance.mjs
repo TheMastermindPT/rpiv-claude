@@ -24,9 +24,9 @@
 // construction: only code-backed endpoints count.
 
 import { readFileSync } from "node:fs";
+import { parseCliArgs } from "./cli-args.mjs";
 
-const args = {};
-for (let i = 2; i < process.argv.length; i += 2) args[process.argv[i]?.replace(/^--/, "")] = process.argv[i + 1];
+const args = parseCliArgs(process.argv.slice(2));
 const die = (msg) => {
 	process.stdout.write(`c4-conformance: ${msg}\n---c4-summary---\nundocumented=0 aspirational=0 unmapped_files=0 unmapped_elements=0 status=degraded\n`);
 	process.exit(0);

@@ -3,7 +3,7 @@
 // with a genuine cross-cutting finding warrants a selective wave, not a skip.
 // No dependencies; prints "OK" on success.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -314,4 +314,16 @@ const empties = (...labels) => labels.map((l) => block(l)).join("");
 	assert.deepEqual(r.liveLenses, ["Fe"], "marker line has no fields → ignored by predicates");
 }
 
-console.log("OK (warrant) — gymapp counterexample (adaptive-context → selective[Fe]) + A/S/Fe predicates + knip-primary A + semantic supersede + band boundaries.");
+// ── Contract: unreadable --semantic file degrades (exit 0 + stderr diagnostic), never throws ──
+{
+	const r = spawnSync("node", [W, "--files=17", `--semantic=${join(tmp, "does-not-exist.txt")}`], {
+		input: `file_count: 17\n${empties("godfile-candidates", "low-cohesion", "dup-candidates", "export-usage", "write-sites", "co-change-groups", "test-density", "feature-envy-candidates")}`,
+		encoding: "utf-8",
+	});
+	assert.equal(r.status, 0, `unreadable --semantic must not crash (stderr: ${r.stderr})`);
+	assert.match(r.stderr, /cannot read --semantic file/, "diagnostic names the degrade");
+	const j = JSON.parse(r.stdout.trim());
+	assert.equal(typeof j.band, "string", "still emits the JSON verdict on the regex path");
+}
+
+console.log("OK (warrant) — gymapp counterexample (adaptive-context → selective[Fe]) + A/S/Fe predicates + knip-primary A + semantic supersede + band boundaries + semantic-file degrade.");

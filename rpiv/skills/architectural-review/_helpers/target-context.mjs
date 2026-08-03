@@ -16,6 +16,10 @@ export const safeGit = (args, fb = "") => {
 		return execFileSync("git", args, {
 			encoding: "utf-8",
 			stdio: ["ignore", "pipe", "ignore"],
+			// ls-files on a large monorepo exceeds Node's 1 MiB default, which would
+			// throw, be swallowed by the catch, and read as "no files" (metrics.mjs's
+			// own `safe` learned this first — keep the two aligned).
+			maxBuffer: 64 * 1024 * 1024,
 		}).trim();
 	} catch {
 		return fb;

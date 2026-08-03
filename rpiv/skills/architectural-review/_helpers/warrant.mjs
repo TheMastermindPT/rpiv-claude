@@ -76,7 +76,18 @@ function readStdin() {
 const blocks = {};
 const headers = {};
 parseInto(readStdin(), blocks, headers);
-if (flags.semantic) parseInto(readFileSync(flags.semantic, "utf8"), blocks, headers);
+if (flags.semantic) {
+  // An unreadable --semantic file degrades to "semantic didn't run" (regex
+  // fallbacks stay live) with a visible diagnostic — never an uncaught throw
+  // from the one unguarded read in a family whose contract is always-exit-0.
+  try {
+    parseInto(readFileSync(flags.semantic, "utf8"), blocks, headers);
+  } catch (e) {
+    process.stderr.write(
+      `warrant: cannot read --semantic file ${flags.semantic} (${e?.code ?? e?.message ?? e}) — proceeding on the metrics blocks alone\n`,
+    );
+  }
+}
 
 const rows = (label) => blocks[label] ?? [];
 const present = (label) => label in blocks; // header seen (even if the block is empty)

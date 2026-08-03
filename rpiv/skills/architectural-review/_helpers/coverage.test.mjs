@@ -2,7 +2,7 @@
 // Builds a throwaway repo with a crafted coverage-summary.json and asserts the per-file
 // stmt/branch/fn signal the T lens consumes. No dependencies; prints "OK" on success.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -62,6 +62,20 @@ try {
 	console.log("OK (coverage multi-target) — union emits rows under ANY target; single-target unchanged.");
 } finally {
 	rmSync(repo2, { recursive: true, force: true });
+}
+
+// --- Broken != absent: malformed report degrades with a parse-error note, exit 0 ---
+const repo4 = mkdtempSync(join(tmpdir(), "cov-broken-"));
+try {
+	mkdirSync(join(repo4, "coverage"), { recursive: true });
+	git(repo4, ["init", "-q"]);
+	writeFileSync(join(repo4, "coverage/coverage-summary.json"), "{ truncated");
+	const r = spawnSync("node", [COV, "."], { cwd: repo4, encoding: "utf-8" });
+	assert.equal(r.status, 0, `malformed report must not crash the helper (stderr: ${r.stderr})`);
+	assert.match(r.stdout, /coverage_report: {2}coverage-summary\.json \(parse-error: /, `parse failure must be a DISTINCT diagnostic, never "none"/clean:\n${r.stdout}`);
+	console.log("OK (coverage broken report) — parse failure degrades with a distinct diagnostic.");
+} finally {
+	rmSync(repo4, { recursive: true, force: true });
 }
 
 // --- Multi-PROJECT targets: the report anchor is announced (M2) --------------

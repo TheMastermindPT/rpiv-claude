@@ -13,18 +13,29 @@
 import { execFileSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseCliArgs } from "./cli-args.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const CONFORMANCE = join(HERE, "likec4-conformance.mjs");
 
-const args = {};
-for (let i = 2; i < process.argv.length; i += 2) args[process.argv[i]?.replace(/^--/, "")] = process.argv[i + 1];
-if (!args.model || !args.graph) {
-	process.stderr.write("usage: likec4-conformance-gate.mjs --model <export.json> --graph <depcruise|madge.json> [--map <map.json>] [--target <prefix>] [--max-undocumented N] [--max-aspirational M]\n");
+const args = parseCliArgs(process.argv.slice(2));
+const usage = (why) => {
+	process.stderr.write(`likec4-conformance-gate: ${why}\nusage: likec4-conformance-gate.mjs --model <export.json> --graph <depcruise|madge.json> [--map <map.json>] [--target <prefix>] [--max-undocumented N] [--max-aspirational M]\n`);
 	process.exit(2);
-}
-const maxUndoc = Number(args["max-undocumented"] ?? 0);
-const maxAsp = args["max-aspirational"] != null ? Number(args["max-aspirational"]) : Infinity;
+};
+if (!args.model || !args.graph) usage("--model and --graph are required");
+// Fail CLOSED on a malformed threshold: `Number(garbage)` is NaN, and `undoc > NaN`
+// is false — a broken invocation would otherwise print OK on a gate the skill
+// trusts before `store finalize` (degrade-distinguishes-broken).
+const numFlag = (name, def) => {
+	const v = args[name];
+	if (v == null) return def;
+	const n = typeof v === "string" ? Number(v) : Number.NaN;
+	if (!Number.isFinite(n)) usage(`--${name} needs a numeric value, got: ${v === true ? "(none)" : v}`);
+	return n;
+};
+const maxUndoc = numFlag("max-undocumented", 0);
+const maxAsp = numFlag("max-aspirational", Infinity);
 
 // Run the read-only conformance helper, forwarding the model/graph/map/target args.
 const passthru = ["--model", args.model, "--graph", args.graph];

@@ -77,8 +77,29 @@ const graphAsp = writeJson("g-asp.json", { "a/x.ts": ["a/y.ts"] });
 {
 	const usage = runGate(["--graph", graphCovered]);
 	assert.equal(usage.status, 2, "missing --model exits 2");
-	assert.match(usage.stderr, /^usage:/, "usage on stderr");
+	assert.match(usage.stderr, /--model and --graph are required/, "names the missing args");
+	assert.match(usage.stderr, /^usage:/m, "usage on stderr");
 	console.log("OK — gate usage error on missing args.");
+}
+
+// 6. `--key=value` form parses identically to `--key value` (regression: the old
+//    pairwise parser shifted every argument after an `=` flag).
+{
+	const eq = runGate([`--model=${modelUndoc}`, `--graph=${graphUndoc}`, "--max-undocumented=0"]);
+	assert.equal(eq.status, 1, "equals-form flags must reach the same over-threshold verdict");
+	assert.match(eq.stderr, /2 undocumented edge\(s\) \(max 0\)/, "equals-form threshold applied");
+	assert.equal(runGate([`--model=${modelUndoc}`, `--graph=${graphUndoc}`, "--max-undocumented=2"]).status, 0, "equals-form raised threshold passes");
+	console.log("OK — gate accepts --key=value form.");
+}
+
+// 7. malformed threshold FAILS CLOSED (usage exit 2) — `undoc > NaN` must never print OK.
+{
+	const bad = runGate(["--model", modelUndoc, "--graph", graphUndoc, "--max-undocumented", "abc"]);
+	assert.equal(bad.status, 2, "non-numeric threshold is a usage error, not a pass");
+	assert.match(bad.stderr, /--max-undocumented needs a numeric value/, "names the bad flag");
+	const bare = runGate(["--model", modelUndoc, "--graph", graphUndoc, "--max-undocumented"]);
+	assert.equal(bare.status, 2, "bare threshold flag (no value) is a usage error");
+	console.log("OK — gate fails closed on malformed thresholds.");
 }
 
 rmSync(tmp, { recursive: true, force: true });
