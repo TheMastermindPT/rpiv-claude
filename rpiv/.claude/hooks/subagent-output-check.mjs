@@ -19,6 +19,7 @@ const STRUCTURED_AGENTS = {
   "diff-analyst":   { pattern: /\S+:\d+\s+\|/, label: "pipe-delimited rows (file:line | ...)" },
   "slice-verifier": { pattern: /-\s*Decisions:[\s\S]*-\s*Cross-slice:[\s\S]*-\s*Research:/, label: "Decisions / Cross-slice / Research rows" },
   "peer-comparator": { pattern: /(Mirrored|Missing|Diverged|Intentionally-absent)/, label: "peer invariant tags" },
+  "interaction-sweeper": { pattern: /(###\s*IX-\d+\s+—|No grounded cross-finding interaction)/, label: "IX blocks (or the explicit no-interaction block)" },
   "test-case-locator": { pattern: /(test|spec|coverage)/i, label: "test case references" },
   "artifacts-locator": { pattern: /\.rpiv\//, label: "artifact paths" },
 };

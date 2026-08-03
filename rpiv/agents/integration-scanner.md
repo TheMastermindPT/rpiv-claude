@@ -1,7 +1,7 @@
 ---
 name: integration-scanner
 description: "Finds what connects to a given component or area: inbound references, outbound dependencies, config registrations, event subscriptions. The reverse-reference counterpart to codebase-locator. Use when you need to understand what calls, depends on, or wires into a component."
-tools: Grep, Glob, mcp__plugin_context-mode_context-mode__ctx_search, mcp__context-mode__ctx_search
+tools: Read, Grep, Glob, mcp__plugin_context-mode_context-mode__ctx_search, mcp__context-mode__ctx_search
 model: opus
 effort: xhigh
 ---
@@ -61,7 +61,8 @@ You are a specialist at finding CONNECTIONS to and from a component or area. You
 
 - Grep for guard patterns on paths into the target: middleware registration, `authorize`, `authenticate`, `guard`, `interceptor`, `canActivate`, `requireAuth`, `withAuth`, `getSession`, `getUser`, `verify`, `jwt`, `apiKey`, `policy`, `RLS`
 - Walk each entry point found in Steps 2-3 (route, handler, server action, webhook, job) and record which guard — if any — sits between the outside world and the target
-- Report unguarded entry points explicitly; absence of a guard on a reachable path is a crossing, not a non-result
+- **`no guard found` is a NEGATIVE claim — prove the walk, don't grep-and-conclude.** Guards are routinely applied at a PARENT (router group, app-level middleware chain, layout wrapper, decorator on a base class) where they never grep against the entry point's own file. Before reporting an unguarded crossing, `Read` the wiring chain: the entry point's file, the router/module that registers it, and the app-level middleware assembly. The row must name the path you walked (`entry file:line → registration file:line → app assembly file:line — no guard on this chain`) so the downstream verifier can re-walk it; an unwalked negative is a hallucinated crossing, and it drives 🔴 severity promotions downstream.
+- Report unguarded entry points explicitly; absence of a guard on a reachable (and walked) path is a crossing, not a non-result
 
 ### Step 5: Search for Outbound Dependencies
 
