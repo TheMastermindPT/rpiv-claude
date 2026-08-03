@@ -1,5 +1,5 @@
 {
-  "description": "rpiv lifecycle hooks: session bootstrap/restore, read-only enforcement and auto-approval for rpiv agents, artifact validation on Write, agent model/output checks, compaction state preservation.",
+  "description": "rpiv lifecycle hooks: session bootstrap/restore, read-only enforcement and auto-approval for rpiv agents, artifact validation and fence-duplication detection on Write, agent model/output checks, compaction state preservation.",
   "hooks": {
     "SessionStart": [
       {
@@ -43,6 +43,12 @@
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/.claude/hooks/validate-on-write.mjs\"",
             "timeout": 15
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/.claude/hooks/fence-duplication-check.mjs\"",
+            "timeout": 25,
+            "statusMessage": "Checking artifact fences for duplication"
           }
         ]
       }
