@@ -4,7 +4,7 @@
 // isSource/isTest classification the AR helpers share.
 
 import { describe, expect, it } from "vitest";
-import { SOURCE_EXT, isSource, isTest } from "../skills/architectural-review/_helpers/source-set.mjs";
+import { SOURCE_EXT, isFixture, isSource, isTest } from "../skills/architectural-review/_helpers/source-set.mjs";
 
 describe("SOURCE_EXT is the 18-extension union", () => {
 	it("contains the cts/mts members mutation.mjs had dropped", () => {
@@ -32,5 +32,29 @@ describe("isSource and isTest classification", () => {
 		expect(isTest("x/y.test.mjs")).toBe(true);
 		expect(isTest("x/__tests__/y.mjs")).toBe(true);
 		expect(isTest("x/y.mjs")).toBe(false);
+	});
+});
+
+describe("isFixture names test-SUPPORT trees, separately from isTest", () => {
+	it("matches e2e/fixture/mock directory segments", () => {
+		expect(isFixture("lib/e2e/scenarios.ts")).toBe(true);
+		expect(isFixture("src/fixtures/user.ts")).toBe(true);
+		expect(isFixture("src/__mocks__/db.ts")).toBe(true);
+		expect(isFixture("test/testing/harness.ts")).toBe(true);
+	});
+
+	it("does not match production paths that merely contain the word", () => {
+		expect(isFixture("lib/db/e2eSettings.ts")).toBe(false);
+		expect(isFixture("lib/mocking-bird.ts")).toBe(false);
+		expect(isFixture("lib/domain/profile.ts")).toBe(false);
+	});
+
+	// The split is deliberate: isTest drives metrics' test-theater counts, mutation
+	// eligibility and the generated dependency-cruiser exclude. Folding fixture trees into
+	// isTest would silently move all three, so the e2e case that motivated isFixture must
+	// stay OUTSIDE isTest.
+	it("is disjoint from isTest for support trees that no runner executes", () => {
+		expect(isTest("lib/e2e/scenarios.ts")).toBe(false);
+		expect(isFixture("lib/e2e/scenarios.ts")).toBe(true);
 	});
 });

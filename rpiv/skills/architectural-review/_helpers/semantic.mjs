@@ -29,7 +29,7 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { ENVY_MIN_REFS, ENVY_MIN_RATIO } from "./source-set.mjs";
+import { ENVY_MIN_REFS, ENVY_MIN_RATIO, isFixture, isTest } from "./source-set.mjs";
 import { safeGit, toPosix } from "./target-context.mjs";
 
 const SEMANTIC_MAX_FILES = 4000; // skip programs larger than this (degrade to regex)
@@ -39,8 +39,11 @@ const TYPE_MIN_PROPS = 3; // C: ignore trivial shapes (< 3 props, e.g. {id:strin
 const TYPE_EXAMINE_CAP = 2000; // C: bound the type-shape scan (AST-only, cheap)
 const PROJ_MIN_PROPS = 8; // M/D: object-literal projections below this are config-object noise
 const PROJ_MIN_SIM = 0.8; // M/D: pairwise Jaccard on property-name sets
-const PROJ_EXAMINE_CAP = 1500; // M/D: bound the literal scan
-const PROJ_MAX_ROWS = 20; // M/D: emit only the strongest pairs
+// M/D: bound the literal scan. 1500 capped mid-scan on a 259-file target, so coverage was
+// partial exactly where the lens is most useful; the O(n^2) link pass runs over QUALIFYING
+// literals (>= PROJ_MIN_PROPS named props), a far smaller set than the scan count.
+const PROJ_EXAMINE_CAP = 6000;
+const PROJ_MAX_ROWS = 20; // M/D: emit only the strongest clusters
 
 const root = toPosix(safeGit(["rev-parse", "--show-toplevel"])) || toPosix(process.cwd());
 // Emitted finding paths are relative to the invocation cwd — the base the skill's
@@ -372,13 +375,28 @@ typeRows.sort((a, b) => b.defs - a.defs || a.label.localeCompare(b.label));
 // (e.g. an exact vs family summary snapshot sharing 21/22 keys — the M3 class a
 // human-validated gymapp review found and a later run missed). A deterministic pair
 // seed lets the D/M lenses START from the projection instead of hoping to notice it.
+// Emits one row per CLUSTER of co-similar sites, not one per PAIR. Pairwise emission
+// cost N(N-1)/2 rows for N co-identical sites, so a single 9-site group produced 36 pairs
+// and consumed the entire PROJ_MAX_ROWS budget: on a real 259-file target all 20 rows were
+// one finding restated, and the genuine production projections ranked below it were
+// truncated away unseen.
 // FP guards: >= PROJ_MIN_PROPS own named props, literals with spreads skipped (their
-// key set is partial), Jaccard >= PROJ_MIN_SIM, capped scan, strongest rows only.
+// key set is partial), test files excluded (counted in the header, never silently),
+// Jaccard >= PROJ_MIN_SIM to link, capped scan, strongest clusters only.
 const projLits = [];
 let projExamined = 0;
 let projCapped = false;
+let projTestSkipped = 0;
 outerProj: for (const sf of targetFiles) {
 	const f = rel(sf);
+	// Near-identical records are what test and fixture files are FOR — duplication there
+	// is not the defect this lens looks for. isTest alone misses the case that motivated
+	// this: an e2e fixture tree (lib/e2e/*.ts) matches no .test./.spec./__tests__ pattern,
+	// so it contributed the four largest clusters. isFixture covers the support trees.
+	if (isTest(f) || isFixture(f)) {
+		projTestSkipped += 1;
+		continue;
+	}
 	for (const lit of sf.getDescendantsOfKind(SyntaxKind.ObjectLiteralExpression)) {
 		if (projExamined >= PROJ_EXAMINE_CAP) {
 			projCapped = true;
@@ -396,20 +414,74 @@ outerProj: for (const sf of targetFiles) {
 		projLits.push({ f, line: lit.getStartLineNumber(), names });
 	}
 }
-const projRows = [];
+
+/** Jaccard overlap of two projections' property-name sets. */
+const projSim = (a, b) => {
+	let shared = 0;
+	for (const n of a.names) if (b.names.has(n)) shared += 1;
+	const uni = a.names.size + b.names.size - shared;
+	return uni === 0 ? 0 : shared / uni;
+};
+
+// Union-find over the qualifying literals: any pair clearing PROJ_MIN_SIM joins the same
+// group. Linking is transitive, so a group CAN chain two members that are not themselves
+// similar — every row therefore carries its own cohesion (keys common to all members, and
+// the min-max pairwise overlap inside the group) instead of asking the reader to assume
+// the group is tight.
+const projParent = projLits.map((_, i) => i);
+const projFind = (i) => {
+	let r = i;
+	while (projParent[r] !== r) {
+		projParent[r] = projParent[projParent[r]];
+		r = projParent[r];
+	}
+	return r;
+};
 for (let i = 0; i < projLits.length; i += 1) {
 	for (let j = i + 1; j < projLits.length; j += 1) {
-		const a = projLits[i];
-		const b = projLits[j];
-		if (a.f === b.f && a.line === b.line) continue;
-		let shared = 0;
-		for (const n of a.names) if (b.names.has(n)) shared += 1;
-		const union = a.names.size + b.names.size - shared;
-		const sim = union === 0 ? 0 : shared / union;
-		if (sim >= PROJ_MIN_SIM) projRows.push({ a, b, shared, union, sim });
+		if (projSim(projLits[i], projLits[j]) < PROJ_MIN_SIM) continue;
+		const ri = projFind(i);
+		const rj = projFind(j);
+		if (ri !== rj) projParent[rj] = ri;
 	}
 }
-projRows.sort((x, y) => y.shared - x.shared || y.sim - x.sim);
+
+const projGroups = new Map();
+for (let i = 0; i < projLits.length; i += 1) {
+	const r = projFind(i);
+	if (!projGroups.has(r)) projGroups.set(r, []);
+	projGroups.get(r).push(projLits[i]);
+}
+
+const projRows = [];
+for (const members of projGroups.values()) {
+	if (members.length < 2) continue;
+	const all = new Set();
+	let common = new Set(members[0].names);
+	for (const m of members) {
+		for (const n of m.names) all.add(n);
+		common = new Set([...common].filter((n) => m.names.has(n)));
+	}
+	let lo = 1;
+	let hi = 0;
+	for (let a = 0; a < members.length; a += 1) {
+		for (let b = a + 1; b < members.length; b += 1) {
+			const s = projSim(members[a], members[b]);
+			if (s < lo) lo = s;
+			if (s > hi) hi = s;
+		}
+	}
+	projRows.push({
+		sites: members.length,
+		common: common.size,
+		union: all.size,
+		lo,
+		hi,
+		locs: members.map((m) => `${m.f}:${m.line}`),
+	});
+}
+const projClusters = projRows.length;
+projRows.sort((x, y) => y.sites - x.sites || y.common - x.common || y.hi - x.hi);
 projRows.length = Math.min(projRows.length, PROJ_MAX_ROWS);
 
 // --- Emit -------------------------------------------------------------------
@@ -425,7 +497,11 @@ out.push(`files_in_target:  ${targetFiles.length}`);
 out.push(`write_resolution: resolved=${writeResolved} unresolved=${writeUnresolved}`);
 out.push(`dead_export_scan: ${knipAvailable ? "skipped (knip present — A delegated to knip)" : `examined=${examined} capped=${capped} skipped_on_error=${skippedOnError}`}`);
 out.push(`type_scan:        examined=${typesExamined}`);
-out.push(`proj_scan:        literals=${projExamined}${projCapped ? " capped" : ""} pairs=${projRows.length}`);
+// Every reduction is stated: a truncated scan, skipped test files, and clusters found but
+// not shown each have a number here, so a short block is never mistaken for a clean one.
+out.push(
+	`proj_scan:        literals=${projExamined}${projCapped ? " capped" : ""} test_fixture_files_skipped=${projTestSkipped} clusters=${projClusters}${projClusters > projRows.length ? ` (showing strongest ${projRows.length})` : ""}`,
+);
 
 const block = (label, rows) => {
 	out.push(`---${label}---`);
@@ -435,7 +511,7 @@ block("write-sites-semantic", writeRows.map((r) => `${r.key}\twriters=${r.writer
 block("feature-envy-semantic", envyRows.map((r) => `${r.f}\tenvies=${r.module}\text=${r.ext}\town=${r.own}\tratio=${r.ratio.toFixed(2)}\tbehavioralRefs=${r.beh}\tdataRefs=${r.data}`));
 block("dead-exports-semantic", deadRows.map((r) => `${r.f}:${r.name}\tkind=${r.kind}\textRefs=0`));
 block("type-fragmentation-semantic", typeRows.map((r) => `kind=${r.kind}\t${r.label}\tdefs=${r.defs}\tfiles=${r.files.join(", ")}`));
-block("projection-shapes-semantic", projRows.map((r) => `${r.a.f}:${r.a.line} <-> ${r.b.f}:${r.b.line}\tshared=${r.shared}/${r.union}\toverlap=${r.sim.toFixed(2)}\tsizeA=${r.a.names.size} sizeB=${r.b.names.size}`));
+block("projection-shapes-semantic", projRows.map((r) => `sites=${r.sites}\tcommon=${r.common}/${r.union}\toverlap=${r.lo.toFixed(2)}-${r.hi.toFixed(2)}\t${r.locs.join(", ")}`));
 
 process.stdout.write(`${out.join("\n")}\n`);
 process.exit(0);

@@ -24,6 +24,17 @@ export const isSource = (p) => SOURCE_EXT.has(extOf(p));
 export const isTest = (p) =>
 	/\.(test|spec)\.[a-z]+$/i.test(p) || /(^|\/)__tests__\//.test(p);
 
+/**
+ * True if the path lives in a conventional test-SUPPORT directory: e2e harnesses, fixture
+ * or mock trees. Deliberately separate from isTest — that names files a runner EXECUTES,
+ * this names files that exist to FEED tests, where near-identical shapes are the point
+ * rather than a defect. Kept out of isTest on purpose: isTest drives metrics' test-theater
+ * counts, mutation eligibility, and (via TEST_EXCLUDE_RE) the generated dependency-cruiser
+ * exclude, and none of those should silently change meaning.
+ */
+export const isFixture = (p) =>
+	/(^|\/)(e2e|fixtures?|__fixtures__|__mocks__|mocks|testing)(\/|$)/i.test(p);
+
 // Regex-source STRING for the generated .dependency-cruiser.cjs (layer-rules), kept
 // byte-identical to the prior inline literal so the generated CI config is unchanged.
 export const TEST_EXCLUDE_RE = "\\.(test|spec)\\.[a-z]+$|(^|/)__tests__/";

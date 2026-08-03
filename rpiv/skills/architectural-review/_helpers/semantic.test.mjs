@@ -117,19 +117,26 @@ const shapesB = [
 const driftA = `export interface Account { id: string; name: string; balance: number }`;
 const driftB = `export interface Account { id: string; name: string; balance: number; currency: string }`; // same name, drifted
 
-// M/D-lens fixtures: two object-literal PROJECTIONS sharing 9/10 keys (Jaccard 9/11 =
-// 0.82) -> must pair; a same-keyed literal built with a spread -> partial key set, must
-// NOT participate. Mirrors the gymapp M3 class (exact vs family snapshot, 21/22 fields).
+// M/D-lens fixtures: THREE object-literal PROJECTIONS each sharing 9/10 keys with the
+// others (Jaccard 9/11 = 0.82) -> one CLUSTER of 3 sites, not 3 pairwise rows. Mirrors
+// the gymapp M3 class (exact vs family snapshot, 21/22 fields).
+// Negative cases: a same-keyed literal built with a spread (partial key set), and the same
+// shape living in test/fixture support trees (near-identical records are their purpose).
 const projKeys = (extra) =>
 	`{ a1: 1, a2: 2, a3: 3, a4: 4, a5: 5, a6: 6, a7: 7, a8: 8, a9: 9, ${extra} }`;
 const projA = `export function exactSnapshot() {\n\treturn ${projKeys("exactOnly: 10")};\n}`;
 const projB = `export function familySnapshot() {\n\treturn ${projKeys("familyOnly: 10")};\n}`;
+const projC = `export function trendSnapshot() {\n\treturn ${projKeys("trendOnly: 10")};\n}`;
 const projSpread = [
 	`const base = { a1: 1 };`,
 	`export function spreadSnapshot() {`,
 	`\treturn { ...base, a2: 2, a3: 3, a4: 4, a5: 5, a6: 6, a7: 7, a8: 8, a9: 9, spreadOnly: 10 };`,
 	`}`,
 ].join("\n");
+// An e2e support tree matches NO .test./.spec./__tests__ pattern — this is the exact shape
+// that produced the four largest clusters on a real project before isFixture existed.
+const projFixture = `export function fixtureSnapshot() {\n\treturn ${projKeys("fixtureOnly: 10")};\n}`;
+const projSpec = `export function specSnapshot() {\n\treturn ${projKeys("specOnly: 10")};\n}`;
 
 // --- Build repo, run, assert ------------------------------------------------
 
@@ -149,7 +156,11 @@ try {
 	write("src/drift-b.ts", driftB);
 	write("src/proj-a.ts", projA);
 	write("src/proj-b.ts", projB);
+	write("src/proj-c.ts", projC);
 	write("src/proj-spread.ts", projSpread);
+	mkdirSync(join(repo, "src", "e2e"), { recursive: true });
+	write("src/e2e/proj-fixture.ts", projFixture);
+	write("src/proj-legacy.spec.ts", projSpec);
 	git(repo, ["init", "-q"]);
 	git(repo, ["add", "-A"]);
 
@@ -217,16 +228,37 @@ try {
 		`trivial 2-prop shapes (Pt/Pt2) must NOT flag (below the >=3-prop guard)\n${out}`,
 	);
 
-	// 5. projection-shapes: near-identical object literals pair across files; the
-	// spread-built twin (partial key set) must not participate.
+	// 5. projection-shapes: co-similar literals collapse into ONE cluster row, not one row
+	// per pair. Pairwise emission cost N(N-1)/2 rows, so a single group could consume the
+	// whole row budget and truncate every other finding away — the regression this pins.
 	const proj = extractBlock(out, "projection-shapes-semantic");
-	const pairRow = proj.find((r) => r.includes("proj-a.ts") && r.includes("proj-b.ts"));
-	assert.ok(pairRow, `proj-a/proj-b (9/10 shared keys) must pair in projection-shapes-semantic\n${out}`);
-	assert.ok(/shared=9\/11/.test(pairRow), `pair must report shared=9/11, got: ${pairRow}`);
+	const clusterRow = proj.find((r) => r.includes("proj-a.ts"));
+	assert.ok(clusterRow, `proj-a must appear in projection-shapes-semantic\n${out}`);
+	assert.ok(
+		clusterRow.includes("proj-b.ts") && clusterRow.includes("proj-c.ts"),
+		`all three co-similar sites must share ONE row, got: ${clusterRow}`,
+	);
+	assert.equal(
+		proj.filter((r) => r.includes("proj-a.ts")).length,
+		1,
+		`proj-a must appear in exactly one row (clustered, not paired) — 3 sites paired would be 3 rows\n${out}`,
+	);
+	assert.ok(/sites=3\b/.test(clusterRow), `cluster must report sites=3, got: ${clusterRow}`);
+	assert.ok(/common=9\/12\b/.test(clusterRow), `cluster must report common=9/12 (9 shared keys, 12 in union), got: ${clusterRow}`);
+	assert.ok(/overlap=0\.82-0\.82/.test(clusterRow), `cluster cohesion must be reported as a min-max range, got: ${clusterRow}`);
 	assert.ok(!proj.some((r) => r.includes("proj-spread.ts")), `spread-built literal (partial key set) must NOT participate\n${out}`);
 
+	// 5b. Test and fixture support trees are excluded — and the count is stated, so an
+	// emptied block stays distinguishable from a clean one.
+	assert.ok(!proj.some((r) => r.includes("e2e/")), `e2e fixture tree must be excluded from projections\n${out}`);
+	assert.ok(!proj.some((r) => r.includes(".spec.ts")), `spec files must be excluded from projections\n${out}`);
+	assert.ok(
+		/proj_scan:.*test_fixture_files_skipped=2\b/.test(out),
+		`proj_scan must report the 2 skipped test/fixture files rather than dropping them silently, got:\n${out}`,
+	);
+
 	console.log(
-		`OK (semantic) — imported-const write resolved (writers=2), behavioral envy kept + data-only dropped, dead export flagged, type drift + same-shape flagged, projection pair seeded (${writes.length} write-sites, ${envy.length} envy, ${dead.length} dead, ${frag.length} type-frag, ${proj.length} proj-pairs).`,
+		`OK (semantic) — imported-const write resolved (writers=2), behavioral envy kept + data-only dropped, dead export flagged, type drift + same-shape flagged, projection CLUSTER seeded with test/fixture trees excluded (${writes.length} write-sites, ${envy.length} envy, ${dead.length} dead, ${frag.length} type-frag, ${proj.length} proj-clusters).`,
 	);
 } finally {
 	rmSync(repo, { recursive: true, force: true });
