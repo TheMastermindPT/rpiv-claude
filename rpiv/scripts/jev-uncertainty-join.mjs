@@ -12,7 +12,8 @@
 // Usage:
 //   node scripts/jev-uncertainty-join.mjs --logs <lint-log> --stores <dir-or-file>...
 //
-// Store tolerance: files may be a top-level array or { records: [...] }.
+// Canonical stores use { findings: [...] }; legacy arrays/records are accepted.
+// Review-local IDs never disambiguate two different stores by themselves.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
@@ -20,68 +21,78 @@ import { pathToFileURL } from "node:url";
 
 export const MIN_ROWS = 20;
 
-export function readLintRows(logPath) {
+const diagnostic = (message) =>
+	process.stderr.write(`[jev-join] BROKEN: ${message}\n`);
+
+export function readLintRows(logPath, onDiagnostic = diagnostic) {
+	let text;
 	try {
-		return readFileSync(logPath, "utf8")
-			.split(/\r?\n/)
-			.filter(Boolean)
-			.map((line) => JSON.parse(line))
-			.filter((e) => e.agent === "claim-verifier" && typeof e.p === "number");
-	} catch {
+		text = readFileSync(logPath, "utf8");
+	} catch (error) {
+		onDiagnostic(`cannot read lint log ${logPath}: ${error.code}`);
 		return [];
 	}
+	const rows = [];
+	for (const [index, line] of text.split(/\r?\n/).entries()) {
+		if (!line.trim()) continue;
+		try {
+			const entry = JSON.parse(line);
+			if (entry?.agent === "claim-verifier" && Number.isFinite(entry.p))
+				rows.push(entry);
+		} catch {
+			onDiagnostic(`malformed lint JSON at line ${index + 1} in ${logPath}`);
+		}
+	}
+	return rows;
 }
 
 /** Records from store files: top-level array or { records: [...] }, keeping
  * only rows with an id and a verify/status outcome. */
-export function readStoreRecords(paths) {
+export function readStoreRecords(paths, onDiagnostic = diagnostic) {
 	const records = [];
 	for (const path of paths) {
-		let raw;
-		try {
-			raw = readFileSync(path, "utf8");
-		} catch {
-			continue;
-		}
-		let parsed;
-		try {
-			parsed = JSON.parse(raw);
-		} catch {
-			continue;
-		}
-		const list = Array.isArray(parsed)
-			? parsed
-			: Array.isArray(parsed?.records)
-				? parsed.records
-				: [];
-		for (const record of list) {
-			if (typeof record?.id !== "string") continue;
-			if (record.verify == null && record.status == null) continue;
-			records.push(record);
-		}
+		records.push(...recordsFromStore(path, onDiagnostic));
 	}
 	return records;
 }
 
-/** Expand store paths: directories contribute their *.json files. */
-export function expandStorePaths(paths) {
-	const files = [];
-	for (const path of paths) {
-		let stats;
-		try {
-			stats = statSync(path);
-		} catch {
-			continue;
-		}
-		if (stats.isFile()) {
-			files.push(path);
-			continue;
-		}
-		for (const entry of readdirSync(path)) {
-			if (entry.endsWith(".json")) files.push(resolve(path, entry));
-		}
+function recordsFromStore(path, onDiagnostic) {
+	try {
+		const parsed = JSON.parse(readFileSync(path, "utf8"));
+		const list = Array.isArray(parsed)
+			? parsed
+			: (parsed?.findings ?? parsed?.records);
+		if (!Array.isArray(list)) throw new Error("unsupported store shape");
+		const reviewId = parsed.review?.id ?? resolve(path).replaceAll("\\", "/");
+		return list
+			.filter(hasOutcome)
+			.map((record) => ({ ...record, reviewId: record.reviewId ?? reviewId }));
+	} catch (error) {
+		onDiagnostic(`cannot load store ${path}: ${error.message}`);
+		return [];
 	}
-	return files;
+}
+
+function hasOutcome(record) {
+	if (typeof record?.id !== "string") return false;
+	return record.verify != null || record.status != null;
+}
+
+/** Expand store paths: directories contribute their *.json files. */
+export function expandStorePaths(paths, onDiagnostic = diagnostic) {
+	return paths.flatMap((path) => storeFilesAt(path, onDiagnostic));
+}
+
+function storeFilesAt(path, onDiagnostic) {
+	try {
+		if (statSync(path).isFile()) return [path];
+		return readdirSync(path)
+			.filter((entry) => entry.endsWith(".json"))
+			.map((entry) => resolve(path, entry));
+	} catch (error) {
+		onDiagnostic(`cannot inspect stores at ${path}: ${error.code}`);
+		return [];
+	}
 }
 
 /** A store record died when it was falsified or withdrawn. */
@@ -90,11 +101,17 @@ export function died(record) {
 }
 
 /**
- * Join lint rows to store outcomes by finding id. Returns tiers
+ * Join by review identity and finding id. Legacy identity-free rows join only
+ * when their ID names exactly one record; ambiguity remains unknown. Returns tiers
  * { flag, review, ok } each { n, died, survived, unknown } plus total.
  */
 export function joinOutcomes(lintRows, records) {
-	const byId = new Map(records.map((r) => [r.id, r]));
+	const byId = new Map();
+	for (const record of records) {
+		const matches = byId.get(record.id) ?? [];
+		matches.push(record);
+		byId.set(record.id, matches);
+	}
 	const tiers = {
 		flag: { n: 0, died: 0, survived: 0, unknown: 0 },
 		review: { n: 0, died: 0, survived: 0, unknown: 0 },
@@ -104,7 +121,10 @@ export function joinOutcomes(lintRows, records) {
 		const tier = tiers[row.verdict];
 		if (!tier) continue;
 		tier.n++;
-		const record = byId.get(row.id);
+		const matches = (byId.get(row.id) ?? []).filter(
+			(r) => (r.reviewId ?? null) === (row.reviewId ?? null),
+		);
+		const record = matches.length === 1 ? matches[0] : null;
 		if (!record) tier.unknown++;
 		else if (died(record)) tier.died++;
 		else tier.survived++;
@@ -135,15 +155,11 @@ export function renderReport(tiers) {
 	lines.push(
 		`resolved rows (outcome known): ${c.totalResolved} — flag+review died rate: ${c.flaggedRate == null ? "—" : `${(c.flaggedRate * 100).toFixed(0)}%`}, ok died rate: ${c.okRate == null ? "—" : `${(c.okRate * 100).toFixed(0)}%`}`,
 	);
-	if (c.totalResolved < MIN_ROWS) {
+	if (!hasComparison(c)) {
 		lines.push(
-			`INSUFFICIENT DATA — need >= ${MIN_ROWS} resolved rows, have ${c.totalResolved}.`,
+			`INSUFFICIENT DATA — need >= ${MIN_ROWS} resolved rows and observations in both comparison tiers, have ${c.totalResolved}.`,
 		);
-	} else if (
-		c.flaggedRate != null &&
-		c.okRate != null &&
-		c.flaggedRate > c.okRate
-	) {
+	} else if (c.flaggedRate > c.okRate) {
 		lines.push(
 			"PREDICTIVE: the unclear band rows die more often than silent rows.",
 		);
@@ -163,6 +179,11 @@ export function renderReport(tiers) {
 	return lines.join("\n");
 }
 
+function hasComparison(c) {
+	if (c.totalResolved < MIN_ROWS) return false;
+	return c.flaggedRate != null && c.okRate != null;
+}
+
 function parseArgs(argv) {
 	const args = { stores: [] };
 	for (let i = 0; i < argv.length; i++) {
@@ -180,10 +201,21 @@ function main() {
 		);
 		process.exit(2);
 	}
-	const lintRows = readLintRows(resolve(args.logs));
+	const errors = [];
+	const reportError = (message) => errors.push(message);
+	const lintRows = readLintRows(resolve(args.logs), reportError);
 	const records = readStoreRecords(
-		expandStorePaths(args.stores.map((s) => resolve(s))),
+		expandStorePaths(
+			args.stores.map((s) => resolve(s)),
+			reportError,
+		),
+		reportError,
 	);
+	if (errors.length) {
+		for (const error of errors) diagnostic(error);
+		process.exitCode = 2;
+		return;
+	}
 	const tiers = joinOutcomes(lintRows, records);
 	process.stdout.write(`${renderReport(tiers)}\n`);
 }

@@ -12,6 +12,7 @@ import {
 	readFileSync,
 	rmSync,
 	writeFileSync,
+	symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,6 +24,7 @@ import {
 	labelDecision,
 	labelFromLog,
 } from "../evals/harness/jev-run-labels.mjs";
+import { buildReport, readLabels } from "../scripts/jev-lint-calibrate.mjs";
 
 const tmp = mkdtempSync(join(tmpdir(), "jev-run-labels-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -46,6 +48,25 @@ describe("extraction", () => {
 });
 
 describe("checkCitation", () => {
+	it("ignores the citation's own backtick span and associates the code quote", () => {
+		expect(
+			checkCitation("`lib/a.ts:1` — `export const max = 100;`", repo)[0]
+				.verdict,
+		).toBe("match");
+		expect(checkCitation("`lib/a.ts:1`", repo)[0].verdict).toBe("no-quote");
+	});
+
+	it("rejects traversal and symlink escapes before reading outside the repository", () => {
+		const outside = join(tmp, "outside");
+		mkdirSync(outside, { recursive: true });
+		writeFileSync(join(outside, "secret.ts"), "synthetic_canary");
+		symlinkSync(outside, join(repo, "escape"), "junction");
+		for (const path of ["../outside/secret.ts", "escape/secret.ts"]) {
+			expect(
+				checkCitation(`${path}:1 | \`synthetic_canary\``, repo)[0].verdict,
+			).toBe("unresolvable");
+		}
+	});
 	it("matches a quote at the cited line within the window", () => {
 		const verdicts = checkCitation(
 			"lib/a.ts:1 | `export const max = 100;` | ok",
@@ -107,6 +128,44 @@ describe("labelDecision", () => {
 });
 
 describe("labelFromLog", () => {
+	it("converts citation validity into verdict agreement across the calibration boundary", () => {
+		const logPath = join(tmp, "agreement.log");
+		const labelsPath = join(tmp, "agreement.jsonl");
+		const entries = [
+			{
+				ts: "a",
+				id: "Q1",
+				verdict: "flag",
+				p: 0.1,
+				row: "`lib/a.ts:1` — `not real`",
+			},
+			{
+				ts: "b",
+				id: "Q2",
+				verdict: "flag",
+				p: 0.1,
+				row: "`lib/a.ts:1` — `export const max = 100;`",
+			},
+			{
+				ts: "c",
+				id: "Q3",
+				verdict: "ok",
+				p: 0.9,
+				row: "`lib/a.ts:1` — `not real`",
+			},
+		].map((r) => ({ ...r, agent: "claim-verifier", source: "output" }));
+		writeFileSync(logPath, entries.map(JSON.stringify).join("\n"));
+		expect(labelFromLog(logPath, labelsPath, "output", repo)).toBe(3);
+		const labels = readLabels(labelsPath);
+		expect(["a", "b", "c"].map((ts) => labels.get(ts)[0].correct)).toEqual([
+			true,
+			false,
+			false,
+		]);
+		const report = buildReport(entries, labels);
+		expect(report.tiers.flag.actuallyWrong).toBe(1);
+		expect(report.tiers.ok.actuallyWrong).toBe(1);
+	});
 	it("writes labels only for mechanically checkable rows, keyed by ts", () => {
 		const logPath = join(tmp, "lint.log");
 		const labelsPath = join(tmp, "labels.jsonl");
@@ -115,6 +174,7 @@ describe("labelFromLog", () => {
 			`${[
 				JSON.stringify({
 					ts: "t1",
+					verdict: "ok",
 					source: "out.md",
 					agent: "claim-verifier",
 					id: "Q1",
@@ -122,6 +182,7 @@ describe("labelFromLog", () => {
 				}),
 				JSON.stringify({
 					ts: "t2",
+					verdict: "ok",
 					source: "out.md",
 					agent: "claim-verifier",
 					id: "Q2",

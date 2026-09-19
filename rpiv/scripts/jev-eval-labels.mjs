@@ -23,6 +23,12 @@ import { pathToFileURL } from "node:url";
 
 import { appendLog, readKey } from "./jev-gate.mjs";
 import {
+	contentDigest,
+	readCompletedBatch,
+	reserveSource,
+	writeCompletedBatch,
+} from "./jev-source-store.mjs";
+import {
 	LINT_LOG_PATH,
 	lintAgentOutput,
 	parseConstituentFindings,
@@ -68,10 +74,17 @@ export function findOutputs(root, maxDepth = 8) {
 	return results;
 }
 
-/** Sources already present in the lint log (entries carrying a `source`). */
+/** Only complete, successful batches establish completion; diagnostic rows do not. */
 export function processedSources(log) {
 	return new Set(
-		log.filter((e) => typeof e.source === "string").map((e) => e.source),
+		log
+			.filter(
+				(e) =>
+					e.status === "complete" &&
+					Array.isArray(e.results) &&
+					e.results.every((r) => !r.broken),
+			)
+			.map((e) => e.source),
 	);
 }
 
@@ -109,11 +122,9 @@ export async function processEvalRoot({
 	envFile = ".env",
 	env = process.env,
 	fetchImpl = fetch,
-	existingLog = null,
 	promptRoot = process.cwd(),
 }) {
 	const files = findOutputs(root);
-	const skip = processedSources(existingLog ?? readExistingLog(logPath));
 
 	const summary = {
 		scanned: files.length,
@@ -132,75 +143,89 @@ export async function processEvalRoot({
 			summary.skipped++;
 			continue;
 		}
-		const source = file;
-		if (skip.has(source)) {
+		const release = reserveSource(logPath, file);
+		if (!release) {
 			summary.skipped++;
+			process.stdout.write(`[jev-eval-labels] BUSY: ${file}\n`);
 			continue;
 		}
-		const config = ROW_LINTS[agent];
-		const promptText = config.needsConstituents
-			? resolveCasePrompt(file, promptRoot)
-			: null;
-		if (config.needsConstituents && !promptText) {
-			summary.skipped++;
-			process.stdout.write(
-				`[jev-eval-labels] UNAVAILABLE for ${source}: constituent prompt not found\n`,
-			);
-			continue;
-		}
-		const text = readFileSync(file, "utf8");
-		const { results, unavailable } = await lintAgentOutput(config, text, {
-			key,
-			envFile,
-			env,
-			fetchImpl,
-			cwd: process.cwd(),
-			constituents: promptText ? parseConstituentFindings(promptText) : null,
-		});
-		if (unavailable) {
-			summary.skipped++;
-			process.stdout.write(
-				`[jev-eval-labels] UNAVAILABLE for ${source}: ${unavailable}\n`,
-			);
-			continue;
-		}
-		for (const r of results) {
-			appendLog(logPath, {
-				ts: new Date().toISOString(),
+		try {
+			const result = await processSource({
+				source: file,
 				agent,
-				source,
-				mode: config.needsConstituents ? "constituent-aware" : "standard",
-				id: r.id,
-				tag: r.tag,
-				p: r.p,
-				verdict: r.verdict,
-				broken: r.broken,
-				row: r.rowText,
+				logPath,
+				promptRoot,
+				deps: { key, envFile, env, fetchImpl },
 			});
-		}
-		summary.linted++;
-		summary.rows += results.length;
-		for (const r of results) {
-			if (r.verdict === "flag" || r.verdict === "review" || r.broken) {
-				const tier = r.broken ? "BROKEN" : r.verdict.toUpperCase();
-				process.stdout.write(
-					`[jev-eval-labels] ${tier}: ${agent} ${r.id} tag=${r.tag} p=${r.p?.toFixed(2)} (${source})\n`,
-				);
-			}
+			summary[result.skipped ? "skipped" : "linted"]++;
+			summary.rows += result.rows;
+		} finally {
+			release();
 		}
 	}
 	return summary;
 }
 
-function readExistingLog(logPath) {
-	try {
-		return readFileSync(logPath, "utf8")
-			.split(/\r?\n/)
-			.filter(Boolean)
-			.map((line) => JSON.parse(line));
-	} catch {
-		return [];
+async function processSource({ source, agent, logPath, promptRoot, deps }) {
+	const text = readFileSync(source, "utf8");
+	const config = ROW_LINTS[agent];
+	const prompt = config.needsConstituents
+		? resolveCasePrompt(source, promptRoot)
+		: null;
+	const digest = contentDigest(JSON.stringify({ text, prompt, config }));
+	if (alreadyComplete(logPath, source, digest))
+		return { skipped: true, rows: 0 };
+	const { results, unavailable } = await lintAgentOutput(config, text, {
+		...deps,
+		constituents: prompt ? parseConstituentFindings(prompt) : null,
+	});
+	if (unavailable) {
+		process.stdout.write(
+			`[jev-eval-labels] UNAVAILABLE for ${source}: ${unavailable}\n`,
+		);
+		return { skipped: true, rows: 0 };
 	}
+	const entries = results.map((r) => logEntry(r, { agent, source, config }));
+	if (results.every((r) => !r.broken)) {
+		writeCompletedBatch(logPath, source, {
+			status: "complete",
+			source,
+			digest,
+			results: entries,
+		});
+	}
+	for (const entry of entries) appendLog(logPath, entry);
+	for (const row of results) warnRow(row, agent, source);
+	return { skipped: false, rows: results.length };
+}
+
+function alreadyComplete(logPath, source, digest) {
+	const prior = readCompletedBatch(logPath, source);
+	if (!prior || prior.digest !== digest) return false;
+	return processedSources([prior]).has(source);
+}
+
+function logEntry(row, { agent, source, config }) {
+	return {
+		ts: new Date().toISOString(),
+		agent,
+		source,
+		mode: config.needsConstituents ? "constituent-aware" : "standard",
+		id: row.id,
+		tag: row.tag,
+		p: row.p,
+		verdict: row.verdict,
+		broken: row.broken,
+		row: row.rowText,
+	};
+}
+
+function warnRow(row, agent, source) {
+	if (row.verdict === "ok") return;
+	const tier = row.broken ? "BROKEN" : row.verdict.toUpperCase();
+	process.stdout.write(
+		`[jev-eval-labels] ${tier}: ${agent} ${row.id} tag=${row.tag} p=${row.p?.toFixed(2)} (${source})\n`,
+	);
 }
 
 function parseArgs(argv) {

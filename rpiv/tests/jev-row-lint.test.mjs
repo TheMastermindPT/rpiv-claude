@@ -239,6 +239,87 @@ describe("lintRow", () => {
 });
 
 describe("lintAgentOutput", () => {
+	it("accepts the documented predicate coherence table alongside findings", async () => {
+		const text =
+			"| file:line | verbatim | surface-id | note |\n| --- | --- | --- | --- |\n| `src/a.ts:1` | `x` | 1 | wrong branch |\n\n### Predicate-set coherence\n\n| predicate file:line | accepted | rejected |\n| --- | --- | --- |\n| `src/a.ts:1` | Pending | Cancelled, Confirmed |\n";
+		const result = await lintAgentOutput(ROW_LINTS["diff-analyst"], text, {
+			key: "k",
+			fetchImpl: async () => okJson(jevConsistent(0.9)),
+		});
+		expect(result.results).toHaveLength(1);
+		expect(result.results[0].verdict).toBe("ok");
+	});
+	it("judges mandated Markdown rows from an external project using bundled contracts", async () => {
+		const states = [];
+		const { results, unavailable } = await lintAgentOutput(
+			ROW_LINTS["diff-analyst"],
+			"| file:line | verbatim | surface-id | note |\n| --- | --- | --- | --- |\n| `src/a.mjs:12` | `x` | 1 | wrong branch |\n| `src/a.mjs:12` | `y` | 3 | broken consumer |\n",
+			{
+				key: "k",
+				cwd: tmp,
+				fetchImpl: async (_url, opts) => {
+					states.push(JSON.parse(opts.body).state);
+					return okJson(jevConsistent(0.9));
+				},
+			},
+		);
+		expect(unavailable).toBeNull();
+		expect(results.map((r) => r.verdict)).toEqual(["ok", "ok"]);
+		expect(states[0].contract).toContain("Logic");
+		expect(states[1].contract).toContain("Blast radius");
+	});
+
+	it("keeps co-located rows attached to their own contract", async () => {
+		const states = [];
+		const config = {
+			...ROW_LINTS["diff-analyst"],
+			contracts: { 1: "logic", 3: "consumers" },
+		};
+		await lintAgentOutput(
+			config,
+			"a.ts:1 | `x` | 1 | wrong branch\na.ts:1 | `y` | 3 | wrong caller\n",
+			{
+				key: "k",
+				fetchImpl: async (_url, opts) => {
+					states.push(JSON.parse(opts.body).state.contract);
+					return okJson(jevConsistent(0.9));
+				},
+			},
+		);
+		expect(states).toEqual(["logic", "consumers"]);
+	});
+
+	it("reports rejected candidate rows even alongside valid ones", async () => {
+		const result = await lintAgentOutput(
+			ROW_LINTS["diff-analyst"],
+			"`a.ts:1` | `x` | 1 | defect\n`a.ts:2` | `y` | ??? | rejected defect\n",
+			{ key: "k", fetchImpl: async () => okJson(jevConsistent(0.9)) },
+		);
+		expect(result.results.some((r) => r.broken?.includes("parse"))).toBe(true);
+		expect(result.results.some((r) => r.verdict === "ok")).toBe(true);
+	});
+
+	it("resolves complete architectural IDs with unassigned severity", async () => {
+		const constituents = parseConstituentFindings(
+			"L0-01 | G | lib/a.ts:1 | `x` | (severity unassigned) | first defect\nL0-02 | G | lib/a.ts:2 | `y` | (severity unassigned) | second defect\n",
+		);
+		expect([...constituents.keys()]).toEqual(["L0-01", "L0-02"]);
+		const states = [];
+		const result = await lintAgentOutput(
+			ROW_LINTS["interaction-sweeper"],
+			"### IX-1 — compound\n\n- **Kind:** shared-root\n- **Constituents:** L0-01, L0-02\n",
+			{
+				key: "k",
+				constituents,
+				fetchImpl: async (_url, opts) => {
+					states.push(JSON.parse(opts.body).state);
+					return okJson(jevConsistent(0.9));
+				},
+			},
+		);
+		expect(result.results[0].verdict).toBe("ok");
+		expect(states[0].constituent_findings).toContain("second defect");
+	});
 	it("fans out one judgment per row", async () => {
 		const seen = [];
 		const text =
@@ -375,6 +456,7 @@ describe("lintAgentOutput", () => {
 			{
 				key: "k",
 				cwd: tmp,
+				referenceRoot: tmp,
 				fetchImpl: async (_url, opts) => {
 					const body = JSON.parse(opts.body);
 					captured.push(body.state.contract);

@@ -26,6 +26,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { JEV_ENDPOINT, JEV_MODEL, readKey } from "./jev-gate.mjs";
+import { requireProbability } from "./jev-contracts.mjs";
 
 export const OK_BAR = 0.7;
 export const MISS_BAR = 0.3;
@@ -69,21 +70,43 @@ export const CHECKS = {
 export function parsePatchHunks(patchText) {
 	const hunks = [];
 	let currentFile = null;
+	const state = { active: null, oldRemaining: 0, newRemaining: 0 };
 	for (const line of patchText.split(/\r?\n/)) {
+		if (line.startsWith("diff --git ")) {
+			state.active = null;
+			currentFile = null;
+			continue;
+		}
+		if (consumeHunkLine(state, line)) continue;
 		const fileM = line.match(/^\+\+\+\s+b\/(.+)$/);
 		if (fileM) {
 			currentFile = fileM[1];
 			continue;
 		}
-		const hunkM = line.match(/^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
+		const hunkM = line.match(/^@@\s+-\d+(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/);
 		if (hunkM && currentFile) {
-			hunks.push({ file: currentFile, start: Number(hunkM[1]), text: "" });
+			state.active = {
+				file: currentFile,
+				start: Number(hunkM[2]),
+				count: Number(hunkM[3] ?? 1),
+				text: "",
+			};
+			state.oldRemaining = Number(hunkM[1] ?? 1);
+			state.newRemaining = state.active.count;
+			hunks.push(state.active);
 			continue;
 		}
-		const last = hunks[hunks.length - 1];
-		if (last && currentFile === last.file) last.text += `${line}\n`;
 	}
 	return hunks;
+}
+
+function consumeHunkLine(state, line) {
+	if (!state.active || !/^[ +-]/.test(line)) return false;
+	state.active.text += `${line}\n`;
+	if (!line.startsWith("+")) state.oldRemaining--;
+	if (!line.startsWith("-")) state.newRemaining--;
+	if (state.oldRemaining <= 0 && state.newRemaining <= 0) state.active = null;
+	return true;
 }
 
 /** The hunk covering (file, line), matched by path suffix. Null when absent. */
@@ -94,12 +117,38 @@ export function hunkFor(finding, hunks) {
 			hunk.file.endsWith(`/${finding.file}`) ||
 			finding.file.endsWith(`/${hunk.file}`);
 		if (!sameFile) continue;
-		const hunkLines = hunk.text.split(/\r?\n/).filter(Boolean).length;
-		if (finding.line >= hunk.start && finding.line <= hunk.start + hunkLines) {
+		if (finding.line >= hunk.start && finding.line < hunk.start + hunk.count) {
 			return hunk;
 		}
 	}
 	return null;
+}
+
+/** Bound whole diff lines around the cited new-file line, never truncate it. */
+function contextForLine(hunk, line) {
+	const lines = hunk.text.split(/\r?\n/).slice(0, -1);
+	let current = hunk.start;
+	const index = lines.findIndex(
+		(text) => !text.startsWith("-") && current++ === line,
+	);
+	if (index < 0 || lines[index].length > 6000) return null;
+	const window = { left: index, right: index, size: lines[index].length };
+	while (true) {
+		const before = extendWindow(lines, window, -1);
+		const after = extendWindow(lines, window, 1);
+		if (!before && !after) break;
+	}
+	return `file ${hunk.file}, hunk at line ${hunk.start}, cited line ${line}:\n${lines.slice(window.left, window.right + 1).join("\n")}`;
+}
+
+function extendWindow(lines, window, step) {
+	const edge = step < 0 ? "left" : "right";
+	const next = window[edge] + step;
+	const text = lines[next];
+	if (text == null || window.size + text.length + 1 > 6000) return false;
+	window[edge] = next;
+	window.size += text.length + 1;
+	return true;
 }
 
 /** Assemble scope pairs from a review's findings and patch text(s). */
@@ -111,9 +160,7 @@ export function assembleScopePairs(findings, patchesText) {
 		pairs.push({
 			id: f.id,
 			a: `${f.id} — \`${f.verbatim ?? ""}\` — ${f.note ?? ""}`,
-			b: hunk
-				? `file ${hunk.file}, hunk at line ${hunk.start}:\n${hunk.text.slice(0, 6000)}`
-				: null,
+			b: hunk ? contextForLine(hunk, f.line) : null,
 		});
 	}
 	return pairs;
@@ -155,13 +202,17 @@ export async function judgePair({
 			signal: AbortSignal.timeout(timeoutMs),
 		});
 		if (!res.ok) throw new Error(`HTTP ${res.status} from Jev endpoint`);
-		const p = (await res.json()).answers?.consistent?.noul;
-		if (typeof p !== "number") throw new Error("malformed Jev response");
-		const verdict = p >= OK_BAR ? "ok" : p <= MISS_BAR ? "miss" : "uncertain";
+		const p = requireProbability((await res.json())?.answers?.consistent?.noul);
+		const verdict = pairVerdict(p);
 		return { id: pair.id, p, verdict };
 	} catch (err) {
 		return { id: pair.id, broken: String(err?.message ?? err) };
 	}
+}
+
+function pairVerdict(p) {
+	if (p >= OK_BAR) return "ok";
+	return p <= MISS_BAR ? "miss" : "uncertain";
 }
 
 /** Judge every pair (bounded parallel). Pairs with a null context are skipped
@@ -226,21 +277,7 @@ async function main() {
 		process.exit(2);
 	}
 
-	let pairs;
-	if (args.check === "scope" && args.findings && args.patches.length > 0) {
-		const findings = JSON.parse(readFileSync(resolve(args.findings), "utf8"));
-		const patchesText = args.patches.map((p) =>
-			readFileSync(resolve(p), "utf8"),
-		);
-		pairs = assembleScopePairs(findings, patchesText);
-	} else {
-		const raw = args.input
-			? readFileSync(resolve(args.input), "utf8")
-			: readStdinText();
-		const input = raw ? JSON.parse(raw) : { pairs: [] };
-		pairs = Array.isArray(input) ? input : (input.pairs ?? []);
-	}
-
+	const pairs = loadPairs(args);
 	const key = readKey();
 	if (!key) {
 		process.stderr.write(
@@ -249,27 +286,43 @@ async function main() {
 		process.exit(2);
 	}
 	const results = await judgePairs({ check, pairs, key });
-
-	if (args.out) {
+	if (args.out)
 		writeFileSync(
 			resolve(args.out),
 			JSON.stringify({ check: args.check, results }, null, 2),
 		);
+	for (const result of results) reportPair(check, result);
+}
+
+function loadPairs(args) {
+	const scopeInput = args.check === "scope" && args.findings;
+	if (scopeInput && args.patches.length > 0) {
+		const findings = JSON.parse(readFileSync(resolve(args.findings), "utf8"));
+		const patchesText = args.patches.map((p) =>
+			readFileSync(resolve(p), "utf8"),
+		);
+		return assembleScopePairs(findings, patchesText);
 	}
-	for (const r of results) {
-		if (r.verdict === "miss") {
-			process.stdout.write(
-				`[jev-pair] ${check.missLabel.toUpperCase()}: ${r.id} (p=${r.p.toFixed(2)})\n`,
-			);
-		} else if (r.verdict === "uncertain") {
-			process.stdout.write(
-				`[jev-pair] UNCERTAIN: ${r.id} (p=${r.p.toFixed(2)})\n`,
-			);
-		} else if (r.verdict === "no-context") {
-			process.stdout.write(`[jev-pair] NO CONTEXT for ${r.id} — not judged\n`);
-		} else if (r.broken) {
-			process.stdout.write(`[jev-pair] BROKEN: ${r.id} — ${r.broken}\n`);
-		}
+	const raw = args.input
+		? readFileSync(resolve(args.input), "utf8")
+		: readStdinText();
+	const input = raw ? JSON.parse(raw) : { pairs: [] };
+	return Array.isArray(input) ? input : (input.pairs ?? []);
+}
+
+function reportPair(check, r) {
+	if (r.verdict === "miss") {
+		process.stdout.write(
+			`[jev-pair] ${check.missLabel.toUpperCase()}: ${r.id} (p=${r.p.toFixed(2)})\n`,
+		);
+	} else if (r.verdict === "uncertain") {
+		process.stdout.write(
+			`[jev-pair] UNCERTAIN: ${r.id} (p=${r.p.toFixed(2)})\n`,
+		);
+	} else if (r.verdict === "no-context") {
+		process.stdout.write(`[jev-pair] NO CONTEXT for ${r.id} — not judged\n`);
+	} else if (r.broken) {
+		process.stdout.write(`[jev-pair] BROKEN: ${r.id} — ${r.broken}\n`);
 	}
 }
 

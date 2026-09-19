@@ -8,6 +8,11 @@
 //   - bands: >= 0.7 ok, 0.3-0.7 uncertain, <= 0.3 flag
 //   - broken calls are per-finding, never thrown
 
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -50,6 +55,18 @@ const FINDINGS = [
 ];
 
 describe("assembler", () => {
+	it("normalizes zero-based ast-grep locations before proximity selection", () => {
+		const record = fromAstGrep([
+			{ file: "src/a.ts", range: { start: { line: 0 } }, text: "near" },
+			{ file: "src/a.ts", range: { start: { line: 100 } }, text: "far" },
+		]);
+		expect(record.files["src/a.ts"].matches.map((m) => m.line)).toEqual([
+			1, 101,
+		]);
+		const bundle = bundleFor({ text: "src/a.ts:1" }, record);
+		expect(bundle).toContain("1: near");
+		expect(bundle).not.toContain("far");
+	});
 	it("parses depcruise modules into inbound/outbound/boundaries", () => {
 		const input = {
 			modules: [
@@ -115,6 +132,52 @@ describe("bundleFor", () => {
 });
 
 describe("auditFindings", () => {
+	it("production CLI retains structured locations without citations in notes", () => {
+		const dir = mkdtempSync(join(tmpdir(), "jev-rel-cli-"));
+		try {
+			writeFileSync(
+				join(dir, "findings.json"),
+				JSON.stringify([
+					{
+						id: "Q1",
+						file: "src/pages/api/checkout.ts",
+						line: 300,
+						verbatim: "attachStripeSession",
+						note: "hold lifecycle race",
+					},
+				]),
+			);
+			writeFileSync(join(dir, "record.json"), JSON.stringify(RECORD));
+			const preload = `globalThis.fetch = async (_url, options) => { const body = JSON.parse(options.body); if (!body.state.record.includes('300: await attachStripeSession')) throw Error('missing location evidence'); return { ok: true, json: async () => ({answers:{consistent:{noul:0.9}}}) }; };`;
+			const run = spawnSync(
+				process.execPath,
+				[
+					"--import",
+					`data:text/javascript,${encodeURIComponent(preload)}`,
+					fileURLToPath(
+						new URL("../scripts/jev-rel-audit.mjs", import.meta.url),
+					),
+					"--findings",
+					"findings.json",
+					"--record",
+					"record.json",
+					"--out",
+					"out.json",
+				],
+				{
+					cwd: dir,
+					env: { ...process.env, TYPESAFE_API_KEY: "test-only" },
+					encoding: "utf8",
+				},
+			);
+			expect(run.status, run.stderr).toBe(0);
+			expect(
+				JSON.parse(readFileSync(join(dir, "out.json"), "utf8")).results,
+			).toEqual([{ id: "Q1", p: 0.9, verdict: "ok" }]);
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
+	});
 	it("enforces the asymmetry rule: no-record findings are never judged", async () => {
 		let called = false;
 		const results = await auditFindings({

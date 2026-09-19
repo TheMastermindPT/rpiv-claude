@@ -58,6 +58,34 @@ const okJson = (body) => ({ ok: true, json: async () => body });
 const jevP = (p) => ({ answers: { consistent: { noul: p } } });
 
 describe("patch parsing", () => {
+	it("distinguishes deleted SQL comments from file headers across hunks", () => {
+		const patch =
+			"diff --git a/query.sql b/query.sql\n--- a/query.sql\n+++ b/query.sql\n@@ -1,2 +1,2 @@\n--- old comment\n+-- new comment\n SELECT 1;\n@@ -8 +8 @@\n-SELECT 2;\n+SELECT 3;\n";
+		const pairs = assembleScopePairs(
+			[
+				{ id: "Q1", file: "query.sql", line: 2 },
+				{ id: "Q2", file: "query.sql", line: 8 },
+			],
+			[patch],
+		);
+		expect(pairs[0].b).toContain("SELECT 1;");
+		expect(pairs[1].b).toContain("SELECT 3;");
+	});
+	it("uses exclusive new-file spans, ignoring deletions and patch metadata", () => {
+		const patch =
+			"diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -10,4 +10,1 @@\n-old1\n-old2\n-old3\n-old4\n+new\ndiff --git a/b.ts b/b.ts\nindex abc..def\n";
+		const hunks = parsePatchHunks(patch);
+		expect(hunkFor({ file: "a.ts", line: 10 }, hunks)).not.toBeNull();
+		expect(hunkFor({ file: "a.ts", line: 11 }, hunks)).toBeNull();
+		expect(hunkFor({ file: "a.ts", line: 14 }, hunks)).toBeNull();
+		expect(hunks[0].text).not.toContain("diff --git");
+		expect(
+			hunkFor(
+				{ file: "a.ts", line: 10 },
+				parsePatchHunks(patch.replace("+10,1", "+10,0")),
+			),
+		).toBeNull();
+	});
 	it("parses hunks with new-file start lines", () => {
 		const hunks = parsePatchHunks(PATCH);
 		expect(hunks).toHaveLength(1);
@@ -79,6 +107,25 @@ describe("patch parsing", () => {
 });
 
 describe("assembleScopePairs", () => {
+	it("bounds context around the cited line rather than dropping late evidence", () => {
+		const lines = Array.from(
+			{ length: 200 },
+			(_, i) => `+const item${i} = '${"x".repeat(60)}';`,
+		);
+		lines[180] = "+const TARGET_EVIDENCE = false;";
+		const patch = `--- a/a.ts\n+++ b/a.ts\n@@ -1,0 +1,200 @@\n${lines.join("\n")}\n`;
+		const [pair] = assembleScopePairs(
+			[{ id: "Q1", file: "a.ts", line: 181 }],
+			[patch],
+		);
+		expect(pair.b).toContain("TARGET_EVIDENCE");
+		expect(pair.b.length).toBeLessThanOrEqual(6200);
+		const [oversize] = assembleScopePairs(
+			[{ id: "Q1", file: "a.ts", line: 1 }],
+			[`--- a/a.ts\n+++ b/a.ts\n@@ -0,0 +1 @@\n+${"x".repeat(7000)}\n`],
+		);
+		expect(oversize.b).toBeNull();
+	});
 	it("builds pairs with the hunk as context, null when no hunk covers", () => {
 		const pairs = assembleScopePairs(FINDINGS, [PATCH]);
 		expect(pairs).toHaveLength(2);

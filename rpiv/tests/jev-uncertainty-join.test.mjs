@@ -33,6 +33,38 @@ const lintRow = (id, verdict) => ({
 });
 
 describe("inputs", () => {
+	it("reads canonical findings envelopes with distinct review identities", () => {
+		const path = join(tmp, "canonical.json");
+		writeFileSync(
+			path,
+			JSON.stringify({
+				review: { id: "review-a" },
+				findings: [{ id: "Q1", verify: "Verified" }],
+			}),
+		);
+		expect(readStoreRecords([path])).toEqual([
+			{ id: "Q1", verify: "Verified", reviewId: "review-a" },
+		]);
+	});
+
+	it("keeps valid JSONL rows and diagnoses corrupt input", () => {
+		const path = join(tmp, "corrupt.jsonl");
+		writeFileSync(
+			path,
+			`${JSON.stringify(lintRow("Q1", "flag"))}\nBROKEN\n${JSON.stringify(lintRow("Q2", "ok"))}\n`,
+		);
+		const diagnostics = [];
+		expect(
+			readLintRows(path, (message) => diagnostics.push(message)).map(
+				(r) => r.id,
+			),
+		).toEqual(["Q1", "Q2"]);
+		expect(diagnostics.join("\n")).toMatch(/line 2/);
+		const store = join(tmp, "unsupported.json");
+		writeFileSync(store, "{}");
+		readStoreRecords([store], (message) => diagnostics.push(message));
+		expect(diagnostics.join("\n")).toMatch(/unsupported/i);
+	});
 	it("reads lint rows and filters to claim-verifier with a probability", () => {
 		const path = join(tmp, "log.jsonl");
 		writeFileSync(
@@ -75,6 +107,36 @@ describe("inputs", () => {
 });
 
 describe("join and report", () => {
+	it("does not attribute identity-free historical rows to a namespaced store", () => {
+		const tiers = joinOutcomes(
+			[lintRow("Q1", "flag")],
+			[{ id: "Q1", reviewId: "another-review", verify: "Falsified" }],
+		);
+		expect(tiers.flag.unknown).toBe(1);
+	});
+	it("joins namespaced IDs and leaves ambiguous legacy rows unknown", () => {
+		const records = [
+			{ id: "Q1", reviewId: "a", verify: "Falsified" },
+			{ id: "Q1", reviewId: "b", verify: "Verified" },
+		];
+		const rows = [
+			{ ...lintRow("Q1", "flag"), reviewId: "a" },
+			{ ...lintRow("Q1", "ok"), reviewId: "b" },
+			lintRow("Q1", "review"),
+		];
+		const tiers = joinOutcomes(rows, records);
+		expect(tiers.flag.died).toBe(1);
+		expect(tiers.ok.survived).toBe(1);
+		expect(tiers.review.unknown).toBe(1);
+	});
+
+	it("does not infer predictive power from a single comparison tier", () => {
+		const rows = Array.from({ length: 25 }, (_, i) => lintRow(`Q${i}`, "ok"));
+		const records = rows.map((r) => ({ id: r.id, verify: "Verified" }));
+		expect(renderReport(joinOutcomes(rows, records))).toContain(
+			"INSUFFICIENT DATA",
+		);
+	});
 	it("joins outcomes by id and computes the contingency", () => {
 		const rows = [
 			lintRow("Q1", "flag"),

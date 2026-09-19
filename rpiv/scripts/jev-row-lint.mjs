@@ -22,9 +22,12 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { findingId, requireProbability } from "./jev-contracts.mjs";
 import { appendLog, JEV_ENDPOINT, JEV_MODEL, readKey } from "./jev-gate.mjs";
+
+const PLUGIN_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
 export const OK_BAR = 0.7;
 export const FLAG_BAR = 0.3;
@@ -111,7 +114,8 @@ export const ROW_LINTS = {
 		label: "surface",
 		mechanical: true,
 		pattern:
-			/^(.+?:\d+)\s*\|\s*(.+?)\s*\|\s*(?:surface[-\s]*)?(\d{1,2})\s*\|\s*(.+)$/gm,
+			/^[ \t]*\|?[ \t]*`?([^|`\r\n]+?:\d+)`?[ \t]*\|[ \t]*(.+?)[ \t]*\|[ \t]*(?:surface[-\s]*)?(\d{1,2})[ \t]*\|[ \t]*(.+?)[ \t]*\|?[ \t]*$/gm,
+		candidatePattern: /^.*:\d+`?\s*\|.*$/gm,
 		fields: { id: 1, tag: 3, text: 4, extra: 2 },
 		reference: {
 			path: "skills/deep-review/references/quality-surfaces.md",
@@ -171,7 +175,7 @@ export function parseRows(text, config) {
 			tag = captured.match(config.tagPattern)?.[1] ?? tag;
 		}
 		rows.push({
-			id: m[config.fields.id],
+			id: m[config.fields.id].trim(),
 			tag,
 			text: captured,
 			extra: config.fields.extra != null ? m[config.fields.extra] : undefined,
@@ -184,9 +188,10 @@ export function parseRows(text, config) {
 export function parseConstituentFindings(promptText) {
 	const map = new Map();
 	for (const m of promptText.matchAll(
-		/^([A-Za-z][A-Za-z0-9]*\d+)\s+\|\s+([A-Za-z0-9]+)\s+\|\s+([\w./\\-]+:\d+)\s+\|\s+`([^`]+)`\s+\|\s+[\w-]+\s+\|\s+(.+)$/gm,
+		/^(\S+)\s+\|\s+([A-Za-z0-9]+)\s+\|\s+`?([\w./\\-]+:\d+)`?\s+\|\s+`([^`]+)`\s+\|\s+[^|\r\n]+\s+\|\s+(.+)$/gm,
 	)) {
-		map.set(m[1], `${m[1]} | ${m[2]} | ${m[3]} | \`${m[4]}\` | ${m[5]}`);
+		const id = findingId(m[1]);
+		if (id) map.set(id, `${id} | ${m[2]} | ${m[3]} | \`${m[4]}\` | ${m[5]}`);
 	}
 	return map;
 }
@@ -195,10 +200,7 @@ export function parseConstituentFindings(promptText) {
 export function extractConstituentIds(text, pattern) {
 	const m = text.match(pattern);
 	if (!m) return [];
-	return m[1]
-		.split(",")
-		.map((s) => s.match(/^\s*([A-Za-z][A-Za-z0-9]*\d+)/)?.[1])
-		.filter(Boolean);
+	return m[1].split(",").map(findingId).filter(Boolean);
 }
 
 /**
@@ -206,7 +208,7 @@ export function extractConstituentIds(text, pattern) {
  * contract, or the definition for its tag from the config's reference file.
  * Returns null when nothing can provide one (loud, never a guessed contract).
  */
-export function resolveContract(config, tag, cwd) {
+export function resolveContract(config, tag, referenceRoot = PLUGIN_ROOT) {
 	if (config.contracts) {
 		return config.contracts[tag] ?? null;
 	}
@@ -214,7 +216,7 @@ export function resolveContract(config, tag, cwd) {
 	if (!config.reference) return null;
 	const table = readReferenceTable(
 		config.reference.path,
-		cwd,
+		referenceRoot,
 		config.reference.format,
 	);
 	return table?.get(tag) ?? null;
@@ -231,19 +233,14 @@ export function resolveContract(config, tag, cwd) {
 export function readReferenceTable(path, cwd, format = "numbered") {
 	try {
 		const text = readFileSync(resolve(cwd, path), "utf8");
-		const table = new Map();
-		if (format === "key-bullets") {
-			for (const m of text.matchAll(/^-\s+`([^`]+)`:\s*(.+)$/gm)) {
-				table.set(m[1], m[2].trim());
-			}
-		} else {
-			for (const m of text.matchAll(
-				/^\s*(\d{1,2})\.\s+\*\*([^*]+)\*\*\s*(\([^)]*\))?\s*—\s*(.+)$/gm,
-			)) {
-				const trigger = m[3] ? ` ${m[3].trim()}` : "";
-				table.set(m[1], `${m[2].trim()}${trigger} — ${m[4].trim()}`);
-			}
-		}
+		const entries =
+			format === "key-bullets"
+				? [...text.matchAll(/^-\s+`([^`]+)`:\s*(.+)$/gm)].map((m) => [
+						m[1],
+						m[2].trim(),
+					])
+				: numberedDefinitions(text);
+		const table = new Map(entries);
 		return table.size > 0 ? table : null;
 	} catch {
 		return null;
@@ -251,6 +248,17 @@ export function readReferenceTable(path, cwd, format = "numbered") {
 }
 
 /** The display form of a row — the exact text Jev judged. */
+function numberedDefinitions(text) {
+	return [
+		...text.matchAll(
+			/^\s*(\d{1,2})\.\s+\*\*([^*]+)\*\*\s*(\([^)]*\))?\s*—\s*(.+)$/gm,
+		),
+	].map((m) => [
+		m[1],
+		`${m[2].trim()}${m[3] ? ` ${m[3].trim()}` : ""} — ${m[4].trim()}`,
+	]);
+}
+
 function formatRow(row, config) {
 	const extraLabel = config.extraLabel ?? "quote";
 	return `${row.id} | ${config.label}=${row.tag} | ${row.extra ? `${extraLabel}: ${row.extra} | ` : ""}${row.text}`;
@@ -258,7 +266,7 @@ function formatRow(row, config) {
 
 /** The state Jev judges: enriched compound shape for constituent-aware
  * configs, plain row shape otherwise. */
-function buildRequestState(config, row, contract, code, constituents) {
+function buildRequestState({ config, row, contract, code, constituents }) {
 	const state = config.needsConstituents
 		? {
 				compound_block: formatRow(row, config),
@@ -283,7 +291,13 @@ async function callConsistent({
 	code,
 	constituents,
 }) {
-	const state = buildRequestState(config, row, contract, code, constituents);
+	const state = buildRequestState({
+		config,
+		row,
+		contract,
+		code,
+		constituents,
+	});
 	const res = await fetchImpl(endpoint, {
 		method: "POST",
 		headers: {
@@ -308,9 +322,7 @@ async function callConsistent({
 	});
 	if (!res.ok) throw new Error(`HTTP ${res.status} from Jev endpoint`);
 	const body = await res.json();
-	const p = body?.answers?.consistent?.noul;
-	if (typeof p !== "number") throw new Error("malformed Jev response");
-	return p;
+	return requireProbability(body?.answers?.consistent?.noul);
 }
 
 /**
@@ -385,37 +397,26 @@ async function mapLimit(items, limit, fn) {
  * resolved get a broken reason — never judged partially.
  */
 function resolveRowContexts(config, rows, cwd, constituentMap) {
-	const needsConstituents = config.needsConstituents === true;
-	const contracts = new Map();
-	const constituents = new Map();
-	const brokenReasons = new Map();
-	for (const row of rows) {
-		const contract = resolveContract(config, row.tag, cwd);
-		if (contract == null) {
-			brokenReasons.set(
-				row.id,
-				`no ${config.reference?.label ?? "contract"} for ${config.label}=${row.tag}`,
-			);
-		} else {
-			contracts.set(row.id, contract);
-		}
-		if (needsConstituents) {
-			const ids = extractConstituentIds(row.text, config.constituentPattern);
-			const missing = ids.filter((id) => !constituentMap.has(id));
-			if (missing.length > 0) {
-				brokenReasons.set(
-					row.id,
-					`constituent findings not found: ${missing.join(", ")}`,
-				);
-			} else {
-				constituents.set(
-					row.id,
-					ids.map((id) => constituentMap.get(id)).join("\n"),
-				);
-			}
-		}
-	}
-	return { contracts, constituents, brokenReasons };
+	return new Map(
+		rows.map((row) => [row, rowContext({ config, row, cwd, constituentMap })]),
+	);
+}
+
+function rowContext({ config, row, cwd, constituentMap }) {
+	const contract = resolveContract(config, row.tag, cwd);
+	if (contract == null)
+		return {
+			broken: `no ${config.reference?.label ?? "contract"} for ${config.label}=${row.tag}`,
+		};
+	if (!config.needsConstituents) return { contract };
+	const ids = extractConstituentIds(row.text, config.constituentPattern);
+	const missing = ids.filter((id) => !constituentMap.has(id));
+	if (missing.length)
+		return { broken: `constituent findings not found: ${missing.join(", ")}` };
+	return {
+		contract,
+		constituents: ids.map((id) => constituentMap.get(id)).join("\n"),
+	};
 }
 
 /**
@@ -425,7 +426,8 @@ function resolveRowContexts(config, rows, cwd, constituentMap) {
  */
 export async function lintAgentOutput(config, text, deps = {}) {
 	const rows = parseRows(text, config);
-	if (rows.length === 0) return { results: [], unavailable: null };
+	const rejected = rejectedRows(text, config);
+	if (rows.length === 0) return { results: rejected, unavailable: null };
 	const key = deps.key ?? readKey({ envFile: deps.envFile, env: deps.env });
 	if (!key) {
 		return {
@@ -448,30 +450,55 @@ export async function lintAgentOutput(config, text, deps = {}) {
 		};
 	}
 
-	const { contracts, constituents, brokenReasons } = resolveRowContexts(
+	const contexts = resolveRowContexts(
 		config,
 		rows,
-		deps.cwd ?? process.cwd(),
+		deps.referenceRoot ?? PLUGIN_ROOT,
 		constituentMap,
 	);
 	const results = await mapLimit(rows, 5, (row) =>
-		!brokenReasons.has(row.id)
+		!contexts.get(row).broken
 			? lintRow({
 					row,
 					config,
-					contract: contracts.get(row.id),
-					constituents: constituents.get(row.id),
+					...contexts.get(row),
 					key,
 					fetchImpl: deps.fetchImpl ?? fetch,
 				})
 			: {
 					id: row.id,
 					tag: row.tag,
-					broken: brokenReasons.get(row.id),
+					broken: contexts.get(row).broken,
 					rowText: formatRow(row, config),
 				},
 	);
-	return { results, unavailable: null };
+	return { results: [...results, ...rejected], unavailable: null };
+}
+
+function rejectedRows(text, config) {
+	if (!config.candidatePattern) return [];
+	const predicateTables = [
+		...text.matchAll(
+			/^[ \t]*\|[ \t]*predicate file:line[ \t]*\|[ \t]*accepted[ \t]*\|[ \t]*rejected[ \t]*\|[ \t]*\r?\n(?:[ \t]*\|[^\r\n]*(?:\r?\n|$))*/gim,
+		),
+	];
+	const accepted = new Set(
+		[...text.matchAll(config.pattern)].map((m) => m[0].trim()),
+	);
+	return [...text.matchAll(config.candidatePattern)]
+		.filter(
+			(m) =>
+				!predicateTables.some(
+					(table) =>
+						m.index >= table.index && m.index < table.index + table[0].length,
+				),
+		)
+		.filter((m) => !accepted.has(m[0].trim()))
+		.map((m) => ({
+			id: `unparsed-${m.index}`,
+			broken: "cannot parse candidate finding row",
+			rowText: m[0],
+		}));
 }
 
 function isSubagentEvent(event) {
@@ -546,6 +573,11 @@ async function main() {
 		);
 		return;
 	}
+	logResults(agentName, config, results);
+	for (const r of results) emitWarning(agentName, r);
+}
+
+function logResults(agentName, config, results) {
 	try {
 		for (const r of results) {
 			appendLog(LINT_LOG_PATH, {
@@ -563,7 +595,6 @@ async function main() {
 	} catch (err) {
 		process.stdout.write(`[jev-lint] LOG UNAVAILABLE: ${err.message}\n`);
 	}
-	for (const r of results) emitWarning(agentName, r);
 }
 
 function readStdin() {

@@ -16,9 +16,10 @@
 //   node scripts/jev-lint-calibrate.mjs --label <ts> agree [--id <id>]
 //   node scripts/jev-lint-calibrate.mjs --label <ts> disagree [--id <id>]
 
-import { appendFileSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { readCommittedRows } from "./jev-source-store.mjs";
 
 export const LINT_LOG_PATH = "reports/jev-lint-shadow.log";
 export const LABELS_PATH = "reports/jev-lint-labels.jsonl";
@@ -31,16 +32,34 @@ export const MIN_TOTAL = 20;
 export const OK_ACCURACY = 0.95;
 export const FLAG_WRONG_RATE = 0.6;
 
-export function readLines(path) {
+export function readLines(path, keepEmpty = false) {
 	try {
-		return readFileSync(path, "utf8").split(/\r?\n/).filter(Boolean);
-	} catch {
+		const lines = readFileSync(path, "utf8").split(/\r?\n/);
+		return keepEmpty ? lines : lines.filter(Boolean);
+	} catch (error) {
+		if (error.code !== "ENOENT") throw error;
 		return [];
 	}
 }
 
-export function readLog(path = LINT_LOG_PATH) {
-	return readLines(path).map((line) => JSON.parse(line));
+export function readLog(path = LINT_LOG_PATH, onDiagnostic = reportLogError) {
+	const diagnosticRows = [];
+	for (const [index, line] of readLines(path, true).entries()) {
+		if (!line.trim()) continue;
+		try {
+			diagnosticRows.push(JSON.parse(line));
+		} catch {
+			onDiagnostic(
+				`malformed diagnostic JSON at line ${index + 1} in ${path}; reporting valid and committed rows only`,
+			);
+		}
+	}
+	const rows = [...diagnosticRows, ...readCommittedRows(path)];
+	return [...new Map(rows.map((row) => [JSON.stringify(row), row])).values()];
+}
+
+function reportLogError(message) {
+	process.stderr.write(`[jev-calibrate] BROKEN INPUT: ${message}\n`);
 }
 
 /** Labels keyed by ts; malformed lines and entries without ts are skipped. */
@@ -64,6 +83,7 @@ export function readLabels(path = LABELS_PATH) {
 }
 
 export function appendLabel(path, { ts, id, correct }) {
+	mkdirSync(dirname(path), { recursive: true });
 	appendFileSync(path, `${JSON.stringify({ ts, id, correct })}\n`, "utf8");
 }
 
@@ -71,8 +91,8 @@ export function appendLabel(path, { ts, id, correct }) {
 function findLabel(labelList, id) {
 	if (!labelList?.length) return null;
 	return (
-		labelList.find((l) => l.id === id) ??
-		labelList.find((l) => l.id == null) ??
+		labelList.findLast((l) => l.id === id) ??
+		labelList.findLast((l) => l.id == null) ??
 		null
 	);
 }
@@ -91,18 +111,7 @@ export function buildReport(log, labels, agentFilter) {
 	const entries = agentFilter
 		? log.filter((e) => e.agent === agentFilter)
 		: log;
-	const rows = entries.map((entry) => {
-		const label = findLabel(labels.get(entry.ts), entry.id);
-		const correct = label?.correct;
-		const wrong =
-			correct == null ? null : entry.verdict === "ok" ? !correct : correct;
-		return {
-			...entry,
-			labeled: Boolean(label),
-			correct,
-			wrong,
-		};
-	});
+	const rows = entries.map((entry) => labeledRow(entry, labels));
 	const judged = rows.filter((r) => typeof r.p === "number");
 	const labeled = judged.filter((r) => r.labeled);
 	const broken = rows.filter((r) => r.broken).length;
@@ -159,6 +168,14 @@ export function buildReport(log, labels, agentFilter) {
  *           least FLAG_WRONG_RATE wrong (flags worth reading).
  * Both are null when the minimum-data guards cannot be met.
  */
+function labeledRow(entry, labels) {
+	const label = findLabel(labels.get(entry.ts), entry.id);
+	const correct = label?.correct;
+	const wrong =
+		correct == null ? null : entry.verdict === "ok" ? !correct : correct;
+	return { ...entry, labeled: Boolean(label), correct, wrong };
+}
+
 export function suggestBands(buckets) {
 	const passes = (windowBuckets, predicate) => {
 		const usable = windowBuckets.filter(
@@ -172,21 +189,14 @@ export function suggestBands(buckets) {
 		);
 	};
 
-	let okBar = null;
-	for (let b = 9; b >= 0; b--) {
-		const windowBuckets = buckets.slice(b);
-		if (passes(windowBuckets, (x) => x.wrongRate <= 1 - OK_ACCURACY)) {
-			okBar = buckets[b].lo;
-		}
-	}
-
-	let flagBar = null;
-	for (let b = 0; b <= 9; b++) {
-		const windowBuckets = buckets.slice(0, b + 1);
-		if (passes(windowBuckets, (x) => x.wrongRate >= FLAG_WRONG_RATE)) {
-			flagBar = buckets[b].hi;
-		}
-	}
+	const okBar =
+		buckets.find((_bucket, b) =>
+			passes(buckets.slice(b), (x) => x.wrongRate <= 1 - OK_ACCURACY),
+		)?.lo ?? null;
+	const flagBar =
+		buckets.findLast((_bucket, b) =>
+			passes(buckets.slice(0, b + 1), (x) => x.wrongRate >= FLAG_WRONG_RATE),
+		)?.hi ?? null;
 
 	return { okBar, flagBar };
 }
@@ -246,7 +256,12 @@ export function renderReport(report) {
 		lines.push(`- ${w.ts} ok ${w.id} tag=${w.tag} p=${w.p?.toFixed(2)}`);
 		lines.push(`  ${w.row}`);
 	}
-	return lines.join("\n");
+	// Preserve report formatting while making terminal escape sequences inert.
+	return lines.join("\n").replace(
+		// biome-ignore lint/suspicious/noControlCharactersInRegex: Deliberately neutralize terminal control bytes from agent-authored fields.
+		/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g,
+		(char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
+	);
 }
 
 function parseArgs(argv) {

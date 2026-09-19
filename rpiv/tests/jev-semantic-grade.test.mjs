@@ -51,6 +51,20 @@ const okJson = (body) => ({ ok: true, json: async () => body });
 const jevP = (p) => ({ answers: { describes_defect: { noul: p } } });
 
 describe("extractFindings", () => {
+	it("keeps legacy suffixed IDs but ignores prose and number-only headings", () => {
+		expect(
+			extractFindings(
+				"### Notes\ntext\n### 123 not an ID\ntext\n### Q1_suffix Finding\ntext\n### Q_2 Other\ntext\n",
+			).map((f) => f.id),
+		).toEqual(["Q1_suffix", "Q_2"]);
+	});
+	it("preserves canonical hyphenated architectural IDs", () => {
+		expect(
+			extractFindings(
+				"### L0-01 First\nbody\n### L0-02 Second\nbody\n### IX-3 Compound\nbody",
+			).map((f) => f.id),
+		).toEqual(["L0-01", "L0-02", "IX-3"]);
+	});
 	it("parses ### sections with ids", () => {
 		const findings = extractFindings(ARTIFACT);
 		expect(findings.map((f) => f.id)).toEqual(["Q1", "Q2"]);
@@ -79,6 +93,35 @@ describe("matchCandidate", () => {
 });
 
 describe("semanticGrade", () => {
+	it.each([
+		[0, "fail"],
+		[1, "pass"],
+		[0.3, "fail"],
+		[0.7, "pass"],
+	])("accepts boundary probability %s as %s", async (p, verdict) => {
+		const result = await semanticGrade({
+			recallItems: [RECALL_ITEM],
+			artifactText: ARTIFACT,
+			key: "k",
+			fetchImpl: async () => okJson(jevP(p)),
+		});
+		expect(result.results[0].verdict).toBe(verdict);
+		expect(result.summary.broken).toBe(0);
+	});
+	it.each([undefined, null, "0.8", NaN, Infinity, -0.1, 1.1])(
+		"treats invalid probability %s as broken, never uncertain",
+		async (p) => {
+			const result = await semanticGrade({
+				recallItems: [RECALL_ITEM],
+				artifactText: ARTIFACT,
+				key: "k",
+				fetchImpl: async () => okJson(jevP(p)),
+			});
+			expect(result.summary.broken).toBe(1);
+			expect(result.summary.uncertain).toBe(0);
+			expect(result.results[0].note).toMatch(/malformed/);
+		},
+	);
 	it("bands verdicts and picks the best candidate per item", async () => {
 		const { results, summary } = await semanticGrade({
 			recallItems: [RECALL_ITEM],

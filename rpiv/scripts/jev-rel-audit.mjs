@@ -38,6 +38,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { JEV_ENDPOINT, JEV_MODEL, readKey } from "./jev-gate.mjs";
+import { requireProbability } from "./jev-contracts.mjs";
 
 export const OK_BAR = 0.7;
 export const FLAG_BAR = 0.3;
@@ -69,26 +70,28 @@ export function fromDepcruise(input) {
 	for (const mod of modules) {
 		if (!mod.source) continue;
 		if (!files.has(mod.source)) files.set(mod.source, emptyRecord());
-		for (const dep of mod.dependencies ?? []) {
-			const target = dep.resolved ?? dep.circularPath ?? null;
-			if (target) files.get(mod.source).outbound.push(target);
-			if (dep.valid === false) {
-				const rules = (dep.rules ?? [])
-					.map((r) => r.name ?? String(r))
-					.join(", ");
-				files
-					.get(mod.source)
-					.boundaries.push(`${target ?? "?"}: ${rules || "violated"}`);
-			}
-		}
+		for (const dep of mod.dependencies ?? [])
+			addDependency(files.get(mod.source), dep);
 	}
+	addInboundEdges(files);
+	return { files: Object.fromEntries(files) };
+}
+
+function addDependency(record, dep) {
+	const target = dep.resolved ?? dep.circularPath ?? null;
+	if (target) record.outbound.push(target);
+	if (dep.valid !== false) return;
+	const rules = (dep.rules ?? []).map((r) => r.name ?? String(r)).join(", ");
+	record.boundaries.push(`${target ?? "?"}: ${rules || "violated"}`);
+}
+
+function addInboundEdges(files) {
 	for (const [source, record] of files) {
 		for (const target of record.outbound) {
 			if (!files.has(target)) files.set(target, emptyRecord());
 			files.get(target).inbound.push(source);
 		}
 	}
-	return { files: Object.fromEntries(files) };
 }
 
 /** Tolerant ast-grep scan --json: array or { matches: [...] }; entries carry path/file, line, text. */
@@ -96,12 +99,18 @@ export function fromAstGrep(input, files = {}) {
 	const list = Array.isArray(input) ? input : (input?.matches ?? []);
 	for (const m of list) {
 		const path = m.path ?? m.file;
-		const line = typeof m.line === "number" ? m.line : null;
+		const line = matchLine(m);
 		if (!path) continue;
 		if (!files[path]) files[path] = emptyRecord();
 		files[path].matches.push({ line, text: m.text ?? "" });
 	}
 	return { files };
+}
+
+function matchLine(match) {
+	if (Number.isInteger(match.line)) return match.line;
+	const zeroBased = match.range?.start?.line;
+	return Number.isInteger(zeroBased) ? zeroBased + 1 : null;
 }
 
 export function assembleRecord({ depcruise, astgrep }) {
@@ -210,9 +219,7 @@ async function callRelJudge({
 		signal: AbortSignal.timeout(timeoutMs),
 	});
 	if (!res.ok) throw new Error(`HTTP ${res.status} from Jev endpoint`);
-	const p = (await res.json()).answers?.consistent?.noul;
-	if (typeof p !== "number") throw new Error("malformed Jev response");
-	return p;
+	return requireProbability((await res.json())?.answers?.consistent?.noul);
 }
 
 /** One judgment per finding. Returns { id, p, verdict } | { id, broken } |
@@ -286,21 +293,11 @@ function parseArgs(argv) {
 	return args;
 }
 
-function main() {
+async function main() {
 	const args = parseArgs(process.argv.slice(2));
 
 	if (args.depcruise || args.astgrep) {
-		if (!args.out) {
-			process.stderr.write("assemble mode requires --out relations.json\n");
-			process.exit(2);
-		}
-		const depcruise = args.depcruise ? parseJsonFile(args.depcruise) : null;
-		const astgrep = args.astgrep ? parseJsonFile(args.astgrep) : null;
-		const record = assembleRecord({ depcruise, astgrep });
-		writeFileSync(resolve(args.out), JSON.stringify(record, null, 2));
-		process.stdout.write(
-			`assembled record: ${Object.keys(record.files).length} files\n`,
-		);
+		assembleFromArgs(args);
 		return;
 	}
 
@@ -320,31 +317,46 @@ function main() {
 	}
 	const findings = parseJsonFile(args.findings).map((f) => ({
 		id: f.id,
-		text: `${f.id} — \`${f.verbatim ?? ""}\` — ${f.note ?? ""}`,
+		text: `${f.id} — ${f.file && Number.isInteger(f.line) ? `${f.file}:${f.line} — ` : ""}\`${f.verbatim ?? ""}\` — ${f.note ?? ""}`,
 	}));
 	const record = parseJsonFile(args.record);
-	auditFindings({ findings, record, key }).then((results) => {
-		if (args.out) {
-			writeFileSync(resolve(args.out), JSON.stringify({ results }, null, 2));
-		}
-		for (const r of results) {
-			if (r.verdict === "flag") {
-				process.stdout.write(
-					`[jev-rel] RECORD-CONTRADICTION: ${r.id} (p=${r.p.toFixed(2)})\n`,
-				);
-			} else if (r.verdict === "uncertain") {
-				process.stdout.write(
-					`[jev-rel] UNCERTAIN: ${r.id} (p=${r.p.toFixed(2)})\n`,
-				);
-			} else if (r.broken) {
-				process.stdout.write(`[jev-rel] BROKEN: ${r.id} — ${r.broken}\n`);
-			}
-		}
-		const noRecord = results.filter((r) => r.verdict === "no-record").length;
+	const results = await auditFindings({ findings, record, key });
+	if (args.out) {
+		writeFileSync(resolve(args.out), JSON.stringify({ results }, null, 2));
+	}
+	for (const r of results) reportAuditRow(r);
+	const noRecord = results.filter((r) => r.verdict === "no-record").length;
+	process.stdout.write(
+		`[jev-rel] ${results.length} findings: ${results.filter((r) => r.verdict === "ok").length} ok, ${results.filter((r) => r.verdict === "flag" || r.verdict === "uncertain").length} flagged, ${noRecord} no-record\n`,
+	);
+}
+
+function assembleFromArgs(args) {
+	if (!args.out) {
+		process.stderr.write("assemble mode requires --out relations.json\n");
+		process.exit(2);
+	}
+	const depcruise = args.depcruise ? parseJsonFile(args.depcruise) : null;
+	const astgrep = args.astgrep ? parseJsonFile(args.astgrep) : null;
+	const record = assembleRecord({ depcruise, astgrep });
+	writeFileSync(resolve(args.out), JSON.stringify(record, null, 2));
+	process.stdout.write(
+		`assembled record: ${Object.keys(record.files).length} files\n`,
+	);
+}
+
+function reportAuditRow(r) {
+	if (r.verdict === "flag") {
 		process.stdout.write(
-			`[jev-rel] ${results.length} findings: ${results.filter((r) => r.verdict === "ok").length} ok, ${results.filter((r) => r.verdict === "flag" || r.verdict === "uncertain").length} flagged, ${noRecord} no-record\n`,
+			`[jev-rel] RECORD-CONTRADICTION: ${r.id} (p=${r.p.toFixed(2)})\n`,
 		);
-	});
+	} else if (r.verdict === "uncertain") {
+		process.stdout.write(
+			`[jev-rel] UNCERTAIN: ${r.id} (p=${r.p.toFixed(2)})\n`,
+		);
+	} else if (r.broken) {
+		process.stdout.write(`[jev-rel] BROKEN: ${r.id} — ${r.broken}\n`);
+	}
 }
 
 if (import.meta.url === pathToFileURL(resolve(process.argv[1] ?? "")).href) {

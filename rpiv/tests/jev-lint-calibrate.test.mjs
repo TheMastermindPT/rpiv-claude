@@ -67,6 +67,17 @@ describe("bucketOf", () => {
 });
 
 describe("buildReport", () => {
+	it("uses the latest exact adjudication while keeping IDs separate", () => {
+		const path = join(tmp, "adjudication.jsonl");
+		appendLabel(path, { ts: "t", id: "Q1", correct: true });
+		appendLabel(path, { ts: "t", id: "Q2", correct: true });
+		appendLabel(path, { ts: "t", id: "Q1", correct: false });
+		const report = buildReport(
+			[entry({ ts: "t", id: "Q1" }), entry({ ts: "t", id: "Q2" })],
+			readLabels(path),
+		);
+		expect(report.tiers.ok.actuallyWrong).toBe(1);
+	});
 	it("joins labels by ts and id, and counts tiers", () => {
 		const log = [
 			entry({ ts: "t1", id: "Q1", verdict: "flag", p: 0.1 }),
@@ -144,6 +155,18 @@ describe("suggestBands", () => {
 });
 
 describe("renderReport", () => {
+	it("escapes terminal controls in untrusted fields without removing report newlines", () => {
+		const payload = "\u001b]52;c;synthetic\u0007\r\u009b31m";
+		const report = buildReport(
+			[entry({ id: payload, agent: payload, tag: payload, row: payload })],
+			new Map(),
+			payload,
+		);
+		const text = renderReport(report);
+		expect(text).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/);
+		expect(text).toContain("\\u001b");
+		expect(text).toContain("\n##");
+	});
 	it("renders the section headings and marks insufficient data", () => {
 		const report = buildReport([], new Map());
 		const text = renderReport(report);

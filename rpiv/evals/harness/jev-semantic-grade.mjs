@@ -21,6 +21,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { JEV_MODEL, readKey } from "../../scripts/jev-gate.mjs";
+import { findingId, requireProbability } from "../../scripts/jev-contracts.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
@@ -35,7 +36,7 @@ export const CITATION =
 export function extractFindings(text) {
 	const findings = [];
 	for (const section of text.split(/^### /gm).slice(1)) {
-		const id = section.match(/^([A-Za-z]\w*\d+\w*)/)?.[1];
+		const id = findingId(section);
 		if (!id) continue;
 		findings.push({ id, text: section.trim().slice(0, 3000) });
 	}
@@ -45,25 +46,24 @@ export function extractFindings(text) {
 /** Does the finding cite a location inside the recall window? Best (nearest)
  * candidate wins; null when nothing is in range. */
 export function matchCandidate(finding, recallItem) {
-	let best = null;
-	for (const target of recallItem.files ?? []) {
-		for (const m of finding.text.matchAll(CITATION)) {
-			const citedPath = m[1].replaceAll("\\", "/");
-			const targetPath = target.path.replaceAll("\\", "/");
-			const sameFile =
-				citedPath === targetPath || targetPath.endsWith(`/${citedPath}`);
-			if (!sameFile) continue;
-			const line = Number(m[2]);
-			const radius = target.radius ?? 0;
-			const distance = target.line == null ? 0 : Math.abs(line - target.line);
-			if (target.line == null || distance <= radius) {
-				if (!best || distance < best.distance) {
-					best = { id: finding.id, text: finding.text, distance };
-				}
-			}
-		}
-	}
-	return best;
+	const citations = [...finding.text.matchAll(CITATION)];
+	const distances = (recallItem.files ?? []).flatMap((target) =>
+		citations.map((citation) => citationDistance(citation, target)),
+	);
+	const distance = Math.min(...distances);
+	return Number.isFinite(distance)
+		? { id: finding.id, text: finding.text, distance }
+		: null;
+}
+
+function citationDistance(citation, target) {
+	const citedPath = citation[1].replaceAll("\\", "/");
+	const targetPath = target.path.replaceAll("\\", "/");
+	if (citedPath !== targetPath && !targetPath.endsWith(`/${citedPath}`))
+		return Infinity;
+	if (target.line == null) return 0;
+	const distance = Math.abs(Number(citation[2]) - target.line);
+	return distance <= (target.radius ?? 0) ? distance : Infinity;
 }
 
 /** One semantic judgment per recall item. Returns null candidate/verdict
@@ -93,58 +93,87 @@ export async function semanticGrade({
 			});
 			continue;
 		}
-		try {
-			const res = await fetchImpl("https://api.typesafe.ai/v1/systemone", {
-				method: "POST",
-				headers: {
-					Authorization: `Bearer ${key}`,
-					"Content-Type": "application/json",
+		results.push(
+			await judgeRecall({
+				item,
+				candidate,
+				groundTruthNote,
+				fetchImpl,
+				key,
+				timeoutMs,
+			}),
+		);
+	}
+	return { results, summary: summarizeResults(results) };
+}
+
+async function judgeRecall({
+	item,
+	candidate,
+	groundTruthNote,
+	fetchImpl,
+	key,
+	timeoutMs,
+}) {
+	try {
+		const res = await fetchImpl("https://api.typesafe.ai/v1/systemone", {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${key}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({
+				model: JEV_MODEL,
+				state: {
+					ground_truth_note: groundTruthNote,
+					recall_item: `${item.id} — ${item.note ?? ""}`,
+					candidate_finding: candidate.text,
 				},
-				body: JSON.stringify({
-					model: JEV_MODEL,
-					state: {
-						ground_truth_note: groundTruthNote,
-						recall_item: `${item.id} — ${item.note ?? ""}`,
-						candidate_finding: candidate.text,
-					},
-					questions: {
-						describes_defect: {
-							type: "noul",
-							instructions:
-								"Does the candidate finding describe the defect this recall item targets?",
-							criteria: {
-								true: "the finding names the specific defect the recall item describes (per the ground-truth note)",
-								false:
-									"the finding cites the location but describes something different from the targeted defect",
-							},
+				questions: {
+					describes_defect: {
+						type: "noul",
+						instructions:
+							"Does the candidate finding describe the defect this recall item targets?",
+						criteria: {
+							true: "the finding names the specific defect the recall item describes (per the ground-truth note)",
+							false:
+								"the finding cites the location but describes something different from the targeted defect",
 						},
 					},
-				}),
-				signal: AbortSignal.timeout(timeoutMs),
-			});
-			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-			const p = (await res.json()).answers.describes_defect.noul;
-			const verdict =
-				p >= PASS_BAR ? "pass" : p <= FAIL_BAR ? "fail" : "uncertain";
-			results.push({ id: item.id, candidate: candidate.id, p, verdict });
-		} catch (err) {
-			results.push({
-				id: item.id,
-				candidate: candidate.id,
-				p: null,
-				verdict: "broken",
-				note: String(err?.message ?? err),
-			});
-		}
+				},
+			}),
+			signal: AbortSignal.timeout(timeoutMs),
+		});
+		if (!res.ok) throw new Error(`HTTP ${res.status}`);
+		const p = requireProbability(
+			(await res.json())?.answers?.describes_defect?.noul,
+		);
+		const verdict = recallVerdict(p);
+		return { id: item.id, candidate: candidate.id, p, verdict };
+	} catch (err) {
+		return {
+			id: item.id,
+			candidate: candidate.id,
+			p: null,
+			verdict: "broken",
+			note: String(err?.message ?? err),
+		};
 	}
-	const summary = {
+}
+
+function summarizeResults(results) {
+	return {
 		pass: results.filter((r) => r.verdict === "pass").length,
 		uncertain: results.filter((r) => r.verdict === "uncertain").length,
 		fail: results.filter((r) => r.verdict === "fail").length,
 		noCandidate: results.filter((r) => r.verdict === "no-candidate").length,
 		broken: results.filter((r) => r.verdict === "broken").length,
 	};
-	return { results, summary };
+}
+
+function recallVerdict(p) {
+	if (p >= PASS_BAR) return "pass";
+	return p <= FAIL_BAR ? "fail" : "uncertain";
 }
 
 function parseArgs(argv) {

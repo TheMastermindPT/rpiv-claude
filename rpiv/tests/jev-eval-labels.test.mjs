@@ -23,6 +23,7 @@ import {
 	processedSources,
 	resolveCasePrompt,
 } from "../scripts/jev-eval-labels.mjs";
+import { readLog } from "../scripts/jev-lint-calibrate.mjs";
 
 const tmp = mkdtempSync(join(require("node:os").tmpdir(), "jev-eval-"));
 afterAll(() => rmSync(tmp, { recursive: true, force: true }));
@@ -127,9 +128,11 @@ describe("processEvalRoot", () => {
 
 	it("processedSources reads only entries carrying a source", () => {
 		const sources = processedSources([
-			{ source: "a" },
+			{ source: "a", status: "complete", results: [] },
 			{ verdict: "flag" },
-			{ source: "b" },
+			{ source: "b", status: "complete", results: [{ verdict: "ok" }] },
+			{ source: "failed", broken: "down" },
+			{ source: "partial", verdict: "ok" },
 		]);
 		expect([...sources]).toEqual(["a", "b"]);
 	});
@@ -161,5 +164,117 @@ describe("processEvalRoot", () => {
 				promptRoot,
 			),
 		).toBeNull();
+	});
+});
+
+describe("durable source processing", () => {
+	function fixture() {
+		const root = mkdtempSync(join(tmp, "retry-"));
+		const dir = join(root, "SV-1", "outputs");
+		mkdirSync(dir, { recursive: true });
+		const source = join(dir, "agent-output.md");
+		writeFileSync(source, "- Decisions: OK\n- Cross-slice: OK\n");
+		return { root, source, logPath: join(root, "lint.log"), key: "k" };
+	}
+
+	it("retries an entire source after a failed row rather than completing a partial batch", async () => {
+		const opts = fixture();
+		let firstCalls = 0;
+		await processEvalRoot({
+			...opts,
+			fetchImpl: async () => {
+				if (firstCalls++ === 0) return okJson(jevConsistent(0.9));
+				throw new Error("outage");
+			},
+		});
+		let retried = 0;
+		const result = await processEvalRoot({
+			...opts,
+			fetchImpl: async () => {
+				retried++;
+				return okJson(jevConsistent(0.9));
+			},
+		});
+		expect(retried).toBe(2);
+		expect(result.linted).toBe(1);
+	});
+
+	it("reserves a source across asynchronous calls so concurrent scans cannot duplicate work", async () => {
+		const opts = fixture();
+		let release;
+		let started;
+		const entered = new Promise((r) => {
+			started = r;
+		});
+		const hold = new Promise((r) => {
+			release = r;
+		});
+		let calls = 0;
+		const fetchImpl = async () => {
+			calls++;
+			started();
+			await hold;
+			return okJson(jevConsistent(0.9));
+		};
+		const first = processEvalRoot({ ...opts, fetchImpl });
+		await entered;
+		const second = await processEvalRoot({
+			...opts,
+			fetchImpl: async () => {
+				calls++;
+				return okJson(jevConsistent(0.9));
+			},
+		});
+		release();
+		await first;
+		expect(calls).toBe(2);
+		expect(second.skipped).toBe(1);
+	});
+
+	it("retains completion after diagnostic log loss, but processes changed output", async () => {
+		const opts = fixture();
+		let calls = 0;
+		const fetchImpl = async () => {
+			calls++;
+			return okJson(jevConsistent(0.9));
+		};
+		await processEvalRoot({ ...opts, fetchImpl });
+		rmSync(opts.logPath);
+		const second = await processEvalRoot({ ...opts, fetchImpl });
+		expect(second.skipped).toBe(1);
+		expect(calls).toBe(2);
+		writeFileSync(opts.source, "- Decisions: WARNING: revised observation\n");
+		expect((await processEvalRoot({ ...opts, fetchImpl })).linted).toBe(1);
+		expect(calls).toBe(3);
+	});
+
+	it("does not mistake an interrupted legacy append for source completion", async () => {
+		const opts = fixture();
+		writeFileSync(
+			opts.logPath,
+			`${JSON.stringify({ source: opts.source, id: "Decisions", verdict: "ok" })}\n`,
+		);
+		let calls = 0;
+		await processEvalRoot({
+			...opts,
+			fetchImpl: async () => {
+				calls++;
+				return okJson(jevConsistent(0.9));
+			},
+		});
+		expect(calls).toBe(2);
+	});
+
+	it("calibration reads committed rows even if diagnostic appending fails", async () => {
+		const opts = fixture();
+		mkdirSync(opts.logPath);
+		const fetchImpl = async () => okJson(jevConsistent(0.9));
+		await expect(processEvalRoot({ ...opts, fetchImpl })).rejects.toThrow();
+		rmSync(opts.logPath, { recursive: true });
+		expect((await processEvalRoot({ ...opts, fetchImpl })).skipped).toBe(1);
+		expect(readLog(opts.logPath).map((r) => r.id)).toEqual([
+			"Decisions",
+			"Cross-slice",
+		]);
 	});
 });

@@ -5,8 +5,9 @@
 // entry) and then persists per-row MECHANICAL labels here: a row whose cited
 // `path:line` does not resolve in the worktree, or whose backtick quote does
 // not match the cited line (the grader's own tolerance: +-3 lines,
-// whitespace-normalized), is labeled correct=false. Rows whose quotes match
-// are correct=true. Rows without checkable citations get no label.
+// whitespace-normalized), is mechanically invalid. Persisted `correct` means
+// agreement with the lint verdict, not citation validity. Uncheckable rows
+// and broken judgments get no label.
 //
 // These are the only eval-harness signals that map soundly to the lint's
 // question (row-internal consistency). Recall/absence expectations measure a
@@ -14,11 +15,12 @@
 //
 // Inert-but-loud: a missing key or Jev outage must never fail an eval run.
 
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync, realpathSync } from "node:fs";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 import { appendLabel, readLog } from "../../scripts/jev-lint-calibrate.mjs";
 import { ROW_LINTS } from "../../scripts/jev-row-lint.mjs";
+import { readCompletedBatch } from "../../scripts/jev-source-store.mjs";
 
 const CITATION_PATTERN =
 	/([\w./\\-]+\.(?:ts|mts|cts|js|mjs|cjs|tsx|jsx|md|json|html|css)):(\d{1,5})/g;
@@ -51,12 +53,15 @@ export function extractQuotes(text) {
  * citation could not be mechanically checked.
  */
 export function checkCitation(text, repoRoot) {
-	const quotes = extractQuotes(text);
+	const quotes = extractQuotes(text).filter((q) => {
+		const citations = extractCitations(q.quote);
+		return !citations.some((c) => `${c.path}:${c.line}` === q.quote);
+	});
 	const citations = extractCitations(text);
 	const results = [];
 	for (const c of citations) {
-		const file = resolve(repoRoot, c.path);
-		if (!existsSync(file)) {
+		const file = containedCitationPath(repoRoot, c.path);
+		if (!file) {
 			results.push({ ...c, verdict: "unresolvable" });
 			continue;
 		}
@@ -79,21 +84,30 @@ export function checkCitation(text, repoRoot) {
 	return results;
 }
 
+function containedCitationPath(repoRoot, path) {
+	try {
+		const root = realpathSync(repoRoot);
+		const file = realpathSync(resolve(root, path.replaceAll("\\", "/")));
+		const rel = relative(root, file);
+		return rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)
+			? null
+			: file;
+	} catch {
+		return null;
+	}
+}
+
 /**
  * The per-row label decision: correct=false when any citation is unresolvable
  * or mismatched; correct=true when at least one citation matches and none
  * fail; null (no label) when nothing is mechanically checkable.
  */
 export function labelDecision(verdicts) {
-	const checkable = verdicts.filter((v) => v.verdict !== "no-quote");
-	if (checkable.length === 0) return null;
-	const bad = checkable.some(
+	const bad = verdicts.some(
 		(v) => v.verdict === "mismatch" || v.verdict === "unresolvable",
 	);
-	const good = checkable.some((v) => v.verdict === "match");
 	if (bad) return false;
-	if (good) return true;
-	return null;
+	return verdicts.some((v) => v.verdict === "match") ? true : null;
 }
 
 /**
@@ -106,19 +120,28 @@ export function labelDecision(verdicts) {
  * Returns the count of labels written.
  */
 export function labelFromLog(logPath, labelsPath, source, repoRoot) {
-	const entries = readLog(logPath).filter((e) => e.source === source);
+	const entries = entriesForSource(logPath, source);
 	let written = 0;
 	for (const entry of entries) {
 		if (!entry.row) continue;
+		if (entry.broken || !["ok", "flag", "review"].includes(entry.verdict))
+			continue;
 		if (ROW_LINTS[entry.agent]?.mechanical !== true) continue;
 		const decision = labelDecision(checkCitation(entry.row, repoRoot));
 		if (decision == null) continue;
 		appendLabel(labelsPath, {
 			ts: entry.ts,
 			id: entry.id,
-			correct: decision,
+			correct: entry.verdict === "ok" ? decision : !decision,
 		});
 		written++;
 	}
 	return written;
+}
+
+function entriesForSource(logPath, source) {
+	const batch = readCompletedBatch(logPath, source);
+	return batch
+		? batch.results
+		: readLog(logPath).filter((entry) => entry.source === source);
 }

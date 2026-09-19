@@ -38,8 +38,14 @@
 // The shadow log (reports/jev-gate-shadow.log) skips deterministic fast-path
 // entries by default and rotates to <log>.1 at 1 MB per generation.
 
-import { appendFileSync, readFileSync, renameSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import {
+	appendFileSync,
+	mkdirSync,
+	readFileSync,
+	renameSync,
+	statSync,
+} from "node:fs";
+import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export const JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
@@ -65,11 +71,30 @@ export const DEFAULT_HARD_DENY = [
 // turn it into an exfiltration chain.
 export const DEFAULT_FAST_PATH = [
 	{ pattern: /^(cat|ls|dir)(\s|$)/, label: "read-only: cat/ls/dir" },
-	{ pattern: /^(grep|rg)(\s|$)/, label: "read-only: grep/rg" },
-	{ pattern: /^git\s+(status|log|diff|show|branch)\b/, label: "read-only git" },
 	{
-		pattern: /^(find|wc|head|tail)(\s|$)/,
-		label: "read-only: find/wc/head/tail",
+		pattern: /^(grep|rg)(\s|$)/,
+		label: "read-only: grep/rg",
+		safe: (command) =>
+			!/--(?:pre|hostname-bin)(?:[=\s]|$)/.test(command.replace(/["']/g, "")),
+	},
+	{
+		pattern: /^git\s+(status|log|diff|show)\b/,
+		label: "read-only git",
+		safe: safeGitInspection,
+	},
+	{
+		pattern:
+			/^git\s+branch(?:\s+(?:--list|--show-current|--all|--remotes|-a|-r|-v|-vv))*\s*$/,
+		label: "read-only git branch listing",
+	},
+	{
+		pattern: /^(wc|head|tail)(\s|$)/,
+		label: "read-only: wc/head/tail",
+	},
+	{
+		pattern:
+			/^find\s+[^\s'"-][^\s'"]*(?:\s+-(?:name|iname|type)\s+(?:'[^']*'|"[^"]*"|[^\s]+))*\s*$/,
+		label: "read-only find predicates",
 	},
 	{
 		pattern:
@@ -79,7 +104,13 @@ export const DEFAULT_FAST_PATH = [
 ];
 
 // Shell metacharacters that make a command opaque to static inspection.
-const SHELL_METACHARS = /[|&;><`$]/;
+const SHELL_METACHARS = /[|&;><`$\r\n(){}\\^]/;
+
+function safeGitInspection(command) {
+	return !/--(?:output|ext-diff|textconv|exec)(?:[=\s]|$)/.test(
+		command.replace(/["']/g, ""),
+	);
+}
 
 export function buildQuestions() {
 	return {
@@ -147,11 +178,11 @@ export function prefilter(command, config = {}) {
 		}
 	}
 	if (!SHELL_METACHARS.test(command)) {
-		for (const { pattern, label } of [
+		for (const { pattern, label, safe } of [
 			...DEFAULT_FAST_PATH,
 			...compilePatterns(config.safeCommands ?? [], "safeCommands"),
 		]) {
-			if (pattern.test(command)) {
+			if (matchesSafeCommand({ pattern, safe }, command)) {
 				return {
 					phase: "fast-path",
 					verdict: "allow",
@@ -178,6 +209,11 @@ export function prefilter(command, config = {}) {
 }
 
 /** Signal band: block (clear hazard), unclear (confirm band), or quiet. */
+function matchesSafeCommand({ pattern, safe }, command) {
+	if (!pattern.test(command)) return false;
+	return safe ? safe(command) : true;
+}
+
 export function band(p, blockBar, unclearBar = blockBar) {
 	if (p >= blockBar) return "block";
 	if (p > 1 - unclearBar) return "unclear";
@@ -210,10 +246,7 @@ export function policy(answers, options = {}) {
 	const blocks = [];
 	const unclear = [];
 	for (const name of HAZARD_SIGNALS) {
-		const p = answers[name]?.noul;
-		if (typeof p !== "number") {
-			throw new Error(`missing answer: ${name}`);
-		}
+		const p = hazardProbability(answers, name);
 		const b = band(p, bars[name], threshold);
 		if (b === "block") blocks.push(name);
 		else if (b === "unclear") unclear.push(name);
@@ -227,6 +260,12 @@ export function policy(answers, options = {}) {
 }
 
 /** Key resolution: TYPESAFE_API_KEY env var wins, then the .env file. Never prints. */
+function hazardProbability(answers, name) {
+	const p = answers[name]?.noul;
+	if (typeof p !== "number") throw new Error(`missing answer: ${name}`);
+	return p;
+}
+
 export function readKey({ envFile = ".env", env = process.env } = {}) {
 	const fromEnv = env.TYPESAFE_API_KEY?.trim();
 	if (fromEnv) return fromEnv;
@@ -289,6 +328,7 @@ export async function callJev({
  * generation in place.
  */
 export function appendLog(logPath, entry) {
+	mkdirSync(dirname(logPath), { recursive: true });
 	try {
 		const stats = statSync(logPath, { throwIfNoEntry: false });
 		if (stats && stats.size > MAX_LOG_BYTES) {

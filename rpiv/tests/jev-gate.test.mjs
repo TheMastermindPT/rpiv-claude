@@ -40,6 +40,42 @@ const quietAnswers = {
 };
 
 describe("prefilter", () => {
+	it.each(["git diff --out\\put=sample", "rg --pr\\e touch needle"])(
+		"does not fast-path shell-escaped options: %s",
+		(command) => {
+			expect(prefilter(command)).toBeNull();
+		},
+	);
+	it.each(["find -delete", "find '-delete'", 'rg "--pre" touch needle'])(
+		"does not confuse an option with a safe path: %s",
+		(command) => {
+			expect(prefilter(command)).toBeNull();
+		},
+	);
+	it.each([
+		"find . -delete",
+		"find . -exec touch marker +",
+		"git branch -D release",
+		"git branch new-branch",
+		"git diff --output=patch.txt",
+		"git log --output log.txt",
+		"git show --ext-diff",
+		"rg --pre touch needle",
+		"ls\nrm -rf data",
+		"ls\r\nRemove-Item data -Recurse",
+		"Get-Content a.txt\nRemove-Item a.txt",
+	])("does not fast-path a mutating or compound command: %s", (command) => {
+		expect(prefilter(command)).toBeNull();
+	});
+
+	it.each([
+		"git branch",
+		"git branch --list",
+		"git diff --stat",
+		"find . -name '*.ts'",
+	])("retains known inspection forms: %s", (command) => {
+		expect(prefilter(command)?.phase).toBe("fast-path");
+	});
 	it("hard-deny blocks recursive deletes without consulting the model", () => {
 		for (const cmd of ["rm -rf /", "rm -rf / ", "rm -rf ~", "rm -rf /*"]) {
 			expect(prefilter(cmd)).toMatchObject({
@@ -110,6 +146,12 @@ describe("prefilter", () => {
 			/invalid regex in safeCommands/,
 		);
 	});
+});
+
+it("creates the shadow-log directory on a fresh checkout", () => {
+	const path = join(tmp, "fresh", "reports", "gate.jsonl");
+	appendLog(path, { verdict: "allow" });
+	expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ verdict: "allow" });
 });
 
 describe("policy", () => {
