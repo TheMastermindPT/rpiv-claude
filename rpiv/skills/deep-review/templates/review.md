@@ -10,16 +10,18 @@ review_type: {commit | pr | staged | working}
 scope: "{What was reviewed}"
 scope_strategy: {first-parent | explicit-range | working-tree}
 in_scope_files_count: {N}
-status: {approved | needs_changes | requesting_changes}
+status: ready
+review_status: complete
+merge_status: {blocked | clear}
 severity: { critical: {C}, important: {I}, suggestion: {S} }
 verification: { verified: {V}, weakened: {W}, falsified: {F} }
 blockers_count: {B}
-tags: [code-review, relevant-components]
+tags: [code-review]
 ---
 
 # Code Review — {Scope}
 
-**Commit:** `{hash}` · **Status:** `{status}` · **Findings:** {C}🔴 · {I}🟡 · {S}🔵 · **Verification:** {V}✓ / {W}− / {F}✗
+**Commit:** `{hash}` · **Status:** `ready` · **Findings:** {C}🔴 · {I}🟡 · {S}🔵 · **Verification:** {V}✓ / {W}− / {F}✗
 
 ## Top Blockers
 

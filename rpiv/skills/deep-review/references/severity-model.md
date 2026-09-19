@@ -19,7 +19,7 @@
        • *{entity reaches state X} + {no event on that transition} + {consumer filter excludes X}* = **silent stranded state**
        • *{check-then-act on shared resource} + {no ordering primitive} + {retry/replay path}* = **duplicate-processing cascade**
        • *{spec A accepts Y} + {spec B rejects Y} + {workflow depends on both}* = **contradictory-predicate deadlock**
-     Also check `.rpiv/artifacts/reviews/*.md` and Precedents: if a prior review names a cascade whose constituents appear in current findings, cite it and assert reproduction. Missed cascades are the biggest historical quality regression; prefer false positives here.
+     When `PriorReview` exists, check that exact same-branch baseline plus Precedents: if either names a cascade whose constituents appear in current findings, cite it and assert reproduction. Missed cascades are the biggest historical quality regression; prefer false positives here.
 
 ## Verification tag semantics & application (Step 6)
 

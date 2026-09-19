@@ -10,6 +10,9 @@ Scope: {scope argument}
 Commit/range: {git ref}
 Manifest changed: {yes|no}
 Lockstep self-review: {yes|no}
+Capabilities: {preflight summary — local tools + MCP configured/unavailable}
+Review shards: {N patches; id — category — file count — context — bytes}
+Prior same-branch review: {path | none}
 
 Changed files ({N}):
 
@@ -53,12 +56,12 @@ Boundary/cycle violations (dependency-cruiser, when configured): {file — rule-
 
 **Symbols-touched hint**: extract top 1–3 top-level definitions from the diff's `+` lines using a heuristic appropriate to the file's language (class/function/def/fn/struct/trait/interface/type/export). Cap at ~80 chars. Leave blank if ambiguous — orientation, not completeness.
 
-**Structural enrichment of the Discovery Map (tool-gated, read-only).** When ast-grep / opengrep are present (probe `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/tool-probe.mjs" "."`), the orchestrator runs them over the on-disk `ChangedFiles` (from review-range.mjs's `---changed-files---`) — NOT `<patch_path>` (a unified diff is not parseable by an AST/rule engine) — and folds the DIGESTED results into the two Discovery-Map rows above:
+**Structural enrichment of the Discovery Map (tool-gated, read-only).** Use the Step-2 preflight snapshot; do not probe tools again. When ast-grep / opengrep are available, run them over the on-disk `manifest.changedFiles`, not the generated patch files (a unified diff is not parseable by an AST/rule engine), and fold only digested results into the map:
 - Opengrep -> `Static-analysis sinks`: `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/structural.mjs" --tool opengrep --config auto <target>` (network stock security rules; if opengrep absent OR offline/no-JSON, OMIT the row — the Wave-1 sink-candidate sweep (`diff-auditor`) supplies the grep-tier recall instead, filling the `Grep sink candidates` row).
 - ast-grep -> `Dispatch/registration shapes`: `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/structural.mjs" --tool ast-grep --pattern '<dispatch/registration shape>' --lang <l> <target>`, intersected to ChangedFiles.
 - rg -> `Risk keywords` (always — rg is installed everywhere via tool-probe): `rg -n "TODO|FIXME|HACK|XXX|debugger|console\.(log|error|warn)" <ChangedFiles>` — one sweep over the on-disk files. Digest to `file:line — keyword` rows in the Discovery Map. A `TODO`/`FIXME` on a changed line is a 🟡 by itself (author intended to come back). A `console.log`/`debugger` left in changed production code is a 🟡 (observability leak — already caught by the architectural-smell ast-grep gate; this is the regex fallback for files ast-grep skips). Omit only if rg is absent (tool-probe shows absent — rare).
 - CodeScene -> `Code Health` (per-file + scope-aware): when the `codescene_code_health_*` tools are available (CodeScene MCP connected), run TWO passes:
-  - **Per-file baseline on EVERY changed file.** Run `codescene_code_health_score` on each file in ChangedFiles with delta ≥ 5. Digest to `file: score` in the Discovery Map. For files scoring < 9.0, also run `codescene_code_health_review` to name the specific smell (Complex Method, Bumpy Road, etc.) — include the smell name and function/line. This is the strongest quantitative signal in the Discovery Map: a file at 6.2 with a risky diff carries more weight than one at 10. The Quality lens uses these scores to prioritize its file-order strategy and weight findings; the Security lens uses them to deprioritize healthy files.
+  - **Per-file baseline.** For normal scopes, score each changed source file with delta ≥ 5. For `large_change_set: yes`, score boundary/persistence/hub files plus the 20 largest remaining source diffs; the change-set call below still covers the full branch. Digest to `file: score`. For scores below 9.0, run `codescene_code_health_review` to name the smell and function/line. The Quality lens uses scores for file priority; unscored files retain normal lens coverage.
   - **Scope-aware dispatch** for the delta/verdict row:
     - **Branch/PR review** (scope resolves a base ref): run `analyze_change_set` once (`base_ref` = review base, `git_repository_path` = repo root). Digest to `file — improved | degraded | stable` + any failed `quality_gates`.
     - **Working-tree review** (`staged` / `working` / `modified`): run `pre_commit_code_health_safeguard` on the repo root. Catches files `git diff HEAD` may miss. Digest to `file — improved | degraded | stable` + failed `quality_gates`.

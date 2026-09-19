@@ -32,7 +32,7 @@
 ## Sink-candidate sweep (Wave-1 — gate: opengrep unavailable; agent: `diff-auditor`)
 
   ```
-  Mechanical sink-candidate sweep. Patch: <patch_path> (unified diff, -U30).
+  Mechanical sink-candidate sweep. Patch: <patch_path> (bounded unified diff, -U30 or -U10).
 
   Match these pattern classes on added/modified lines only. Emit one row per hit in your standard format; pattern-id = the class name. Candidates only — no reachability, no confidence, no severity.
 

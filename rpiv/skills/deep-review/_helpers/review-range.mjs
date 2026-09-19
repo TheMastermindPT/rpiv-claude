@@ -26,7 +26,8 @@
 //   tip:            <hash>|(n/a)
 //   range:          <base>..<tip>|(n/a)
 //   fp_flag:        --first-parent|(empty)
-//   patch_path:     <gitdir>/code-review-patch.diff   (worktree-safe diff tempfile for the orchestrator's `> <patch_path>` redirect)
+//   changed_files_manifest: <gitdir>/code-review-files.json (complete categorized surface + shards)
+//   large_change_set: yes|no; shard_count: N; prior_review: path|(none)
 //   manifest_changed: yes|no          (any changed file is a dependency manifest/lockfile)
 //   manifest_files: <comma list>      (only when manifest_changed: yes)
 //   lockstep_self_review: yes|no      (sync-versions.js + uniform packages/*/package.json version + diff touches one)
@@ -72,10 +73,10 @@
 //     `note:` so the LLM can ask the user via ask_user_question rather than fail.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
 
-import { isTest } from "../../_shared/source-vocab.mjs";
+import { extOf, isSource, isTest } from "../../_shared/source-vocab.mjs";
 
 const CHANGED_FILES_LINE_CAP = 2000;
 const CHANGED_FILES_BYTE_CAP = 40 * 1024;
@@ -85,6 +86,147 @@ const COMPANION_MIN_SUPPORT = 3; // companion must ride along in at least this m
 const COMPANION_MIN_CONF = 0.4; // ...and in >= this share of its best driver's commits
 const COMPANION_BULK_CAP = 30; // commits touching more files are bulk moves — poison co-change
 const COMPANION_ROW_CAP = 10;
+const REVIEW_SHARD_FILE_CAP = 60;
+const REVIEW_SHARD_PATH_BYTE_CAP = 6000;
+
+const MEDIA_EXT = new Set([
+	"avif",
+	"bmp",
+	"gif",
+	"ico",
+	"jpeg",
+	"jpg",
+	"mov",
+	"mp3",
+	"mp4",
+	"pdf",
+	"png",
+	"svg",
+	"webm",
+	"webp",
+	"woff",
+	"woff2",
+]);
+const GENERATED_PATH_RE =
+	/(^|\/)(\.rpiv\/artifacts|opencode\/generated|coverage|dist|build|node_modules)(\/|$)/i;
+const MANIFEST_BASENAME_RE =
+	/(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|cargo\.(toml|lock)|go\.(mod|sum)|pyproject\.toml|poetry\.lock)$/i;
+
+const pathCategory = (path) => {
+	if (GENERATED_PATH_RE.test(path)) return "generated-artifact";
+	if (MEDIA_EXT.has(extOf(path))) return "media";
+	if (isTest(path)) return "test";
+	if (/(^|\/)migrations?\//i.test(path) || extOf(path) === "sql")
+		return "migration";
+	if (isSource(path)) return "source";
+	if (extOf(path) === "md" || /(^|\/)docs?\//i.test(path)) return "docs";
+	if (MANIFEST_BASENAME_RE.test(path)) return "manifest";
+	if (["json", "jsonc", "toml", "yaml", "yml"].includes(extOf(path)))
+		return "config";
+	return "other";
+};
+
+const isReviewExcluded = (path) => {
+	const category = pathCategory(path);
+	return category === "generated-artifact" || category === "media";
+};
+
+const compatiblePeerCategory = (left, right) => {
+	const category = pathCategory(left);
+	return (
+		category === pathCategory(right) &&
+		["source", "docs", "migration", "config"].includes(category)
+	);
+};
+
+const compatibleCompanionCategory = (left, right) =>
+	pathCategory(left) === pathCategory(right) &&
+	!isReviewExcluded(left) &&
+	!isReviewExcluded(right);
+
+const buildReviewShards = (files) => {
+	if (files.length === 0) return [];
+	if (
+		files.length <= REVIEW_SHARD_FILE_CAP &&
+		files.reduce((bytes, file) => bytes + Buffer.byteLength(file) + 1, 0) <=
+			REVIEW_SHARD_PATH_BYTE_CAP
+	) {
+		const categories = new Set(files.map(pathCategory));
+		return [
+			{
+				id: "shard-1",
+				category:
+					categories.size === 1 ? categories.values().next().value : "mixed",
+				files: [...files],
+			},
+		];
+	}
+	const groups = new Map();
+	for (const file of [...files].sort()) {
+		const category = pathCategory(file);
+		const topLevel = file.includes("/")
+			? file.slice(0, file.indexOf("/"))
+			: "root";
+		const key = `${category}:${topLevel}`;
+		if (!groups.has(key)) groups.set(key, []);
+		groups.get(key).push(file);
+	}
+	const shards = [];
+	for (const [group, groupedFiles] of [...groups].sort(([left], [right]) =>
+		left.localeCompare(right),
+	)) {
+		let shardFiles = [];
+		let pathBytes = 0;
+		for (const file of groupedFiles) {
+			const nextBytes = Buffer.byteLength(file) + 1;
+			if (
+				shardFiles.length > 0 &&
+				(shardFiles.length >= REVIEW_SHARD_FILE_CAP ||
+					pathBytes + nextBytes > REVIEW_SHARD_PATH_BYTE_CAP)
+			) {
+				shards.push({
+					id: `shard-${shards.length + 1}`,
+					category: group.slice(0, group.indexOf(":")),
+					files: shardFiles,
+				});
+				shardFiles = [];
+				pathBytes = 0;
+			}
+			shardFiles.push(file);
+			pathBytes += nextBytes;
+		}
+		if (shardFiles.length > 0) {
+			shards.push({
+				id: `shard-${shards.length + 1}`,
+				category: group.slice(0, group.indexOf(":")),
+				files: shardFiles,
+			});
+		}
+	}
+	return shards;
+};
+
+const findPriorReview = () => {
+	const root = safe(["rev-parse", "--show-toplevel"]);
+	const branch = safe(["branch", "--show-current"]);
+	if (!root || !branch) return "(none)";
+	const directory = join(root, ".rpiv", "artifacts", "reviews");
+	if (!existsSync(directory)) return "(none)";
+	for (const name of readdirSync(directory)
+		.filter((entry) => entry.endsWith(".json"))
+		.sort()
+		.reverse()) {
+		const path = join(directory, name);
+		try {
+			const review = JSON.parse(readFileSync(path, "utf8"));
+			if (review.review?.branch === branch)
+				return relative(root, path).replaceAll("\\", "/");
+		} catch {
+			// An unreadable prior artifact is not a compatible baseline.
+		}
+	}
+	return "(none)";
+};
 
 const safe = (args, fb = "") => {
 	try {
@@ -121,7 +263,12 @@ const refExists = (ref) => {
 };
 
 const resolveDefaultBranch = () => {
-	const head = safe(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"]);
+	const head = safe([
+		"symbolic-ref",
+		"--quiet",
+		"--short",
+		"refs/remotes/origin/HEAD",
+	]);
 	if (head) return head.replace(/^origin\//, "");
 	if (refExists("main")) return "main";
 	if (refExists("master")) return "master";
@@ -129,10 +276,7 @@ const resolveDefaultBranch = () => {
 };
 
 const stripOuterQuotes = (s) =>
-	s
-		.replace(/^['"]/, "")
-		.replace(/['"]$/, "")
-		.trim();
+	s.replace(/^['"]/, "").replace(/['"]$/, "").trim();
 
 const dedupChangedFiles = (raw) => {
 	const seen = new Set();
@@ -169,7 +313,12 @@ const result = {
 	tip: "(n/a)",
 	range: "(n/a)",
 	fp_flag: "(empty)",
-	patch_path: safe(["rev-parse", "--git-path", "code-review-patch.diff"]) || ".git/code-review-patch.diff",
+	patch_path:
+		safe(["rev-parse", "--git-path", "code-review-patch.diff"]) ||
+		".git/code-review-patch.diff",
+	changed_files_manifest:
+		safe(["rev-parse", "--git-path", "code-review-files.json"]) ||
+		".git/code-review-files.json",
 	note: "",
 	changedFiles: "",
 };
@@ -195,9 +344,9 @@ const setExplicitRange = (oldest, newest) => {
 	result.oldest = oldest;
 	result.newest = newest;
 	const parent = safe(["rev-parse", `${oldest}^`]);
-	result.base = parent || oldest;
+	result.base = parent || "(root)";
 	result.tip = newest;
-	result.range = `${result.base}..${newest}`;
+	result.range = parent ? `${parent}..${newest}` : newest;
 	result.fp_flag = "(empty)";
 };
 
@@ -215,7 +364,8 @@ const isHexHash = (s) => /^[0-9a-f]{4,40}$/i.test(s);
 
 if (defaultBranch === "(unresolved)" && (lower === "" || lower === "auto")) {
 	result.strategy = "unrecognised";
-	result.note = "default branch unresolved — pass an explicit scope or run `git remote set-head origin -a`";
+	result.note =
+		"default branch unresolved — pass an explicit scope or run `git remote set-head origin -a`";
 } else if (lower === "" || lower === "auto") {
 	const oldest = safe(["merge-base", defaultBranch, "HEAD"]);
 	if (oldest) setFirstParent(oldest, safe(["rev-parse", "HEAD"]));
@@ -237,7 +387,10 @@ if (defaultBranch === "(unresolved)" && (lower === "" || lower === "auto")) {
 	}
 } else if (/[,\s]/.test(scope)) {
 	const entries = scope.split(/[,\s]+/).filter(Boolean);
-	const resolvedPairs = entries.map((h) => [h, safe(["rev-parse", "--verify", `${h}^{commit}`])]);
+	const resolvedPairs = entries.map((h) => [
+		h,
+		safe(["rev-parse", "--verify", `${h}^{commit}`]),
+	]);
 	const bad = resolvedPairs.filter(([, r]) => !r).map(([h]) => h);
 	const unique = [...new Set(resolvedPairs.map(([, r]) => r).filter(Boolean))];
 	if (bad.length > 0) {
@@ -264,7 +417,7 @@ if (defaultBranch === "(unresolved)" && (lower === "" || lower === "auto")) {
 		} else if (!parent) {
 			result.note = `oldest listed commit ${oldestNamed.slice(0, 12)} is a root commit — pass an explicit range instead`;
 		} else {
-			commitListHashes = [...unique];
+			commitListHashes = [...ordered].reverse();
 			setFirstParent(parent, ordered[0]);
 		}
 	}
@@ -272,9 +425,15 @@ if (defaultBranch === "(unresolved)" && (lower === "" || lower === "auto")) {
 	const hash = safe(["rev-parse", scope]);
 	setExplicitRange(hash, hash);
 } else if (refExists(scope)) {
-	const oldest = safe(["merge-base", defaultBranch, "HEAD"]);
-	if (oldest) setFirstParent(oldest, safe(["rev-parse", "HEAD"]));
-	else result.note = `merge-base ${defaultBranch}..HEAD failed for branch ${scope}`;
+	const scopeHash = safe(["rev-parse", scope]);
+	const headHash = safe(["rev-parse", "HEAD"]);
+	const oldest =
+		scopeHash === headHash ? safe(["merge-base", defaultBranch, "HEAD"]) : "";
+	if (scopeHash !== headHash) {
+		result.note = `branch/ref ${scope} is not checked out at HEAD`;
+	} else if (oldest) setFirstParent(oldest, headHash);
+	else
+		result.note = `merge-base ${defaultBranch}..HEAD failed for branch ${scope}`;
 } else {
 	result.note = `scope spec not recognised: ${scope}`;
 }
@@ -283,15 +442,67 @@ if (defaultBranch === "(unresolved)" && (lower === "" || lower === "auto")) {
 let changedList = [];
 let addedRaw = "";
 if (result.strategy === "first-parent") {
-	changedList = dedupChangedFiles(safe(["log", result.range, "--first-parent", "--name-only", "--pretty=format:"]));
-	addedRaw = safe(["log", result.range, "--first-parent", "--no-merges", "--diff-filter=A", "--name-only", "--pretty=format:"]);
+	if (commitListHashes) {
+		changedList = dedupChangedFiles(
+			commitListHashes
+				.map((hash) => safe(["show", hash, "--name-only", "--pretty=format:"]))
+				.join("\n"),
+		);
+		addedRaw = commitListHashes
+			.map((hash) =>
+				safe([
+					"show",
+					hash,
+					"--diff-filter=A",
+					"--name-only",
+					"--pretty=format:",
+				]),
+			)
+			.join("\n");
+	} else {
+		changedList = dedupChangedFiles(
+			safe([
+				"log",
+				result.range,
+				"--first-parent",
+				"--name-only",
+				"--pretty=format:",
+			]),
+		);
+		addedRaw = safe([
+			"log",
+			result.range,
+			"--first-parent",
+			"--no-merges",
+			"--diff-filter=A",
+			"--name-only",
+			"--pretty=format:",
+		]);
+	}
 } else if (result.strategy === "explicit-range") {
-	changedList = dedupChangedFiles(safe(["log", result.range, "--name-only", "--pretty=format:"]));
-	addedRaw = safe(["log", result.range, "--no-merges", "--diff-filter=A", "--name-only", "--pretty=format:"]);
+	changedList = dedupChangedFiles(
+		safe(["log", result.range, "--name-only", "--pretty=format:"]),
+	);
+	addedRaw = safe([
+		"log",
+		result.range,
+		"--no-merges",
+		"--diff-filter=A",
+		"--name-only",
+		"--pretty=format:",
+	]);
 } else if (result.strategy === "working-tree") {
 	if (lower === "commit") {
-		changedList = dedupChangedFiles(safe(["show", "HEAD", "--name-only", "--pretty=format:"]));
-		addedRaw = safe(["show", "HEAD", "--diff-filter=A", "--name-only", "--pretty=format:"]);
+		changedList = dedupChangedFiles(
+			safe(["show", "HEAD", "--name-only", "--pretty=format:"]),
+		);
+		addedRaw = safe([
+			"show",
+			"HEAD",
+			"--diff-filter=A",
+			"--name-only",
+			"--pretty=format:",
+		]);
 	} else if (lower === "staged") {
 		changedList = dedupChangedFiles(safe(["diff", "--cached", "--name-only"]));
 		addedRaw = safe(["diff", "--cached", "--diff-filter=A", "--name-only"]);
@@ -308,6 +519,9 @@ if (result.strategy === "first-parent") {
 		addedRaw = safe(["diff", "--diff-filter=A", "--name-only"]);
 	}
 }
+const allChangedList = changedList;
+const excludedList = allChangedList.filter(isReviewExcluded);
+changedList = allChangedList.filter((file) => !isReviewExcluded(file));
 result.changedFiles = formatChangedFiles(changedList);
 
 // ---- InScopeFiles (DR Step 1.5, absorbed) -----------------------------------------
@@ -320,17 +534,28 @@ let inScopeList = null; // null => identical to changed-files
 if (result.strategy === "first-parent") {
 	const hashes =
 		commitListHashes ??
-		safe(["log", result.range, "--first-parent", "--no-merges", "--pretty=%H"]).split("\n").filter(Boolean);
+		safe(["log", result.range, "--first-parent", "--no-merges", "--pretty=%H"])
+			.split("\n")
+			.filter(Boolean);
 	const set = new Set();
 	for (const h of hashes) {
-		for (const f of safe(["diff-tree", "--no-commit-id", "--name-only", "-r", h]).split("\n")) {
+		for (const f of safe([
+			"diff-tree",
+			"--no-commit-id",
+			"--name-only",
+			"-r",
+			h,
+		]).split("\n")) {
 			const t = f.trim();
-			if (t) set.add(t);
+			if (t && !isReviewExcluded(t)) set.add(t);
 		}
 	}
 	inScopeList = [...set];
 	const changedSet = new Set(changedList);
-	if (inScopeList.length === changedList.length && inScopeList.every((f) => changedSet.has(f))) {
+	if (
+		inScopeList.length === changedList.length &&
+		inScopeList.every((f) => changedSet.has(f))
+	) {
 		inScopeList = null; // no back-merge inflation — collapse to the identity marker
 	}
 }
@@ -344,13 +569,18 @@ const manifestFiles = changedList.filter((f) => MANIFEST_RE.test(f));
 const lockstep = (() => {
 	const top = safe(["rev-parse", "--show-toplevel"]);
 	if (!top || !existsSync(join(top, "scripts/sync-versions.js"))) return false;
-	if (!changedList.some((f) => /^packages\/[^/]+\/package\.json$/.test(f))) return false;
-	const pkgs = safe(["ls-files", "packages/*/package.json"]).split("\n").filter(Boolean);
+	if (!changedList.some((f) => /^packages\/[^/]+\/package\.json$/.test(f)))
+		return false;
+	const pkgs = safe(["ls-files", "packages/*/package.json"])
+		.split("\n")
+		.filter(Boolean);
 	if (pkgs.length < 2) return false;
 	const versions = new Set();
 	for (const p of pkgs) {
 		try {
-			versions.add(JSON.parse(readFileSync(join(top, p), "utf-8")).version ?? "(none)");
+			versions.add(
+				JSON.parse(readFileSync(join(top, p), "utf-8")).version ?? "(none)",
+			);
 		} catch {
 			return false; // an unparseable member package.json disqualifies lockstep
 		}
@@ -366,10 +596,30 @@ const lockstep = (() => {
 // denominator is what makes PhysicalProductSubscription <-> Subscription pair, per
 // the skill's canonical example). Tests are never peers; capped per new file.
 const PEER_SUFFIXES = [
-	"Handler", "Service", "Repository", "Aggregate", "Reducer", "Controller", "Resolver",
-	"Command", "Query", "Job", "Processor", "Strategy", "Policy", "Event", "Listener",
-	"Subscriber", "Publisher", "Exception", "Eligibility", "Ability", "QueryParam",
-	"Specification", "Factory", "Builder",
+	"Handler",
+	"Service",
+	"Repository",
+	"Aggregate",
+	"Reducer",
+	"Controller",
+	"Resolver",
+	"Command",
+	"Query",
+	"Job",
+	"Processor",
+	"Strategy",
+	"Policy",
+	"Event",
+	"Listener",
+	"Subscriber",
+	"Publisher",
+	"Exception",
+	"Eligibility",
+	"Ability",
+	"QueryParam",
+	"Specification",
+	"Factory",
+	"Builder",
 ];
 const stemOf = (p) => {
 	const b = p.slice(p.lastIndexOf("/") + 1);
@@ -392,22 +642,40 @@ const lcsLen = (a, b) => {
 	}
 	return best;
 };
-const suffixOf = (stem) => PEER_SUFFIXES.find((s) => stem.endsWith(s) && stem !== s) ?? null;
+const suffixOf = (stem) =>
+	PEER_SUFFIXES.find((s) => stem.endsWith(s) && stem !== s) ?? null;
 const interfaceImpl = (a, b) =>
 	(a.startsWith("I") && /^[A-Z]/.test(a.slice(1)) && a.slice(1) === b) ||
 	(b.startsWith("I") && /^[A-Z]/.test(b.slice(1)) && b.slice(1) === a) ||
-	a === `${b}.impl` || b === `${a}.impl` ||
-	["Abstract", "Base", "Protocol"].some((suf) => a === `${b}${suf}` || b === `${a}${suf}`);
+	a === `${b}.impl` ||
+	b === `${a}.impl` ||
+	["Abstract", "Base", "Protocol"].some(
+		(suf) => a === `${b}${suf}` || b === `${a}${suf}`,
+	);
 const peerPairs = [];
 if (addedRaw && result.strategy !== "unrecognised") {
-	const added = dedupChangedFiles(addedRaw).filter((f) => !isTest(f));
-	const headFiles = added.length > 0 ? safe(["ls-tree", "-r", "HEAD", "--name-only"]).split("\n").filter(Boolean) : [];
+	const added = dedupChangedFiles(addedRaw).filter(
+		(f) => !isTest(f) && !isReviewExcluded(f),
+	);
+	const headFiles =
+		added.length > 0
+			? safe(["ls-tree", "-r", "HEAD", "--name-only"])
+					.split("\n")
+					.filter(Boolean)
+			: [];
 	const addedSet = new Set(dedupChangedFiles(addedRaw));
 	for (const nf of added) {
 		const ns = stemOf(nf);
 		const candidates = [];
 		for (const pf of headFiles) {
-			if (pf === nf || addedSet.has(pf) || isTest(pf)) continue;
+			if (
+				pf === nf ||
+				addedSet.has(pf) ||
+				isTest(pf) ||
+				isReviewExcluded(pf) ||
+				!compatiblePeerCategory(nf, pf)
+			)
+				continue;
 			const ps = stemOf(pf);
 			if (interfaceImpl(ns, ps)) {
 				candidates.push({ pf, heuristic: "interface-impl", rank: 0 });
@@ -438,7 +706,13 @@ if (addedRaw && result.strategy !== "unrecognised") {
 // are skipped (a 50-file rename would make everything a companion of everything).
 const companions = [];
 if (changedList.length > 0 && result.strategy !== "unrecognised") {
-	const raw = safe(["log", "--no-merges", `-n${COMPANION_WINDOW}`, "--name-only", "--pretty=format:%H"]);
+	const raw = safe([
+		"log",
+		"--no-merges",
+		`-n${COMPANION_WINDOW}`,
+		"--name-only",
+		"--pretty=format:%H",
+	]);
 	const commits = [];
 	let cur = null;
 	for (const line of raw.split("\n")) {
@@ -449,16 +723,24 @@ if (changedList.length > 0 && result.strategy !== "unrecognised") {
 		} else if (t && cur) cur.push(t);
 	}
 	const changedSet = new Set(changedList);
-	const headSet = new Set(safe(["ls-tree", "-r", "HEAD", "--name-only"]).split("\n").filter(Boolean));
+	const headSet = new Set(
+		safe(["ls-tree", "-r", "HEAD", "--name-only"]).split("\n").filter(Boolean),
+	);
 	const driverAppearances = new Map();
 	const co = new Map();
 	for (const files of commits) {
 		if (files.length === 0 || files.length > COMPANION_BULK_CAP) continue;
 		const touched = files.filter((f) => changedSet.has(f));
 		if (touched.length === 0) continue;
-		for (const t of touched) driverAppearances.set(t, (driverAppearances.get(t) ?? 0) + 1);
+		for (const t of touched)
+			driverAppearances.set(t, (driverAppearances.get(t) ?? 0) + 1);
 		for (const f of files) {
 			if (changedSet.has(f) || !headSet.has(f)) continue;
+			if (
+				isReviewExcluded(f) ||
+				!touched.some((driver) => compatibleCompanionCategory(driver, f))
+			)
+				continue;
 			if (!co.has(f)) co.set(f, { support: 0, drivers: new Map() });
 			const e = co.get(f);
 			e.support += 1;
@@ -480,10 +762,42 @@ if (changedList.length > 0 && result.strategy !== "unrecognised") {
 			rows.push({ f, support: e.support, conf, driver });
 		}
 	}
-	rows.sort((a, b) => b.conf - a.conf || b.support - a.support || a.f.localeCompare(b.f));
+	rows.sort(
+		(a, b) =>
+			b.conf - a.conf || b.support - a.support || a.f.localeCompare(b.f),
+	);
 	for (const r of rows.slice(0, COMPANION_ROW_CAP)) {
-		companions.push(`${r.f}\tdriver=${r.driver}\tsupport=${r.support}\tconf=${r.conf.toFixed(2)}`);
+		companions.push(
+			`${r.f}\tdriver=${r.driver}\tsupport=${r.support}\tconf=${r.conf.toFixed(2)}`,
+		);
 	}
+}
+
+const shards = buildReviewShards(changedList);
+const priorReview = findPriorReview();
+const manifest = {
+	version: 1,
+	scope,
+	mode: lower,
+	strategy: result.strategy,
+	range: result.range,
+	fpFlag: result.fp_flag === "--first-parent" ? result.fp_flag : null,
+	commits: commitListHashes,
+	changedFiles: changedList,
+	inScopeFiles: inScopeList ?? changedList,
+	excludedFiles: excludedList,
+	files: changedList.map((path) => ({ path, category: pathCategory(path) })),
+	shards,
+	priorReview,
+};
+try {
+	writeFileSync(
+		result.changed_files_manifest,
+		`${JSON.stringify(manifest, null, 2)}\n`,
+		"utf8",
+	);
+} catch {
+	result.changed_files_manifest = "(unavailable)";
 }
 
 const lines = [
@@ -496,9 +810,17 @@ const lines = [
 	`range:          ${result.range}`,
 	`fp_flag:        ${result.fp_flag}`,
 	`patch_path:     ${result.patch_path}`,
+	`changed_files_manifest: ${result.changed_files_manifest}`,
+	`reviewable_files_count: ${changedList.length}`,
+	`excluded_files_count: ${excludedList.length}`,
+	`large_change_set: ${changedList.length > REVIEW_SHARD_FILE_CAP ? "yes" : "no"}`,
+	`shard_count: ${shards.length}`,
+	"shard_strategy: category-directory-v1",
+	`prior_review: ${priorReview}`,
 	`manifest_changed: ${manifestFiles.length > 0 ? "yes" : "no"}`,
 ];
-if (manifestFiles.length > 0) lines.push(`manifest_files: ${manifestFiles.join(", ")}`);
+if (manifestFiles.length > 0)
+	lines.push(`manifest_files: ${manifestFiles.join(", ")}`);
 lines.push(`lockstep_self_review: ${lockstep ? "yes" : "no"}`);
 if (result.strategy === "unrecognised" && result.note) {
 	lines.push(`note:           ${result.note}`);
@@ -506,10 +828,14 @@ if (result.strategy === "unrecognised" && result.note) {
 lines.push("---changed-files---");
 const tail = [
 	"---in-scope-files---",
-	inScopeList === null ? "(identical to changed-files)\n" : formatChangedFiles(inScopeList),
+	inScopeList === null
+		? "(identical to changed-files)\n"
+		: formatChangedFiles(inScopeList),
 	"---peer-pairs---",
 	peerPairs.length > 0 ? `${peerPairs.join("\n")}\n` : "",
 	"---companion-candidates---",
 	companions.length > 0 ? `${companions.join("\n")}\n` : "",
 ];
-process.stdout.write(`${lines.join("\n")}\n${result.changedFiles}${tail.join("\n")}`);
+process.stdout.write(
+	`${lines.join("\n")}\n${result.changedFiles}${tail.join("\n")}`,
+);
