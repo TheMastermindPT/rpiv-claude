@@ -74,7 +74,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { extOf, isSource, isTest } from "../../_shared/source-vocab.mjs";
 
@@ -206,7 +206,7 @@ const buildReviewShards = (files) => {
 	return shards;
 };
 
-const findPriorReview = () => {
+const findPriorReview = (reviewedFiles) => {
 	const root = safe(["rev-parse", "--show-toplevel"]);
 	const branch = safe(["branch", "--show-current"]);
 	if (!root || !branch) return "(none)";
@@ -219,13 +219,31 @@ const findPriorReview = () => {
 		const path = join(directory, name);
 		try {
 			const review = JSON.parse(readFileSync(path, "utf8"));
-			if (review.review?.branch === branch)
+			if (
+				review.review?.branch === branch &&
+				baselineCovered(review, reviewedFiles)
+			)
 				return relative(root, path).replaceAll("\\", "/");
 		} catch {
 			// An unreadable prior artifact is not a compatible baseline.
 		}
 	}
 	return "(none)";
+};
+
+const baselineCovered = (review, reviewedFiles) => {
+	if (!Array.isArray(review.findings)) return false;
+	const covered = new Set(reviewedFiles);
+	return review.findings
+		.filter((finding) => finding.status !== "withdrawn")
+		.every((finding) => {
+			const paths = (finding.evidence ?? []).map((evidence) => evidence.path);
+			if (finding.file) paths.push(finding.file);
+			return (
+				paths.length > 0 &&
+				paths.every((path) => covered.has(path.replaceAll("\\", "/")))
+			);
+		});
 };
 
 let gitRoot = null;
@@ -255,6 +273,12 @@ const safe = (args, fb = "") => {
 		return fb;
 	}
 };
+
+const absGitPath = (p) =>
+	(isAbsolute(p) ? p : resolve(gitCwd() || process.cwd(), p)).replaceAll(
+		"\\",
+		"/",
+	);
 
 const isAncestor = (a, b) => {
 	try {
@@ -331,12 +355,14 @@ const result = {
 	tip: "(n/a)",
 	range: "(n/a)",
 	fp_flag: "(empty)",
-	patch_path:
+	patch_path: absGitPath(
 		safe(["rev-parse", "--git-path", "code-review-patch.diff"]) ||
-		".git/code-review-patch.diff",
-	changed_files_manifest:
+			".git/code-review-patch.diff",
+	),
+	changed_files_manifest: absGitPath(
 		safe(["rev-parse", "--git-path", "code-review-files.json"]) ||
-		".git/code-review-files.json",
+			".git/code-review-files.json",
+	),
 	note: "",
 	changedFiles: "",
 };
@@ -792,7 +818,7 @@ if (changedList.length > 0 && result.strategy !== "unrecognised") {
 }
 
 const shards = buildReviewShards(changedList);
-const priorReview = findPriorReview();
+const priorReview = findPriorReview(inScopeList ?? changedList);
 const manifest = {
 	version: 1,
 	scope,

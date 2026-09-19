@@ -9,7 +9,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { contextForPatchSize } from "./assemble-review-patches.mjs";
 
@@ -64,15 +64,17 @@ try {
 	for (const patch of assembled.patches) {
 		assert.equal(patch.category, "source");
 		assert.ok(
-			existsSync(join(repo, patch.path)),
+			existsSync(resolve(repo, patch.path)),
 			`patch exists: ${patch.path}`,
 		);
 		assert.ok([10, 30].includes(patch.context), "patch context is explicit");
-		const text = readFileSync(join(repo, patch.path), "utf8");
+		const text = readFileSync(resolve(repo, patch.path), "utf8");
 		for (const file of patch.files)
 			assert.ok(text.includes(file), `${patch.id} contains ${file}`);
 	}
-	const manifest = JSON.parse(readFileSync(join(repo, manifestPath), "utf8"));
+	const manifest = JSON.parse(
+		readFileSync(resolve(repo, manifestPath), "utf8"),
+	);
 	assert.match(manifest.commitMessages, /large change/);
 	assert.match(manifest.stat, /src\/file-0\.ts/);
 	assert.match(manifest.stat, /src\/file-60\.ts/);
@@ -97,11 +99,11 @@ try {
 	);
 	assert.equal(working.patches.length, 1);
 	assert.match(
-		readFileSync(join(repo, working.patches[0].path), "utf8"),
+		readFileSync(resolve(repo, working.patches[0].path), "utf8"),
 		/workingEdit/,
 	);
 	const workingManifest = JSON.parse(
-		readFileSync(join(repo, workingManifestPath), "utf8"),
+		readFileSync(resolve(repo, workingManifestPath), "utf8"),
 	);
 	assert.equal(workingManifest.commitMessages, "(n/a)");
 	assert.match(workingManifest.stat, /src\/file-0\.ts/);
@@ -135,7 +137,7 @@ try {
 		}),
 	);
 	const namedPatch = named.patches
-		.map((patch) => readFileSync(join(repo, patch.path), "utf8"))
+		.map((patch) => readFileSync(resolve(repo, patch.path), "utf8"))
 		.join("\n");
 	assert.match(namedPatch, /named-a\.ts/);
 	assert.match(namedPatch, /named-c\.ts/);

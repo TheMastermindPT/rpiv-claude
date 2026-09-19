@@ -16,7 +16,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HELPER = join(
@@ -129,6 +129,28 @@ try {
 			/2026-08-01_prior\.json$/,
 			"latest review for the active branch is announced as baseline",
 		);
+		const narrowerBaseline = join(
+			repo,
+			".rpiv",
+			"artifacts",
+			"reviews",
+			"2026-08-02_broader.json",
+		);
+		writeFileSync(
+			narrowerBaseline,
+			JSON.stringify({
+				review: { branch: "feat" },
+				findings: [
+					{ id: "Q1", evidence: [{ path: "unreviewed.txt", startLine: 1 }] },
+				],
+			}),
+		);
+		assert.match(
+			run(repo, "auto").prior_review,
+			/2026-08-01_prior\.json$/,
+			"a review of unrelated files cannot resolve an omitted prior finding",
+		);
+		rmSync(narrowerBaseline);
 		const inactive = run(repo, "main");
 		assert.equal(
 			inactive.strategy,
@@ -181,7 +203,7 @@ try {
 			"unnamed intermediate commits stay out of scope",
 		);
 		const nonContiguousManifest = JSON.parse(
-			readFileSync(join(repo, nonContiguous.changed_files_manifest), "utf8"),
+			readFileSync(resolve(repo, nonContiguous.changed_files_manifest), "utf8"),
 		);
 		assert.deepEqual(
 			nonContiguousManifest.commits,
@@ -436,7 +458,7 @@ try {
 		appendFileSync(join(repo, "docs", "LegacyService.md"), "docs-only edit\n");
 		const r = run(repo, "working");
 		const manifest = JSON.parse(
-			readFileSync(join(repo, r.changed_files_manifest), "utf8"),
+			readFileSync(resolve(repo, r.changed_files_manifest), "utf8"),
 		);
 		assert.equal(
 			manifest.shards[0].category,
@@ -493,7 +515,7 @@ try {
 			"61 source files are partitioned into multiple shards",
 		);
 		const manifest = JSON.parse(
-			readFileSync(join(repo, r.changed_files_manifest), "utf8"),
+			readFileSync(resolve(repo, r.changed_files_manifest), "utf8"),
 		);
 		assert.equal(manifest.version, 1, "manifest schema is versioned");
 		assert.equal(

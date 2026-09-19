@@ -2,7 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 import { readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const LARGE_PATCH_BYTES = 1_000_000;
@@ -185,7 +185,6 @@ export function assembleReviewPatches(manifestInput) {
 	if (!Array.isArray(manifest.shards) || manifest.shards.length === 0) {
 		throw new Error("Review manifest contains no shards");
 	}
-	const repositoryRoot = runGit(["rev-parse", "--show-toplevel"]).trim();
 	const manifestDirectory = dirname(manifestPath);
 	const context = reviewContext(manifest);
 	const patches = manifest.shards.map((shard) => {
@@ -203,7 +202,7 @@ export function assembleReviewPatches(manifestInput) {
 		return {
 			id: shard.id,
 			category: shard.category,
-			path: relative(repositoryRoot, absolutePath).replaceAll("\\", "/"),
+			path: absolutePath.replaceAll("\\", "/"),
 			files: shard.files,
 			context,
 			bytes: statSync(absolutePath).size,
@@ -214,7 +213,7 @@ export function assembleReviewPatches(manifestInput) {
 		`${JSON.stringify({ ...manifest, ...context, patches }, null, 2)}\n`,
 	);
 	return {
-		manifest: relative(repositoryRoot, manifestPath).replaceAll("\\", "/"),
+		manifest: manifestPath.replaceAll("\\", "/"),
 		patches,
 	};
 }
