@@ -297,6 +297,23 @@ Read `references/wave2-lenses.md` NOW (only on a dispatching band — never when
 
 Wait for all Wave 2 agents. Collect their findings alongside the Wave 1 findings — together they form the complete **candidate slop findings** set, each keyed to a file and its layer, with a provisional `L<layer>-<seq>` ID and lens tag (G, Lc, D, C, A, T, L, Sec, M, S, Fe, Fp, P).
 
+### Step 5.5: Relation Audit (optional, Jev-backed — narrative-vs-record fact-check)
+
+Before the Verify Gate, fact-check the lens narratives against the deterministic linter ground truth collected in Step 2. The relation auditor (`scripts/jev-rel-audit.mjs`) asks one question per finding: *does the finding's description of relationships match the extracted record for its cited files?* — consumers, imports, boundary violations, write sites.
+
+**Gate**: SKIP this step when Step 2's linter ground truth has no dependency record (dependency-cruiser absent/failed) or no TypeSafe key is configured — note it once in the artifact's Developer Context and continue; this assist is never a gate.
+
+When the gate fires:
+1. **Assemble the record** from the Step 2 ground truth (save the linter's JSON output):
+   ```bash
+   node "$RPIV_PLUGIN_ROOT/scripts/jev-rel-audit.mjs" --depcruise <depcruise.json> [--astgrep <astgrep.json>] --out relations.json
+   ```
+2. **Write findings.json** from the candidate slop findings (per finding: `id`, `file`, `line`, `verbatim`, `note`), then audit:
+   ```bash
+   node "$RPIV_PLUGIN_ROOT/scripts/jev-rel-audit.mjs" --findings findings.json --record relations.json --out rel-audit.json
+   ```
+3. **Digest the verdicts** — `no-record` findings pass untouched (asymmetry of evidence: a silent record is never proof of a wrong claim). `RECORD-CONTRADICTION` and `UNCERTAIN` lines accompany the findings into Step 6's Verify Gate as advisory context; they never demote or drop a finding by themselves, and the claim-verifier remains the authority.
+
 ### Step 6: Verify Gate (anti-slop meta-guard)
 
 The slop-wave findings are agent-generated and prone to confident-but-unread assertions — verify them before the developer ever sees them, so the review does not ship its own slop. Dispatch ONE `claim-verifier`:
