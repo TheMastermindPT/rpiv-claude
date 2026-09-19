@@ -1,0 +1,33 @@
+views {
+	view decision-layer-overview {
+		title "The Jev decision layer"
+
+		include rpiv.jev
+		include rpiv.opencode-plugin
+		include rpiv.claude-hooks
+		include rpiv.policy-code
+		include rpiv.cite-check
+		include rpiv.calibration
+		include rpiv.reviewer
+	}
+
+	view pipeline-context {
+		title "rpiv pipeline"
+
+		include rpiv.**
+	}
+
+	dynamic view runtime-flow {
+		title "One subagent output through the decision layer"
+
+		rpiv.claim-verifier -> rpiv.opencode-plugin "emits FINDING rows"
+		rpiv.opencode-plugin -> rpiv.jev.row-lint "judges each row (state: row + contract)"
+		rpiv.jev.row-lint -> rpiv.policy-code "probabilities to bands: ok / review / flag"
+		parallel {
+			rpiv.policy-code -> rpiv.calibration "logs every verdict"
+			rpiv.policy-code -> rpiv.reviewer "flags only - advisory"
+			rpiv.cite-check -> rpiv.reviewer "mechanical citation-quality warnings"
+		}
+		rpiv.calibration <- rpiv.review-store "later outcomes (Falsified / withdrawn)"
+	}
+}

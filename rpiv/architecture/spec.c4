@@ -1,0 +1,50 @@
+specification {
+	element system {
+		style {
+			shape rectangle
+			color primary
+		}
+	}
+	element skill {
+		style {
+			shape rectangle
+			color primary
+		}
+	}
+	element agent {
+		style {
+			shape rectangle
+			color secondary
+		}
+	}
+	element decisionModel {
+		style {
+			shape cylinder
+			color amber
+		}
+	}
+	element hook {
+		style {
+			shape rectangle
+			color muted
+		}
+	}
+	element policy {
+		style {
+			shape rectangle
+			color sky
+		}
+	}
+	element store {
+		style {
+			shape storage
+			color green
+		}
+	}
+	element person {
+		style {
+			shape person
+			color indigo
+		}
+	}
+}

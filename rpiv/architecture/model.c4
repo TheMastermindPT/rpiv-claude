@@ -1,0 +1,62 @@
+model {
+	system rpiv "rpiv pipeline" {
+		skill deep-review "Deep review"
+		skill implement "Implement"
+		skill validate "Validate"
+		skill design "Design / revise"
+
+		agent claim-verifier "Claim verifier"
+		agent slice-verifier "Slice verifier"
+		agent diff-analyst "Diff analyst"
+		agent interaction-sweeper "Interaction sweeper"
+		agent artifact-reviewers "Artifact reviewers"
+
+		decisionModel jev "Jev decision layer (pinned jev-1.13.0)" {
+			decisionModel gate "Bash gate"
+			decisionModel row-lint "Row lints (6 agents)"
+			decisionModel pair-judge "Pair judgments (scope / resolution / oracle)"
+			decisionModel semantic-grader "Semantic grader"
+		}
+
+		hook opencode-plugin "OpenCode plugin hooks"
+		hook claude-hooks "Claude Code hooks"
+		hook eval-runner "Eval runner (dormant - claude -p bound)"
+
+		policy policy-code "Bands + prefilters (never allow from the model)"
+		policy cite-check "Cite-check collapse detector"
+
+		store review-store "Review store (review.json)"
+		store calibration "Calibration loop (log / labels / report)"
+
+		person reviewer "Human reviewer"
+	}
+
+	rpiv.deep-review -> rpiv.claim-verifier "dispatches Step 6"
+	rpiv.deep-review -> rpiv.diff-analyst "dispatches Wave 2"
+	rpiv.deep-review -> rpiv.interaction-sweeper "dispatches Step 4b"
+	rpiv.design -> rpiv.slice-verifier "dispatches intent review"
+	rpiv.implement -> rpiv.policy-code "runs deterministic gates"
+
+	rpiv.claim-verifier -> rpiv.opencode-plugin "rows captured"
+	rpiv.slice-verifier -> rpiv.opencode-plugin "rows captured"
+	rpiv.diff-analyst -> rpiv.opencode-plugin "rows captured"
+	rpiv.interaction-sweeper -> rpiv.opencode-plugin "blocks + prompt captured"
+	rpiv.artifact-reviewers -> rpiv.claude-hooks "rows captured"
+
+	rpiv.opencode-plugin -> rpiv.jev.gate "every shell command"
+	rpiv.opencode-plugin -> rpiv.jev.row-lint "rows + contracts + constituents"
+	rpiv.claude-hooks -> rpiv.jev.row-lint "rows + contracts"
+	rpiv.opencode-plugin -> rpiv.cite-check "every output"
+	rpiv.deep-review -> rpiv.jev.pair-judge "scope assist (Step 5.6)"
+	rpiv.eval-runner -> rpiv.jev.semantic-grader "semantic stage (dormant)"
+
+	rpiv.jev.row-lint -> rpiv.policy-code "probabilities"
+	rpiv.jev.gate -> rpiv.policy-code "probabilities"
+	rpiv.jev.pair-judge -> rpiv.policy-code "probabilities"
+	rpiv.policy-code -> rpiv.calibration "every verdict logged"
+	rpiv.policy-code -> rpiv.reviewer "flags - advisory, never authoritative"
+	rpiv.cite-check -> rpiv.reviewer "structural collapse warnings"
+	rpiv.review-store -> rpiv.calibration "outcomes (Falsified / withdrawn)"
+	rpiv.calibration -> rpiv.jev.row-lint "calibrated bands per instance"
+	rpiv.deep-review -> rpiv.review-store "writes findings + verifier tags"
+}
