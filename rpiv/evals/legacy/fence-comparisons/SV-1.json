@@ -1,0 +1,34 @@
+{
+  "id": "SV-1",
+  "name": "planted-defects-recall-and-restraint",
+  "skill": "slice-verifier (agent)",
+  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
+  "ref": "b460257",
+  "clean": [],
+  "seed": [
+    { "from": "SV-1.artifact.md", "to": ".rpiv/eval-fixture/design-load-cap-audit.md" }
+  ],
+  "output": "agent",
+  "prompt_file": "SV-1.prompt.md",
+  "ground_truth_note": "Synthetic in-progress design artifact (SV-1.artifact.md) over the load-cap-audit feature against real lib/generation @ b460257. The artifact is SEEDED into the worktree at .rpiv/eval-fixture/design-load-cap-audit.md (gitignored, no siblings) so the agent's neighborhood holds no grading spec or corrected slice; this case's .json/.prompt.md answer material stays in the rpiv repo, never copied to the worktree. Locked Slice 1 (types.ts + recorder.ts, in the artifact) exports LoadCapAuditEntry / buildClampAuditEntry / recordClampEvent / drainClampEvents and holds a module-level entries[] buffer. Slice 2 is the current slice under audit (supplied verbatim as current_slice_code in SV-1.prompt.md). The artifact deliberately does NOT spell load-cap.ts's exact export names or loadExceeds's parameter order, so the two read-HEAD defects (D4, D6) require reading the real source, not the doc. Six planted defects, one restraint control, each requiring genuine intent-vs-code reasoning: (D1, class-1 cross-slice drift -> Cross-slice) Slice 2 calls recordClampAudit; locked Slice 1 exports recordClampEvent. (D6, class-7 contract-vs-source -> Cross-slice) Slice 2 imports getMaxAllowedLoad; HEAD load-cap.ts exports getMaxAllowedLoadKg (:15). (D2, class-4 atomicity forward-ref -> Cross-slice) a Success Criterion renders via <ClampSummaryCard>, introduced only in future Slice 3. (D3, class-3 decision drift -> Decisions) a Success Criterion persists each entry to a load_cap_audit table, contradicting the recorded No-Persistence decision (which explicitly forbids that table). (D5, class-6 test-theater -> Decisions) the format.ts Behavior Oracle pins a shape ('a well-formed summary string') not exact I/O, violating the recorded TDD Standard; the SAME contract's validation Behavior pins exact values, so the agent must distinguish the hollow one. (D4, class-5 intra-slice correctness -> Correctness) loadExceeds(maxAllowedKg, exercise.load_target_kg) swaps the (valueKg, limitKg) args of load-cap.ts:22, so it records the INVERSE of the slice's own Oracle (110>105 must record but returns false; 104 must not record but returns true). (R1, RESTRAINT) Slice 2 never calls drainClampEvents, so the module buffer accumulates -- but whether that leaks across runs is owned by the generation lifecycle (plan-generation caller), which is neither a target file nor a locked slice. It is OUT of the slice's vantage (deep-review's job); the agent must NOT raise it as a VIOLATION. Density is intentional so one run exercises all four rows. Grader confirms mechanically; semantic correctness is a grader-model second pass (not yet wired).",
+  "checks": {
+    "citations": {
+      "min_resolvable_pct": 70,
+      "ignore": ["load-cap-audit", "recorder\\.ts", "format\\.ts", "types\\.ts", "SV-1", "design-load-cap-audit", "\\.test\\.", "ClampSummaryCard", "page\\.tsx"]
+    },
+    "slice_rows": {
+      "labels": ["Decisions", "Cross-slice", "Correctness", "Research"],
+      "capability": [
+        { "id": "D1-crossslice-drift", "must_match": "recordClamp", "note": "calls recordClampAudit; locked Slice 1 exports recordClampEvent (class 1)" },
+        { "id": "D6-contract-vs-source", "must_match": "getMaxAllowedLoad", "note": "imports getMaxAllowedLoad; load-cap.ts exports getMaxAllowedLoadKg at HEAD (class 7)" },
+        { "id": "D2-atomicity-forwardref", "must_match": "ClampSummaryCard", "note": "Success Criterion forward-refs Slice 3's ClampSummaryCard (class 4)" },
+        { "id": "D3-decision-drift", "must_match": "persist|load_cap_audit", "note": "persistence criterion contradicts the No-Persistence decision (class 3)" },
+        { "id": "D5-test-theater", "must_match": "oracle|shape|well-formed|tdd|theater", "note": "format.ts Behavior Oracle pins a shape, not exact I/O (class 6)" },
+        { "id": "D4-correctness-inverted", "must_match": "loadExceeds|swap|revers|transpos|inver|opposite", "note": "loadExceeds args swapped -> records the inverse of the stated Oracle (class 5 — the capability the expansion targets)" }
+      ],
+      "restraint": [
+        { "id": "R1-over-reach", "forbid": "leak|cross-run|accumulat|unbounded|stale|residual|carr(y|ies) over|across (generation |plan )?(run|invocation|call|generation)|(never|not|n.t|without|fails? to) (drain|clear|empt|reset|flush)|buffer.{0,20}(grow|leak|persist|retain)", "note": "the un-drained module buffer is a generation-lifecycle concern outside slice vantage; flagging it as a VIOLATION is over-reach" }
+      ]
+    }
+  }
+}

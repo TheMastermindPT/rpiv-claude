@@ -1,0 +1,42 @@
+{
+	"id": "ACV-2",
+	"name": "completed-intent-coverage-restraint",
+	"skill": "artifact-coverage-reviewer (agent)",
+	"worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
+	"ref": "b460257e1d22bb6abe073f0ad33aa628a268b0ab",
+	"clean": [],
+	"seed": [
+		{
+			"from": "../_fixtures/clamp-audit-intent.md",
+			"to": ".rpiv/eval-fixture/clamp-audit-intent.md"
+		},
+		{
+			"from": "../_fixtures/clamp-audit-contract.md",
+			"to": ".rpiv/eval-fixture/clamp-audit-contract.md"
+		},
+		{
+			"from": "../_fixtures/intent-review-protocol.md",
+			"to": ".rpiv/eval-fixture/intent-review-protocol.md"
+		}
+	],
+	"output": "agent",
+	"prompt_file": "ACV-2.prompt.md",
+	"ground_truth_note": "Current pure-leaf contract includes exact over-cap, no-op, tolerance, input-preservation, repeatability and static owner checks. Coverage intent review is not runtime verification. Up to three non-blocker findings are tolerated, but no restraint credit is possible without all scoped inputs, contract identity, working notes and completed review structure.",
+	"checks": {
+		"current_review": {
+			"mode": "intent",
+			"format": "findings-table",
+			"artifact_path": ".rpiv/eval-fixture/clamp-audit-intent.md",
+			"slice_id": "audit-entry",
+			"inputs": [
+				".rpiv/eval-fixture/clamp-audit-intent.md",
+				".rpiv/eval-fixture/clamp-audit-contract.md",
+				"lib/generation/load-cap.ts",
+				"lib/generation/adaptive-context/validation.ts"
+			]
+		},
+		"required_sections": ["CA-OVER", "CA-NOOP", "Verification Criteria"],
+		"forbidden_vocab": "\\|\\s*(blocker|code-quality|codebase-fit|actionability|test-contract)\\s*\\|",
+		"max_table_rows": 3
+	}
+}

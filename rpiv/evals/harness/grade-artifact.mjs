@@ -16,21 +16,33 @@
 // the script trustworthy: a check either greps or it doesn't.
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { citesIn, fileIndex, resolveInIndex } from "../../skills/_shared/citation-grammar.mjs";
-import { deriveStorePath, renderFinding, renderTally, sentinelsFor } from "../../skills/_shared/store.mjs";
+import {
+	citesIn,
+	fileIndex,
+	resolveInIndex,
+} from "../../skills/_shared/citation-grammar.mjs";
+import {
+	deriveStorePath,
+	renderFinding,
+	renderTally,
+	sentinelsFor,
+} from "../../skills/_shared/store.mjs";
 
 // ---------- CLI ----------
 const args = {};
-for (let i = 2; i < process.argv.length; i += 2) args[process.argv[i]?.replace(/^--/, "")] = process.argv[i + 1];
+for (let i = 2; i < process.argv.length; i += 2)
+	args[process.argv[i]?.replace(/^--/, "")] = process.argv[i + 1];
 const { artifact, repo } = args;
 const caseSpec = JSON.parse(readFileSync(args.case, "utf-8"));
 const checks = caseSpec.checks ?? {};
 const expectations = [];
-const expect = (text, passed, evidence) => expectations.push({ text, passed, evidence });
+const expect = (text, passed, evidence) =>
+	expectations.push({ text, passed, evidence });
 
 // ---------- artifact ----------
 if (!artifact || !existsSync(artifact)) {
@@ -43,12 +55,151 @@ const fmText = fmMatch?.[1] ?? "";
 const body = fmMatch?.[2] ?? text;
 expect("produced artifact exists", true, artifact);
 
+// Opt-in: legacy comparisons retain their original restraint semantics.
+let reviewComplete = true;
+if (checks.current_review) {
+	const problems = currentReviewProblems(checks.current_review);
+	reviewComplete = problems.length === 0;
+	expect(
+		"current review integrity: bound intent inputs, completed inspection, expected structure",
+		reviewComplete,
+		reviewComplete
+			? "recorded binding matches input bytes; inspection completed"
+			: problems.join("; "),
+	);
+}
+
+function currentReviewProblems(spec) {
+	const problems = [];
+	const lines = body.trim().split(/\r?\n/);
+	const field = (name) => {
+		const values = lines.filter((line) => line.startsWith(`${name}: `));
+		return values.length === 1
+			? values[0].slice(name.length + 2).trim()
+			: undefined;
+	};
+	// This opt-in covers intent evals, not frozen candidate snapshot validation.
+	if (spec.mode !== "intent" || field("mode") !== spec.mode)
+		problems.push("missing or unsupported mode");
+	for (const key of ["artifact_path", "slice_id"]) {
+		if (!spec[key] || field(key) !== spec[key])
+			problems.push(`${key} binding missing or mismatched`);
+	}
+	if (
+		!repo ||
+		!field("repository_path") ||
+		resolve(field("repository_path")) !== resolve(repo)
+	)
+		problems.push("repository_path binding missing or mismatched");
+	if (
+		!/^[a-f0-9]{40}$/.test(caseSpec.ref ?? "") ||
+		field("base_commit") !== caseSpec.ref
+	)
+		problems.push("base_commit must match the case's resolved full SHA");
+	if (field("inspection") !== "completed")
+		problems.push(`inspection: ${field("inspection") ?? "missing"}`);
+	if (field("identity_check") !== "unchanged")
+		problems.push("identity check missing or changed");
+	if (!["passed", "failed"].includes(field("outcome")))
+		problems.push(`outcome: ${field("outcome") ?? "missing"}`);
+	const inputs = spec.inputs ?? [];
+	if (inputs.length < 2 || !inputs.includes(spec.artifact_path))
+		problems.push("case must name the brief and referenced inputs");
+	const recordedInputs = lines.filter((line) =>
+		line.startsWith("input_sha256: "),
+	);
+	if (recordedInputs.length !== inputs.length)
+		problems.push("input identity count mismatch");
+	for (const path of inputs) {
+		try {
+			const digest = createHash("sha256")
+				.update(readFileSync(resolve(repo, path)))
+				.digest("hex");
+			if (!recordedInputs.includes(`input_sha256: ${path} ${digest}`))
+				problems.push(`missing or stale input identity: ${path}`);
+		} catch (error) {
+			problems.push(
+				`input inspection broken: ${path}: ${error.code ?? error.message}`,
+			);
+		}
+	}
+	let hasFindings = false;
+	if (spec.format === "slice-rows") {
+		const rows = lines.filter((line) =>
+			/^- (Decisions|Cross-slice|Correctness|Research):/.test(line),
+		);
+		const labels = ["Decisions", "Cross-slice", "Research"];
+		const valid =
+			rows.length === 3 &&
+			labels.every((label, i) =>
+				new RegExp(
+					`^- ${label}: (OK|${label === "Research" ? "WARNING" : "VIOLATION"}: .+)$`,
+				).test(rows[i]),
+			);
+		if (!valid || rows.join("\n") !== lines.slice(-3).join("\n"))
+			problems.push("expected exactly the three completed final summary rows");
+		hasFindings = rows.some((row) => /: (VIOLATION|WARNING):/.test(row));
+	} else if (spec.format === "findings-table") {
+		const rows = lines.filter((line) => line.trim().startsWith("|"));
+		const cells = rows.map((row) =>
+			row
+				.trim()
+				.split(/(?<!\\)\|/)
+				.slice(1, -1)
+				.map((cell) => cell.trim()),
+		);
+		const header = [
+			"plan-loc",
+			"codebase-loc",
+			"severity",
+			"dimension",
+			"finding",
+			"recommendation",
+		];
+		const validHeader =
+			cells[0]?.join("|") === header.join("|") &&
+			cells[1]?.length === 6 &&
+			cells[1].every((cell) => /^:?-{3,}:?$/.test(cell));
+		const dimensions = [
+			"code-quality",
+			"codebase-fit",
+			"actionability",
+			"test-contract",
+			"verification-coverage",
+		];
+		const validRows = cells
+			.slice(2)
+			.every(
+				(row) =>
+					row.length === 6 &&
+					row.every(Boolean) &&
+					["blocker", "concern", "suggestion"].includes(row[2]) &&
+					dimensions.includes(row[3]),
+			);
+		if (
+			!validHeader ||
+			!validRows ||
+			rows.join("\n") !== lines.slice(-rows.length).join("\n")
+		)
+			problems.push("expected one complete final six-column findings table");
+		hasFindings = rows.length > 2;
+	} else {
+		problems.push("unsupported current review format");
+	}
+	if (field("outcome") === "failed" && !hasFindings)
+		problems.push("failed review has no identified finding");
+	return problems;
+}
+
 // ---------- sibling review.json (store-backed grading) ----------
 // recall/absence/max_findings field-assert over the sibling review.json WHEN it exists;
 // else the existing markdown grep (a per-artifact FALLBACK, never a dual-run). null for
 // non-store artifacts (research/design/plan/blueprint/deep-review, and agent-output).
 const storePath = artifact ? deriveStorePath(artifact) : null;
-const store = storePath && existsSync(storePath) ? JSON.parse(readFileSync(storePath, "utf-8")) : null;
+const store =
+	storePath && existsSync(storePath)
+		? JSON.parse(readFileSync(storePath, "utf-8"))
+		: null;
 
 // ---------- worktree file index ----------
 // fileIndex/resolveInIndex are single-sourced in skills/_shared/citation-grammar.mjs
@@ -60,7 +211,10 @@ const fileCache = new Map();
 function fileLines(rel) {
 	if (!fileCache.has(rel)) {
 		const p = join(repo, rel);
-		fileCache.set(rel, existsSync(p) ? readFileSync(p, "utf-8").split("\n") : null);
+		fileCache.set(
+			rel,
+			existsSync(p) ? readFileSync(p, "utf-8").split("\n") : null,
+		);
 	}
 	return fileCache.get(rel);
 }
@@ -70,7 +224,10 @@ function resolveRel(tok) {
 	// Ambiguous vs missing — report which, so citation failures stay interpretable.
 	const norm = tok.replace(/\\/g, "/").replace(/^\.\//, "");
 	const suffix = tree.filter((p) => p.endsWith("/" + norm));
-	resolveRel.why?.set(norm, suffix.length > 1 ? `ambiguous: ${suffix.length} matches` : "no such file");
+	resolveRel.why?.set(
+		norm,
+		suffix.length > 1 ? `ambiguous: ${suffix.length} matches` : "no such file",
+	);
 	return null;
 }
 resolveRel.why = new Map();
@@ -88,23 +245,43 @@ resolveRel.why = new Map();
 // because nothing was reported at all) — so these two checks gate everything else.
 if (checks.validate_artifact) {
 	const status = fmText.match(/^status:\s*(\S+)/m)?.[1] ?? "(none)";
-	expect("artifact reached status: ready (the run completed and finalized)", status === "ready", `status: ${status}`);
-	const placeholders = body.match(/_\((?:Filled|To be written)[^)]*\)_|_To be written at Step \d+\._/g) ?? [];
+	expect(
+		"artifact reached status: ready (the run completed and finalized)",
+		status === "ready",
+		`status: ${status}`,
+	);
+	const placeholders =
+		body.match(
+			/_\((?:Filled|To be written)[^)]*\)_|_To be written at Step \d+\._/g,
+		) ?? [];
 	expect(
 		"no unfilled step placeholders remain in the body",
 		placeholders.length === 0,
-		placeholders.length ? `${placeholders.length} placeholder(s), e.g. ${placeholders[0]}` : "none",
+		placeholders.length
+			? `${placeholders.length} placeholder(s), e.g. ${placeholders[0]}`
+			: "none",
 	);
 }
 
 // ---------- 1. validate-artifact.mjs (the plugin's own finalization lint) ----------
 if (checks.validate_artifact) {
-	const va = resolve(dirname(fileURLToPath(import.meta.url)), "../../skills/_shared/validate-artifact.mjs");
+	const va = resolve(
+		dirname(fileURLToPath(import.meta.url)),
+		"../../skills/_shared/validate-artifact.mjs",
+	);
 	try {
 		execFileSync("node", [va, artifact, "--root", repo], { encoding: "utf-8" });
-		expect("validate-artifact.mjs passes (frontmatter schema, no template tokens/TODOs, hash)", true, "exit 0");
+		expect(
+			"validate-artifact.mjs passes (frontmatter schema, no template tokens/TODOs, hash)",
+			true,
+			"exit 0",
+		);
 	} catch (e) {
-		expect("validate-artifact.mjs passes (frontmatter schema, no template tokens/TODOs, hash)", false, (e.stdout || e.message).trim().slice(0, 500));
+		expect(
+			"validate-artifact.mjs passes (frontmatter schema, no template tokens/TODOs, hash)",
+			false,
+			(e.stdout || e.message).trim().slice(0, 500),
+		);
 	}
 }
 
@@ -120,14 +297,22 @@ if (checks.citations) {
 	for (const c of all) {
 		if (ignore.some((re) => re.test(c.raw) || re.test(c.tok))) continue;
 		const rel = resolveRel(c.tok);
-		if (!rel) { bad.push(`${c.raw} (${resolveRel.why.get(c.tok.replace(/\\/g, "/").replace(/^\.\//, "")) ?? "no such file"})`); checked++; continue; }
+		if (!rel) {
+			bad.push(
+				`${c.raw} (${resolveRel.why.get(c.tok.replace(/\\/g, "/").replace(/^\.\//, "")) ?? "no such file"})`,
+			);
+			checked++;
+			continue;
+		}
 		checked++;
 		if (c.line != null) {
 			const fl = fileLines(rel);
-			if (!fl || c.line > fl.length) bad.push(`${c.raw} (line > ${fl?.length ?? 0})`);
+			if (!fl || c.line > fl.length)
+				bad.push(`${c.raw} (line > ${fl?.length ?? 0})`);
 		}
 	}
-	const pct = checked === 0 ? 100 : Math.round(((checked - bad.length) / checked) * 100);
+	const pct =
+		checked === 0 ? 100 : Math.round(((checked - bad.length) / checked) * 100);
 	const min = checks.citations.min_resolvable_pct ?? 100;
 	expect(
 		`every file:line citation resolves in the worktree (>= ${min}%)`,
@@ -141,18 +326,28 @@ if (checks.citations) {
 		const misses = [];
 		let quotes = 0;
 		for (const line of body.split("\n")) {
-			const cm = line.match(/`([\w@./\\-]+\.(?:tsx?|mjs|jsx?|sql)):(\d+)(?:-\d+)?`\s*[—:-]?\s*`([^`]{6,})`/);
+			const cm = line.match(
+				/`([\w@./\\-]+\.(?:tsx?|mjs|jsx?|sql)):(\d+)(?:-\d+)?`\s*[—:-]?\s*`([^`]{6,})`/,
+			);
 			if (!cm) continue;
 			quotes++;
 			const rel = resolveRel(cm[1]);
 			const fl = rel ? fileLines(rel) : null;
-			if (!fl) { misses.push(`${cm[1]}:${cm[2]} (file missing)`); continue; }
+			if (!fl) {
+				misses.push(`${cm[1]}:${cm[2]} (file missing)`);
+				continue;
+			}
 			const norm = (s) => s.replace(/\s+/g, " ").trim();
 			// Reviews legitimately truncate long lines with a trailing ellipsis — strip it.
 			const want = norm(cm[3]).replace(/\s*(\.\.\.|…)$/, "");
 			const ln = Number(cm[2]);
 			const window = fl.slice(Math.max(0, ln - 4), ln + 3).map(norm);
-			if (!window.some((w) => w.includes(want) || want.includes(w) && w.length > 5)) misses.push(`${cm[1]}:${cm[2]} != "${cm[3].slice(0, 60)}"`);
+			if (
+				!window.some(
+					(w) => w.includes(want) || (want.includes(w) && w.length > 5),
+				)
+			)
+				misses.push(`${cm[1]}:${cm[2]} != "${cm[3].slice(0, 60)}"`);
 		}
 		expect(
 			"every verbatim quote matches the cited line (+-3 lines, whitespace-normalized)",
@@ -167,11 +362,23 @@ if (checks.citations) {
 // markdown body-cite grep (moved verbatim into the else — non-store cases grade as today).
 for (const item of checks.recall ?? []) {
 	if (store) {
-		const evidence = store.findings.flatMap((f) => f.evidence.map((ev) => ({ path: resolveRel(ev.path) ?? ev.path, line: ev.startLine })));
+		const evidence = store.findings.flatMap((f) =>
+			f.evidence.map((ev) => ({
+				path: resolveRel(ev.path) ?? ev.path,
+				line: ev.startLine,
+			})),
+		);
 		const hits = [];
 		for (const f of item.files) {
 			const rel = resolveRel(f.path) ?? f.path;
-			if (evidence.some((e) => e.path === rel && (f.line == null || Math.abs(e.line - f.line) <= (f.radius ?? 60)))) hits.push(f.path);
+			if (
+				evidence.some(
+					(e) =>
+						e.path === rel &&
+						(f.line == null || Math.abs(e.line - f.line) <= (f.radius ?? 60)),
+				)
+			)
+				hits.push(f.path);
 		}
 		expect(
 			`recall ${item.id}: review.json cites >= ${item.min_files ?? 1} of [${item.files.map((f) => f.path.split("/").pop() + (f.line ? ":" + f.line : "")).join(", ")}] — ${item.note ?? ""}`,
@@ -183,8 +390,14 @@ for (const item of checks.recall ?? []) {
 		const bodyCites = citesIn(body);
 		for (const f of item.files) {
 			const rel = resolveRel(f.path) ?? f.path;
-			const found = bodyCites.filter((c) => (resolveRel(c.tok) ?? c.tok) === rel);
-			const ok = found.some((c) => f.line == null || (c.line != null && Math.abs(c.line - f.line) <= (f.radius ?? 60)));
+			const found = bodyCites.filter(
+				(c) => (resolveRel(c.tok) ?? c.tok) === rel,
+			);
+			const ok = found.some(
+				(c) =>
+					f.line == null ||
+					(c.line != null && Math.abs(c.line - f.line) <= (f.radius ?? 60)),
+			);
 			if (ok) hits.push(f.path);
 		}
 		const min = item.min_files ?? 1;
@@ -213,22 +426,38 @@ if (checks.absence?.length) {
 			const viol = store.findings.filter((f) => {
 				if (f.status === "withdrawn" || f.status === "rejected") return false; // retired findings aren't "re-reported"
 				const cited = f.evidence.map((ev) => resolveRel(ev.path) ?? ev.path);
-				return item.pair.every((p) => cited.some((c) => c === p || c.endsWith("/" + p))) && re.test(`${f.title} ${f.what ?? ""} ${f.why ?? ""}`);
+				return (
+					item.pair.every((p) =>
+						cited.some((c) => c === p || c.endsWith("/" + p)),
+					) && re.test(`${f.title} ${f.what ?? ""} ${f.why ?? ""}`)
+				);
 			});
 			expect(
 				`absence ${item.id}: the already-fixed finding (${item.note ?? item.pattern}) is NOT re-reported [review.json]`,
-				viol.length === 0,
-				viol.length ? `re-reported by finding ${viol[0].id}` : "not re-reported",
+				reviewComplete && viol.length === 0,
+				!reviewComplete
+					? "current review integrity failed; absence not established"
+					: viol.length
+						? `re-reported by finding ${viol[0].id}`
+						: "not re-reported",
 			);
 		} else {
 			const viol = units.filter((u) => {
 				const cited = citesIn(u).map((c) => resolveRel(c.tok) ?? c.tok);
-				return item.pair.every((p) => cited.some((c) => c === p || c.endsWith("/" + p))) && re.test(u);
+				return (
+					item.pair.every((p) =>
+						cited.some((c) => c === p || c.endsWith("/" + p)),
+					) && re.test(u)
+				);
 			});
 			expect(
 				`absence ${item.id}: the already-fixed finding (${item.note ?? item.pattern}) is NOT re-reported`,
-				viol.length === 0,
-				viol.length ? `re-reported in ${viol.length} unit(s): "${viol[0].slice(0, 160)}..."` : "not re-reported",
+				reviewComplete && viol.length === 0,
+				!reviewComplete
+					? "current review integrity failed; absence not established"
+					: viol.length
+						? `re-reported in ${viol.length} unit(s): "${viol[0].slice(0, 160)}..."`
+						: "not re-reported",
 			);
 		}
 	}
@@ -242,19 +471,35 @@ if (checks.frontmatter) {
 	};
 	for (const lens of checks.frontmatter.expect_nonzero_lenses ?? []) {
 		const v = fmNum(lens);
-		expect(`frontmatter slop_by_lens.${lens} > 0 (the lens with known ground truth fired)`, v != null && v > 0, `${lens}=${v}`);
+		expect(
+			`frontmatter slop_by_lens.${lens} > 0 (the lens with known ground truth fired)`,
+			v != null && v > 0,
+			`${lens}=${v}`,
+		);
 	}
 	for (const [key, max] of Object.entries(checks.frontmatter.max ?? {})) {
 		const v = fmNum(key);
-		expect(`frontmatter ${key} <= ${max}`, v != null && v <= max, `${key}=${v}`);
+		expect(
+			`frontmatter ${key} <= ${max}`,
+			v != null && v <= max,
+			`${key}=${v}`,
+		);
 	}
 	for (const [key, min] of Object.entries(checks.frontmatter.min ?? {})) {
 		const v = fmNum(key);
-		expect(`frontmatter ${key} >= ${min}`, v != null && v >= min, `${key}=${v}`);
+		expect(
+			`frontmatter ${key} >= ${min}`,
+			v != null && v >= min,
+			`${key}=${v}`,
+		);
 	}
 	for (const key of checks.frontmatter.present ?? []) {
 		const ok = new RegExp(`^${key}:\\s*\\S`, "m").test(fmText);
-		expect(`frontmatter field ${key} present and non-empty`, ok, ok ? "present" : "missing");
+		expect(
+			`frontmatter field ${key} present and non-empty`,
+			ok,
+			ok ? "present" : "missing",
+		);
 	}
 }
 
@@ -264,13 +509,21 @@ if (checks.forbidden_vocab) {
 	const hits = body.split("\n").filter((l) => re.test(l));
 	expect(
 		`output contains no findings/severity vocabulary (/${checks.forbidden_vocab}/i) — the agent maps, it does not judge`,
-		hits.length === 0,
-		hits.length ? `${hits.length} hits, e.g.: "${hits[0].trim().slice(0, 120)}"` : "clean",
+		reviewComplete && hits.length === 0,
+		!reviewComplete
+			? "current review integrity failed; restraint not established"
+			: hits.length
+				? `${hits.length} hits, e.g.: "${hits[0].trim().slice(0, 120)}"`
+				: "clean",
 	);
 }
 for (const sec of checks.required_sections ?? []) {
 	const ok = new RegExp(sec, "m").test(body);
-	expect(`output contains required section /${sec}/`, ok, ok ? "present" : "MISSING");
+	expect(
+		`output contains required section /${sec}/`,
+		ok,
+		ok ? "present" : "MISSING",
+	);
 }
 // ---------- section routing (which `## Section` a keyword lands in) ----------
 // Tests an artifact's routing logic (e.g. discover puts a scope-creep aside under
@@ -281,17 +534,24 @@ if (checks.section_routing?.length) {
 	sections[cur] = [];
 	for (const line of body.split("\n")) {
 		const h = line.match(/^##\s+(.*)$/);
-		if (h) { cur = h[1].trim(); sections[cur] = sections[cur] ?? []; }
-		else sections[cur].push(line);
+		if (h) {
+			cur = h[1].trim();
+			sections[cur] = sections[cur] ?? [];
+		} else sections[cur].push(line);
 	}
 	const sectionText = (reStr) => {
 		const re = new RegExp(reStr, "i");
-		return Object.entries(sections).filter(([h]) => re.test(h)).map(([, b]) => b.join("\n")).join("\n");
+		return Object.entries(sections)
+			.filter(([h]) => re.test(h))
+			.map(([, b]) => b.join("\n"))
+			.join("\n");
 	};
 	for (const spec of checks.section_routing) {
 		const kw = new RegExp(spec.keyword, "i");
 		const inHit = kw.test(sectionText(spec.in_section));
-		const notHit = spec.not_in_section ? kw.test(sectionText(spec.not_in_section)) : false;
+		const notHit = spec.not_in_section
+			? kw.test(sectionText(spec.not_in_section))
+			: false;
 		expect(
 			`routing ${spec.id}: /${spec.keyword}/ under /${spec.in_section}/${spec.not_in_section ? ` and NOT under /${spec.not_in_section}/` : ""} — ${spec.note ?? ""}`,
 			inHit && !notHit,
@@ -300,7 +560,10 @@ if (checks.section_routing?.length) {
 	}
 }
 if (checks.expected_entities) {
-	const missing = checks.expected_entities.filter((e) => !new RegExp(e.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(body));
+	const missing = checks.expected_entities.filter(
+		(e) =>
+			!new RegExp(e.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(body),
+	);
 	expect(
 		`all known entities named: [${checks.expected_entities.join(", ")}]`,
 		missing.length === 0,
@@ -313,32 +576,54 @@ if (checks.compounds) {
 	for (const b of blocks) {
 		const id = b.match(/^IX-\d+/)[0];
 		const evidence = citesIn(b).map((c) => ({ ...c, rel: resolveRel(c.tok) }));
-		const files = new Set(evidence.filter((e) => e.rel && e.line != null).map((e) => e.rel));
-		if (files.size < 2) problems.push(`${id}: only ${files.size} distinct resolvable cited file(s)`);
+		const files = new Set(
+			evidence.filter((e) => e.rel && e.line != null).map((e) => e.rel),
+		);
+		if (files.size < 2)
+			problems.push(
+				`${id}: only ${files.size} distinct resolvable cited file(s)`,
+			);
 		// verbatim: every backtick quote in the Evidence bullets must grep in its cited file
-		for (const line of b.split("\n").filter((l) => /^\s*-\s*`[^`]+:\d+`/.test(l))) {
+		for (const line of b
+			.split("\n")
+			.filter((l) => /^\s*-\s*`[^`]+:\d+`/.test(l))) {
 			const m = line.match(/`([^`]+):(\d+)`\s*—\s*`([^`]+)`/);
 			if (!m) continue;
 			const rel = resolveRel(m[1]);
 			const fl = rel ? fileLines(rel) : null;
 			const norm = (s) => s.replace(/\s+/g, " ").trim();
 			const ln = Number(m[2]);
-			if (!fl || !fl.slice(Math.max(0, ln - 4), ln + 3).map(norm).some((w) => w.includes(norm(m[3])))) problems.push(`${id}: quote not at ${m[1]}:${m[2]}`);
+			if (
+				!fl ||
+				!fl
+					.slice(Math.max(0, ln - 4), ln + 3)
+					.map(norm)
+					.some((w) => w.includes(norm(m[3])))
+			)
+				problems.push(`${id}: quote not at ${m[1]}:${m[2]}`);
 		}
 		if (checks.compounds.constituents_subset_of) {
 			// Parse ID-shaped tokens only (M1, D4, Tc12, L2-04) — agents sometimes annotate the
 			// Constituents line with provenance prose; alien means an ID not in the supplied set.
 			const line = b.match(/\*\*Constituents:\*\*\s*(.+)/)?.[1] ?? "";
 			const cons = line.match(/\b[A-Z][A-Za-z]{0,2}-?\d{1,3}\b/g) ?? [];
-			const alien = cons.filter((c) => !checks.compounds.constituents_subset_of.includes(c));
-			if (alien.length) problems.push(`${id}: constituents not in supplied set: ${alien.join(", ")}`);
-			if (cons.length === 0) problems.push(`${id}: no parseable constituent IDs`);
+			const alien = cons.filter(
+				(c) => !checks.compounds.constituents_subset_of.includes(c),
+			);
+			if (alien.length)
+				problems.push(
+					`${id}: constituents not in supplied set: ${alien.join(", ")}`,
+				);
+			if (cons.length === 0)
+				problems.push(`${id}: no parseable constituent IDs`);
 		}
 	}
 	expect(
 		`every IX compound has >=2 distinct-file greppable cites, matching verbatim quotes, constituents within the supplied set (${blocks.length} compound(s))`,
 		blocks.length > 0 && problems.length === 0,
-		problems.length ? problems.slice(0, 6).join(" | ") : `${blocks.length} compounds clean`,
+		problems.length
+			? problems.slice(0, 6).join(" | ")
+			: `${blocks.length} compounds clean`,
 	);
 }
 if (checks.expect_no_interaction) {
@@ -361,16 +646,36 @@ if (checks.max_compounds != null) {
 if (checks.require_rejection_reasoning) {
 	// Restraint must be visible: findings NOT grouped are named with the reason they
 	// failed admission, so triage knows they were considered rather than dropped.
-	const ok = /(no other grounded|no grounded cross-finding|did not clear|fail(s|ed)? the admission test|ungrouped)/i.test(body);
-	expect("explicitly accounts for non-grouped findings with rejection reasoning", ok, ok ? "rejection reasoning present" : "no rejection reasoning found");
+	const ok =
+		/(no other grounded|no grounded cross-finding|did not clear|fail(s|ed)? the admission test|ungrouped)/i.test(
+			body,
+		);
+	expect(
+		"explicitly accounts for non-grouped findings with rejection reasoning",
+		ok,
+		ok ? "rejection reasoning present" : "no rejection reasoning found",
+	);
 }
 if (checks.max_findings != null) {
 	if (store) {
 		const n = store.findings.filter((f) => f.status !== "withdrawn").length;
-		expect(`findings <= ${checks.max_findings} (over-flagging ceiling) [review.json]`, n <= checks.max_findings, `findings: ${n}`);
+		expect(
+			`findings <= ${checks.max_findings} (over-flagging ceiling) [review.json]`,
+			reviewComplete && n <= checks.max_findings,
+			!reviewComplete
+				? "current review integrity failed; restraint not established"
+				: `findings: ${n}`,
+		);
 	} else {
-		const n = (body.match(/^(?:### |\| ?)(?:🔴|🟡|I\d|S\d|Q\d)/gm) ?? []).length;
-		expect(`total flagged findings <= ${checks.max_findings} (over-flagging ceiling on a clean diff)`, n <= checks.max_findings, `found ${n}`);
+		const n = (body.match(/^(?:### |\| ?)(?:🔴|🟡|I\d|S\d|Q\d)/gm) ?? [])
+			.length;
+		expect(
+			`total flagged findings <= ${checks.max_findings} (over-flagging ceiling on a clean diff)`,
+			reviewComplete && n <= checks.max_findings,
+			!reviewComplete
+				? "current review integrity failed; restraint not established"
+				: `found ${n}`,
+		);
 	}
 }
 if (checks.max_table_rows != null) {
@@ -379,10 +684,18 @@ if (checks.max_table_rows != null) {
 	// (🔴/I\d/...) never matches these tables, so this is their over-flagging ceiling.
 	const rows = body.split("\n").filter((l) => /^\|/.test(l.trim())).length;
 	const n = Math.max(0, rows - 2);
-	expect(`table body rows <= ${checks.max_table_rows} (over-flagging ceiling)`, n <= checks.max_table_rows, `rows: ${n}`);
+	expect(
+		`table body rows <= ${checks.max_table_rows} (over-flagging ceiling)`,
+		reviewComplete && n <= checks.max_table_rows,
+		!reviewComplete
+			? "current review integrity failed; restraint not established"
+			: `rows: ${n}`,
+	);
 }
 
 // ---------- 7. slice-verifier summary-row grading (capability + restraint) ----------
+// Current intent cases use the three-row integrity gate above. The four-row comparison
+// and no_false_correctness behavior below are retained only for legacy regrading.
 // The agent emits working notes then its final summary rows (Decisions / Cross-slice /
 // [Correctness] / Research). We grade the FINAL rows only. To compare a 3-row baseline
 // against the 4-row expanded agent FAIRLY, recall is scored as "caught in ANY row"
@@ -397,8 +710,14 @@ if (checks.max_table_rows != null) {
 // are excluded so an agent that declines an out-of-vantage concern is not penalized.
 // Case-insensitive: the rows carry the agent's own prose.
 if (checks.slice_rows) {
-	const labels = checks.slice_rows.labels ?? ["Decisions", "Cross-slice", "Correctness", "Research"];
-	const labelRe = new RegExp(`^\\s*-?\\s*(${labels.map((l) => l.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\s*:\\s*(.*)$`);
+	const labels =
+		checks.slice_rows.labels ??
+		(checks.current_review
+			? ["Decisions", "Cross-slice", "Research"]
+			: ["Decisions", "Cross-slice", "Correctness", "Research"]);
+	const labelRe = new RegExp(
+		`^\\s*-?\\s*(${labels.map((l) => l.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\s*:\\s*(.*)$`,
+	);
 	const rowOf = {};
 	for (const line of body.split("\n")) {
 		const m = line.match(labelRe);
@@ -413,17 +732,25 @@ if (checks.slice_rows) {
 		expect(
 			`capability ${e.id}: /${e.must_match}/ caught in some summary row — ${e.note ?? ""}`,
 			found,
-			found ? `caught (under ${where.join("/")})` : "NOT caught in any summary row",
+			found
+				? `caught (under ${where.join("/")})`
+				: "NOT caught in any summary row",
 		);
 	}
 	// restraint: an out-of-vantage concern must not be raised as a VIOLATION in any row
 	for (const r of checks.slice_rows.restraint ?? []) {
 		const re = new RegExp(r.forbid, "i");
-		const flagged = labels.filter((l) => /VIOLATION/i.test(rowOf[l] ?? "") && re.test(rowOf[l] ?? ""));
+		const flagged = labels.filter(
+			(l) => /VIOLATION/i.test(rowOf[l] ?? "") && re.test(rowOf[l] ?? ""),
+		);
 		expect(
 			`restraint ${r.id}: /${r.forbid}/ NOT raised as a VIOLATION (out of slice vantage) — ${r.note ?? ""}`,
-			flagged.length === 0,
-			flagged.length ? `OVER-REACH: raised under ${flagged.join("/")}` : "not flagged (correct)",
+			reviewComplete && flagged.length === 0,
+			!reviewComplete
+				? "current review integrity failed; restraint not established"
+				: flagged.length
+					? `OVER-REACH: raised under ${flagged.join("/")}`
+					: "not flagged (correct)",
 		);
 	}
 	// clean-slice false-positive control: the emitted code is correct, so the Correctness
@@ -433,8 +760,14 @@ if (checks.slice_rows) {
 		const invented = /VIOLATION/i.test(cx);
 		expect(
 			"clean slice: Correctness row carries no VIOLATION (no invented correctness bug)",
-			!invented,
-			invented ? `FALSE POSITIVE: "${cx.slice(0, 160)}"` : rowOf["Correctness"] == null ? "no Correctness row (3-row agent) — trivially clean" : "Correctness row clean",
+			reviewComplete && !invented,
+			!reviewComplete
+				? "current review integrity failed; restraint not established"
+				: invented
+					? `FALSE POSITIVE: "${cx.slice(0, 160)}"`
+					: rowOf["Correctness"] == null
+						? "no Correctness row (3-row agent) — trivially clean"
+						: "Correctness row clean",
 		);
 	}
 }
@@ -449,16 +782,28 @@ if (store && checks.render_fidelity !== false) {
 	const layers = [...new Set(arFindings.map((f) => String(f.layer)))];
 	const regionOf = (kind, layer) => {
 		const { begin, end } = sentinelsFor(kind, layer);
-		const bi = text.indexOf(begin), ei = text.indexOf(end);
-		return bi === -1 || ei === -1 ? null : text.slice(bi + begin.length, ei).trim();
+		const bi = text.indexOf(begin),
+			ei = text.indexOf(end);
+		return bi === -1 || ei === -1
+			? null
+			: text.slice(bi + begin.length, ei).trim();
 	};
 	const stale = [];
 	for (const layer of layers) {
 		const inLayer = arFindings.filter((f) => String(f.layer) === String(layer));
-		if (regionOf("findings", layer) !== inLayer.map(renderFinding).join("\n\n").trim()) stale.push(`layer ${layer} findings`);
-		if (regionOf("tally", layer) !== renderTally(store, layer).trim()) stale.push(`layer ${layer} tally`);
+		if (
+			regionOf("findings", layer) !==
+			inLayer.map(renderFinding).join("\n\n").trim()
+		)
+			stale.push(`layer ${layer} findings`);
+		if (regionOf("tally", layer) !== renderTally(store, layer).trim())
+			stale.push(`layer ${layer} tally`);
 	}
-	expect("render-fidelity: the .md sentinel regions match a fresh render of review.json", stale.length === 0, stale.length ? `stale: ${stale.join("; ")}` : "faithful");
+	expect(
+		"render-fidelity: the .md sentinel regions match a fresh render of review.json",
+		stale.length === 0,
+		stale.length ? `stale: ${stale.join("; ")}` : "faithful",
+	);
 }
 
 finish();
@@ -466,9 +811,21 @@ finish();
 function finish() {
 	const passed = expectations.filter((e) => e.passed).length;
 	// summary.pass_rate is what skill-creator's aggregate_benchmark reads.
-	const grading = { case: caseSpec.id, artifact, expectations, summary: { passed, failed: expectations.length - passed, pass_rate: expectations.length ? passed / expectations.length : 0 } };
+	const grading = {
+		case: caseSpec.id,
+		artifact,
+		expectations,
+		summary: {
+			passed,
+			failed: expectations.length - passed,
+			pass_rate: expectations.length ? passed / expectations.length : 0,
+		},
+	};
 	if (args.out) writeFileSync(args.out, JSON.stringify(grading, null, 2));
-	for (const e of expectations) console.log(`${e.passed ? "PASS" : "FAIL"}  ${e.text}\n      ${e.evidence}`);
+	for (const e of expectations)
+		console.log(
+			`${e.passed ? "PASS" : "FAIL"}  ${e.text}\n      ${e.evidence}`,
+		);
 	console.log(`\n${passed}/${expectations.length} checks passed`);
 	process.exit(expectations.every((e) => e.passed) ? 0 : 1);
 }

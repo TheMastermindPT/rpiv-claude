@@ -1,0 +1,45 @@
+{
+	"id": "ACV-1",
+	"name": "intent-verification-gap-recall",
+	"skill": "artifact-coverage-reviewer (agent)",
+	"worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
+	"ref": "b460257e1d22bb6abe073f0ad33aa628a268b0ab",
+	"clean": [],
+	"seed": [
+		{
+			"from": "../_fixtures/clamp-audit-conflicting-intent.md",
+			"to": ".rpiv/eval-fixture/clamp-audit-conflicting-intent.md"
+		},
+		{
+			"from": "../_fixtures/clamp-audit-contract.md",
+			"to": ".rpiv/eval-fixture/clamp-audit-contract.md"
+		},
+		{
+			"from": "../_fixtures/intent-review-protocol.md",
+			"to": ".rpiv/eval-fixture/intent-review-protocol.md"
+		}
+	],
+	"output": "agent",
+	"prompt_file": "ACV-1.prompt.md",
+	"ground_truth_note": "The proposed check replaces the approved CA-OVER object oracle with a shape-only assertion. Coverage review must trace the referenced normative obligation and identify that missing mechanism, not audit a copied source fence or claim tests ran. Other grounded coverage gaps are allowed.",
+	"checks": {
+		"current_review": {
+			"mode": "intent",
+			"format": "findings-table",
+			"artifact_path": ".rpiv/eval-fixture/clamp-audit-conflicting-intent.md",
+			"slice_id": "audit-entry",
+			"inputs": [
+				".rpiv/eval-fixture/clamp-audit-conflicting-intent.md",
+				".rpiv/eval-fixture/clamp-audit-contract.md",
+				"lib/generation/load-cap.ts",
+				"lib/generation/adaptive-context/validation.ts"
+			]
+		},
+		"required_sections": [
+			"CA-NOOP",
+			"^\\|[^\\n]*verification-coverage[^\\n]*(CA-OVER|oracle|Oracle|well-formed)"
+		],
+		"forbidden_vocab": "\\|\\s*(code-quality|codebase-fit|actionability|test-contract)\\s*\\|",
+		"max_table_rows": 12
+	}
+}

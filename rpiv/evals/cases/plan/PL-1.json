@@ -1,41 +1,75 @@
 {
-  "id": "PL-1",
-  "name": "clamp-audit-plan-from-design",
-  "skill": "plan",
-  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
-  "ref": "b460257",
-  "clean": [".rpiv/artifacts/plans"],
-  "seed": [
-    { "from": "../_fixtures/design-load-cap-clamp-audit.md", "to": ".rpiv/artifacts/designs/2026-07-08_14-30-00_load-cap-clamp-audit.md" }
-  ],
-  "artifact_glob": ".rpiv/artifacts/plans/*.md",
-  "prompt": "/rpiv:plan .rpiv/artifacts/designs/2026-07-08_14-30-00_load-cap-clamp-audit.md (Headless non-interactive run: at any triage question or checkpoint, ALWAYS pick the recommended option and continue; never wait for user input. Proceed through the Step 4 reviewer dispatch and Step 5 triage to finalization.)",
-  "ground_truth_note": "Plan inherits DS-1's produced design (frozen as the design fixture) 1:1 into phases, copies Architecture code + Test Contracts + Success Criteria through unchanged, and runs the Step 4 reviewer pair (artifact-code-reviewer + artifact-coverage-reviewer — exercises the FIXED ACR agent in-situ) then triages. The design fixture (_fixtures/design-load-cap-clamp-audit.md) is FROZEN FROM DS-1's real output after DS-1 completes — do not run PL-1 until that fixture exists. Grading: validate_artifact + required-sections (phases, contracts, ## Plan Review) + recall on existing grounding files.",
-  "checks": {
-    "validate_artifact": true,
-    "required_sections": [
-      "^## Phase 1",
-      "### Test Contract:",
-      "### Success Criteria:",
-      "#### Automated Verification:",
-      "^## Plan Review"
-    ],
-    "recall": [
-      {
-        "id": "reuses-load-cap-owner",
-        "files": [{ "path": "lib/generation/load-cap.ts" }],
-        "min_files": 1,
-        "note": "plan carries through the load-cap grounding from design"
-      },
-      {
-        "id": "hooks-validation-seam",
-        "files": [{ "path": "lib/generation/adaptive-context/validation.ts" }],
-        "min_files": 1,
-        "note": "plan carries through the validation-seam integration point"
-      }
-    ],
-    "frontmatter": {
-      "present": ["status", "parent"]
-    }
-  }
+	"id": "PL-1",
+	"name": "scheduling-projection-from-canonical-brief",
+	"skill": "plan",
+	"worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
+	"ref": "b460257e1d22bb6abe073f0ad33aa628a268b0ab",
+	"clean": [".rpiv/artifacts/plans"],
+	"seed": [
+		{
+			"from": "../_fixtures/clamp-audit-intent.md",
+			"to": ".rpiv/eval-fixture/clamp-audit-intent.md"
+		},
+		{
+			"from": "../_fixtures/clamp-audit-contract.md",
+			"to": ".rpiv/eval-fixture/clamp-audit-contract.md"
+		}
+	],
+	"artifact_glob": ".rpiv/artifacts/plans/*.md",
+	"prompt": "/rpiv:plan .rpiv/eval-fixture/clamp-audit-intent.md. PLANNING ONLY. Project this existing brief into one active Phase 1 for audit-entry, referencing CA-OVER and CA-NOOP in .rpiv/eval-fixture/clamp-audit-contract.md by exact sections, IDs, resolved raw-byte content hash, and canonical verification criteria. No design artifact is required. Preserve behavior identity, not a 1:1 historical slice-to-phase mapping. Keep later integration/buffering/UI outside executable headings in Deferred Work, with dependencies and decision triggers. Bounded headless answers approve this ordering and the existing pure-leaf intent only; no changed behavior, scope, contract, or finding waiver is preapproved. Do not automatically answer other questions; record blockers and stop. Build authorization remains pending, so phase_count is 1 and unresolved_phase_count is 1 even if document intent is ready. Use mode=intent for slice-verifier and the independent code/coverage pair on the same resolved contract and source identity; preserve inspection outcomes and evidence links. Document writes and local document validation only. No source/test writes, source builds, test execution, worktree creation, invoking implement, candidate acceptance, commits, push, merge, or external effects. Do not copy implementation/test bodies or canonical Behavior/Oracle entries into the projection.",
+	"ground_truth_note": "Plan consumes a lean approved scenario brief directly, not a frozen generated design or copied implementation. Only next-slice scheduling is active. Its contract is complete but not build-approved, so unresolved remains 1. Static grading checks headings, references, counters, grounding and visible intent review; it is not end-to-end execution/authority proof.",
+	"checks": {
+		"validate_artifact": true,
+		"required_sections": [
+			"^## Overview",
+			"^## Ordering Constraints",
+			"^## Phase 1:",
+			"^### Overview",
+			"^### Changes Required:",
+			"^### Test Contract:",
+			"^### Success Criteria:",
+			"^## Deferred Work",
+			"^## Verification Notes",
+			"^## Developer Context",
+			"^## References",
+			"^## Plan Review",
+			"[Mm]ode[:= ]+intent",
+			"[a-f0-9]{64}",
+			"CA-OVER",
+			"CA-NOOP"
+		],
+		"section_routing": [
+			{
+				"id": "canonical-links",
+				"keyword": "clamp-audit-contract\\.md",
+				"in_section": "Phase 1"
+			},
+			{
+				"id": "deferred-integration",
+				"keyword": "integration|buffer|UI",
+				"in_section": "Deferred Work"
+			}
+		],
+		"recall": [
+			{
+				"id": "load-cap-owner",
+				"files": [{ "path": "lib/generation/load-cap.ts" }]
+			},
+			{
+				"id": "validation-boundary",
+				"files": [{ "path": "lib/generation/adaptive-context/validation.ts" }]
+			}
+		],
+		"frontmatter": {
+			"present": [
+				"status",
+				"parent",
+				"content_hash",
+				"phase_count",
+				"unresolved_phase_count"
+			],
+			"min": { "phase_count": 1, "unresolved_phase_count": 1 },
+			"max": { "phase_count": 1, "unresolved_phase_count": 1 }
+		}
+	}
 }

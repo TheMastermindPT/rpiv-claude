@@ -1,23 +1,49 @@
 {
-  "id": "SV-2",
-  "name": "clean-slice-false-positive-control",
-  "skill": "slice-verifier (agent)",
-  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
-  "ref": "b460257",
-  "clean": [],
-  "seed": [
-    { "from": "SV-1.artifact.md", "to": ".rpiv/eval-fixture/design-load-cap-audit.md" }
-  ],
-  "output": "agent",
-  "prompt_file": "SV-2.prompt.md",
-  "ground_truth_note": "Same seeded in-progress artifact and locked Slice 1 as SV-1, but Slice 2 is CORRECT: recordClampEvent (matches Slice 1), getMaxAllowedLoadKg (matches HEAD), loadExceeds(load_target_kg, maxAllowedKg) in the intent's order, both Test Contract Behaviors pin exact I/O, Success Criteria are atomic (no persistence, no <ClampSummaryCard> forward-ref). The artifact's Verification Notes pre-bless the recorder as a side effect at the existing comparison, so the added call is by-design, not a finding. Slice 2 still does not call drainClampEvents -- correctly, since drain is the generation lifecycle's job (out of vantage); the agent must NOT invent that as a violation. This is the false-positive control: the expansion adds a Correctness surface, which raises the risk of inventing findings on a clean slice, so a pass requires four OK rows (a Research WARNING is tolerated as soft; any VIOLATION is an invented finding). The baseline (3-row) agent will lack the Correctness row -- that capability gap is expected and is not what this case measures; it measures whether the expanded agent stays silent when the slice is right.",
-  "checks": {
-    "slice_rows": {
-      "labels": ["Decisions", "Cross-slice", "Correctness", "Research"],
-      "no_false_correctness": true,
-      "restraint": [
-        { "id": "R1-over-reach", "forbid": "leak|cross-run|accumulat|unbounded|stale|residual|carr(y|ies) over|across (generation |plan )?(run|invocation|call|generation)|(never|not|n.t|without|fails? to) (drain|clear|empt|reset|flush)|buffer.{0,20}(grow|leak|persist|retain)", "note": "the un-drained module buffer is a generation-lifecycle concern outside slice vantage; flagging it is over-reach even on the clean slice" }
-      ]
-    }
-  }
+	"id": "SV-2",
+	"name": "completed-clean-intent-restraint",
+	"skill": "slice-verifier (agent)",
+	"worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
+	"ref": "b460257e1d22bb6abe073f0ad33aa628a268b0ab",
+	"clean": [],
+	"seed": [
+		{
+			"from": "../_fixtures/clamp-audit-intent.md",
+			"to": ".rpiv/eval-fixture/clamp-audit-intent.md"
+		},
+		{
+			"from": "../_fixtures/clamp-audit-contract.md",
+			"to": ".rpiv/eval-fixture/clamp-audit-contract.md"
+		},
+		{
+			"from": "../_fixtures/intent-review-protocol.md",
+			"to": ".rpiv/eval-fixture/intent-review-protocol.md"
+		}
+	],
+	"output": "agent",
+	"prompt_file": "SV-2.prompt.md",
+	"ground_truth_note": "Approved pure leaf intent with exact linked oracles and real existing predecessor source. No copied implementation or fabricated accepted slice. Only completed, identity-bound intent inspection can receive restraint credit. This is a negative control for invented commitment/atomicity violations, not proof of implementation correctness; soft Research warnings are permitted.",
+	"checks": {
+		"current_review": {
+			"mode": "intent",
+			"format": "slice-rows",
+			"artifact_path": ".rpiv/eval-fixture/clamp-audit-intent.md",
+			"slice_id": "audit-entry",
+			"inputs": [
+				".rpiv/eval-fixture/clamp-audit-intent.md",
+				".rpiv/eval-fixture/clamp-audit-contract.md",
+				"lib/generation/load-cap.ts",
+				"lib/generation/adaptive-context/validation.ts"
+			]
+		},
+		"slice_rows": {
+			"labels": ["Decisions", "Cross-slice", "Research"],
+			"restraint": [
+				{
+					"id": "no-invented-violation",
+					"forbid": ".*",
+					"note": "the approved leaf has no known commitment or atomicity conflict"
+				}
+			]
+		}
+	}
 }

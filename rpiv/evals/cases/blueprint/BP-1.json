@@ -1,41 +1,73 @@
 {
-  "id": "BP-1",
-  "name": "clamp-audit-blueprint-from-research",
-  "skill": "blueprint",
-  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
-  "ref": "b460257",
-  "clean": [".rpiv/artifacts/plans"],
-  "seed": [
-    { "from": "../_fixtures/research-load-cap-clamp-audit.md", "to": ".rpiv/artifacts/research/2026-07-08_13-10-00_load-cap-clamp-audit.md" }
-  ],
-  "artifact_glob": ".rpiv/artifacts/plans/*.md",
-  "prompt": "/rpiv:blueprint .rpiv/artifacts/research/2026-07-08_13-10-00_load-cap-clamp-audit.md (Headless non-interactive run: at any approval checkpoint, per-slice micro-checkpoint, or question, ALWAYS pick the recommended option and continue; never wait for user input. Proceed all the way through slice generation, finalization, and the Step 8 reviewer dispatch.)",
-  "ground_truth_note": "Blueprint = design + phased plan in one pass. Consumes the same pinned research fixture as DS-1; produces an implement-ready plan in .rpiv/artifacts/plans/ with per-phase Test Contracts + Success Criteria and a ## Plan Review section (Step 8 dispatches artifact-code-reviewer + artifact-coverage-reviewer — this exercises the FIXED ACR agent in-situ). New files (load-cap-audit/*) don't resolve at HEAD by design — grading uses validate_artifact + required-sections + recall on existing grounding files, NOT citation resolvability.",
-  "checks": {
-    "validate_artifact": true,
-    "required_sections": [
-      "^## Phase 1",
-      "### Test Contract:",
-      "### Success Criteria:",
-      "#### Automated Verification:",
-      "^## Plan Review"
-    ],
-    "recall": [
-      {
-        "id": "reuses-load-cap-owner",
-        "files": [{ "path": "lib/generation/load-cap.ts" }],
-        "min_files": 1,
-        "note": "blueprint grounds on and reuses the load-cap owner module"
-      },
-      {
-        "id": "hooks-validation-seam",
-        "files": [{ "path": "lib/generation/adaptive-context/validation.ts" }],
-        "min_files": 1,
-        "note": "blueprint hooks the clamp recorder into the validation seam"
-      }
-    ],
-    "frontmatter": {
-      "present": ["status", "parent", "phase_count"]
-    }
-  }
+	"id": "BP-1",
+	"name": "planning-only-blueprint-from-approved-intent",
+	"skill": "blueprint",
+	"worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
+	"ref": "b460257e1d22bb6abe073f0ad33aa628a268b0ab",
+	"clean": [".rpiv/artifacts/plans"],
+	"seed": [
+		{
+			"from": "../_fixtures/clamp-audit-intent.md",
+			"to": ".rpiv/eval-fixture/clamp-audit-intent.md"
+		},
+		{
+			"from": "../_fixtures/clamp-audit-contract.md",
+			"to": ".rpiv/eval-fixture/clamp-audit-contract.md"
+		}
+	],
+	"artifact_glob": ".rpiv/artifacts/plans/*.md",
+	"prompt": "/rpiv:blueprint .rpiv/eval-fixture/clamp-audit-intent.md. PLANNING ONLY: produce a lean brief at a plan path, without an executable Phase projection. This invocation grants NO build/workspace, candidate-acceptance, or integration authority. Keep CA-OVER/CA-NOOP at .rpiv/eval-fixture/clamp-audit-contract.md; link exact sections, behavior IDs, resolved raw-byte hash, and verification criteria. Detail only audit-entry. Defer integration, buffering, and UI with decision triggers. Bounded intent-only answers: retain the approved pure leaf, finite validated input, existing owner, no persistence, and mirrored test location; confirm only this next-slice intent. Do not choose recommended answers at arbitrary checkpoints or triage findings automatically. Any new behavior choice, contract change, missing capability, broken review, or required authority stays pending and stops the run. Use mode=intent for slice-verifier and both independent reviewers on one resolved input identity, preserving outcomes and evidence links. Only document writes and local document validation are permitted. No application source/test writes, worktree creation, tests, source builds, commits, push, merge, external effects, or invoking implement. Do not copy source/test bodies or contract entries. Final document readiness never means build approval; report build authorization pending.",
+	"ground_truth_note": "BP-1 explicitly exercises blueprint's planning-only branch, not a real candidate loop. A lean brief has no executable Phase headings, so both counters are zero without implying completion. The canonical fixture is approved intent only; reviews and finalization still have to pass. Prompt/static checks cannot prove workspace, red-green, acceptance, or integration enforcement.",
+	"checks": {
+		"validate_artifact": true,
+		"required_sections": [
+			"^## Intent",
+			"^## Architecture",
+			"^## Decisions",
+			"^## Next Slice",
+			"^## Test Contracts",
+			"^## Deferred Work",
+			"^## Developer Context",
+			"^## References",
+			"^## Plan Review",
+			"[Mm]ode[:= ]+intent",
+			"[a-f0-9]{64}",
+			"CA-OVER",
+			"CA-NOOP",
+			"[Bb]uild[^\\n]*(pending|not (granted|authorized))"
+		],
+		"section_routing": [
+			{
+				"id": "canonical-links",
+				"keyword": "clamp-audit-contract\\.md",
+				"in_section": "Test Contracts"
+			},
+			{
+				"id": "deferred-integration",
+				"keyword": "integration|buffer|UI",
+				"in_section": "Deferred Work"
+			}
+		],
+		"recall": [
+			{
+				"id": "load-cap-owner",
+				"files": [{ "path": "lib/generation/load-cap.ts" }]
+			},
+			{
+				"id": "validation-boundary",
+				"files": [{ "path": "lib/generation/adaptive-context/validation.ts" }]
+			}
+		],
+		"frontmatter": {
+			"present": [
+				"status",
+				"parent",
+				"content_hash",
+				"phase_count",
+				"unresolved_phase_count"
+			],
+			"min": { "phase_count": 0, "unresolved_phase_count": 0 },
+			"max": { "phase_count": 0, "unresolved_phase_count": 0 }
+		}
+	}
 }

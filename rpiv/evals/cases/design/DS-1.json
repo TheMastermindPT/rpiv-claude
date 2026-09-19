@@ -1,42 +1,66 @@
 {
-  "id": "DS-1",
-  "name": "clamp-audit-design-from-research",
-  "skill": "design",
-  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
-  "ref": "b460257",
-  "clean": [".rpiv/artifacts/designs"],
-  "seed": [
-    { "from": "../_fixtures/research-load-cap-clamp-audit.md", "to": ".rpiv/artifacts/research/2026-07-08_13-10-00_load-cap-clamp-audit.md" }
-  ],
-  "artifact_glob": ".rpiv/artifacts/designs/*.md",
-  "prompt": "/rpiv:design .rpiv/artifacts/research/2026-07-08_13-10-00_load-cap-clamp-audit.md (Headless non-interactive run: at any approval checkpoint, per-slice micro-checkpoint, or question, ALWAYS pick the recommended option and continue; never wait for user input. Proceed all the way through slice generation and finalization.)",
-  "ground_truth_note": "Design consumes the pinned research fixture (feature: in-memory clamp audit trail on the validation seam). A correct design must: reuse load-cap.ts predicates (not re-derive the epsilon), hook the recorder at validation.ts, decompose into vertical slices each with a #### Test Contract:, and finalize to status: ready with a content_hash stamp. New files it creates (load-cap-audit/*) will NOT resolve at HEAD by design — grading uses validate_artifact + required-sections + recall on the EXISTING grounding files (load-cap.ts, validation.ts), NOT citation resolvability.",
-  "checks": {
-    "validate_artifact": true,
-    "required_sections": [
-      "^## Architecture",
-      "^## Slices",
-      "^### Slice 1",
-      "#### Test Contract:",
-      "^## Decisions",
-      "^## File Map"
-    ],
-    "recall": [
-      {
-        "id": "reuses-load-cap-owner",
-        "files": [{ "path": "lib/generation/load-cap.ts" }],
-        "min_files": 1,
-        "note": "design grounds on and reuses the load-cap owner module (not a re-derived epsilon)"
-      },
-      {
-        "id": "hooks-validation-seam",
-        "files": [{ "path": "lib/generation/adaptive-context/validation.ts" }],
-        "min_files": 1,
-        "note": "design hooks the clamp recorder into the validation seam identified in research"
-      }
-    ],
-    "frontmatter": {
-      "present": ["status", "parent"]
-    }
-  }
+	"id": "DS-1",
+	"name": "lean-design-from-approved-intent",
+	"skill": "design",
+	"worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
+	"ref": "b460257e1d22bb6abe073f0ad33aa628a268b0ab",
+	"clean": [".rpiv/artifacts/designs"],
+	"seed": [
+		{
+			"from": "../_fixtures/clamp-audit-intent.md",
+			"to": ".rpiv/eval-fixture/clamp-audit-intent.md"
+		},
+		{
+			"from": "../_fixtures/clamp-audit-contract.md",
+			"to": ".rpiv/eval-fixture/clamp-audit-contract.md"
+		}
+	],
+	"artifact_glob": ".rpiv/artifacts/designs/*.md",
+	"prompt": "/rpiv:design .rpiv/eval-fixture/clamp-audit-intent.md. PLANNING ONLY. Shape a lean architectural brief grounded in actual source; no prerequisite research artifact is needed. Keep CA-OVER and CA-NOOP at .rpiv/eval-fixture/clamp-audit-contract.md and reference their exact sections, IDs, raw-byte content hash, and verification criteria. Fully detail only audit-entry; put later integration/buffering/UI in Deferred Work with decision triggers. Bounded headless answers: approve only the existing pure-leaf scope, finite validated inputs, single load-cap owner, no persistence, mirrored tests, and this ordering as intent. No blanket checkpoint approval or findings waiver; if another decision is needed or a required review is unavailable/broken, record the blocked gate and stop. Run all three required reviewers in mode=intent against the same resolved baseline and contract identities, preserving outcome/evidence links. Document writes and local document validation only: no application source/test writes, candidate workspace creation, test execution, source builds, acceptance, commits, push, merge, or external effects. Do not copy implementation/test bodies or duplicate canonical contracts. Ready means reviewed intent, not permission to build.",
+	"ground_truth_note": "Current lean-design shape with one next slice and canonical contract links, not the frozen historical code-bearing design. Checks cover document structure, grounding, deferred scope, and visible intent-review bindings. They do not prove runtime orchestration or actual review execution; incomplete review must not reach ready.",
+	"checks": {
+		"validate_artifact": true,
+		"required_sections": [
+			"^## Intent",
+			"^## Architecture",
+			"^## Decisions",
+			"^## Next Slice",
+			"^## Test Contracts",
+			"^## Deferred Work",
+			"^## Verification Notes",
+			"^## Developer Context",
+			"^## References",
+			"^## Plan Review",
+			"[Mm]ode[:= ]+intent",
+			"[a-f0-9]{64}",
+			"CA-OVER",
+			"CA-NOOP"
+		],
+		"section_routing": [
+			{
+				"id": "canonical-links",
+				"keyword": "clamp-audit-contract\\.md",
+				"in_section": "Test Contracts",
+				"note": "link the owner rather than copying Behavior entries"
+			},
+			{
+				"id": "deferred-integration",
+				"keyword": "integration|buffer|UI",
+				"in_section": "Deferred Work"
+			}
+		],
+		"recall": [
+			{
+				"id": "load-cap-owner",
+				"files": [{ "path": "lib/generation/load-cap.ts" }],
+				"note": "inspect and reuse the real owner"
+			},
+			{
+				"id": "validation-boundary",
+				"files": [{ "path": "lib/generation/adaptive-context/validation.ts" }],
+				"note": "rejecting a proposal is not applying a clamp"
+			}
+		],
+		"frontmatter": { "present": ["status", "parent", "content_hash"] }
+	}
 }

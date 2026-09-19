@@ -1,18 +1,41 @@
 {
-  "id": "ACR-2",
-  "name": "clean-plan-restraint",
-  "skill": "artifact-code-reviewer (agent)",
-  "worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
-  "ref": "b460257",
-  "clean": [],
-  "output": "agent",
-  "prompt_file": "ACR-2.prompt.md",
-  "ground_truth_note": "Clean-plan restraint fixture (ACR-2.plan.md, fixture v2): two NEW leaf modules under lib/generation at b460257, cross-phase symbols match character-for-character, all import paths resolve, oracles pin exact values, no bogus exemptions. Fixture v2 (2026-07-08) incorporated real repo conventions the v1 baseline legitimately flagged: tests live in tests/unit/generation/ (dependency-cruiser no-dev-deps-in-runtime-code + knip entries), integer-aware kg formatting mirroring formatNumber, npm run typecheck (check is biome), and the adapter filters unclamped pairs. Per the IS-2 negative-control lesson this is a restraint cap, not exactly-zero: <=3 rows tolerated, zero blocker rows allowed. Table-header check doubles as the zero-findings determinism probe (baseline agent def leaves the zero-case undefined).",
-  "checks": {
-    "required_sections": [
-      "^\\| *plan-loc *\\| *codebase-loc *\\| *severity *\\| *dimension *\\| *finding *\\| *recommendation *\\|"
-    ],
-    "forbidden_vocab": "\\|\\s*blocker\\s*\\|",
-    "max_table_rows": 3
-  }
+	"id": "ACR-2",
+	"name": "completed-lean-intent-restraint",
+	"skill": "artifact-code-reviewer (agent)",
+	"worktree": "C:/Users/pedro/Documents/GymApp-evals/wt-head",
+	"ref": "b460257e1d22bb6abe073f0ad33aa628a268b0ab",
+	"clean": [],
+	"seed": [
+		{
+			"from": "../_fixtures/clamp-audit-intent.md",
+			"to": ".rpiv/eval-fixture/clamp-audit-intent.md"
+		},
+		{
+			"from": "../_fixtures/clamp-audit-contract.md",
+			"to": ".rpiv/eval-fixture/clamp-audit-contract.md"
+		},
+		{
+			"from": "../_fixtures/intent-review-protocol.md",
+			"to": ".rpiv/eval-fixture/intent-review-protocol.md"
+		}
+	],
+	"output": "agent",
+	"prompt_file": "ACR-2.prompt.md",
+	"ground_truth_note": "Lean approved-intent scenario with exact oracles at their canonical owner. The next slice is a pure leaf and tests mirror the repository's unit-test layout. No implementation bodies are required. A restraint cap permits up to three grounded non-blocker findings, but a missing, stale, unavailable, or broken inspection cannot earn negative-control credit.",
+	"checks": {
+		"current_review": {
+			"mode": "intent",
+			"format": "findings-table",
+			"artifact_path": ".rpiv/eval-fixture/clamp-audit-intent.md",
+			"slice_id": "audit-entry",
+			"inputs": [
+				".rpiv/eval-fixture/clamp-audit-intent.md",
+				".rpiv/eval-fixture/clamp-audit-contract.md",
+				"lib/generation/load-cap.ts",
+				"lib/generation/adaptive-context/validation.ts"
+			]
+		},
+		"forbidden_vocab": "\\|\\s*blocker\\s*\\|",
+		"max_table_rows": 3
+	}
 }
