@@ -228,9 +228,25 @@ const findPriorReview = () => {
 	return "(none)";
 };
 
+let gitRoot = null;
+const gitCwd = () => {
+	if (gitRoot == null) {
+		try {
+			gitRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+				encoding: "utf-8",
+				stdio: ["ignore", "pipe", "ignore"],
+			}).trim();
+		} catch {
+			gitRoot = "";
+		}
+	}
+	return gitRoot || undefined;
+};
+
 const safe = (args, fb = "") => {
 	try {
 		return execFileSync("git", args, {
+			cwd: gitCwd(),
 			encoding: "utf-8",
 			stdio: ["ignore", "pipe", "ignore"],
 			maxBuffer: 64 * 1024 * 1024, // ls-tree/log on big repos exceed the 1 MiB default, which would silently return ""
@@ -243,6 +259,7 @@ const safe = (args, fb = "") => {
 const isAncestor = (a, b) => {
 	try {
 		execFileSync("git", ["merge-base", "--is-ancestor", a, b], {
+			cwd: gitCwd(),
 			stdio: ["ignore", "ignore", "ignore"],
 		});
 		return true;
@@ -254,6 +271,7 @@ const isAncestor = (a, b) => {
 const refExists = (ref) => {
 	try {
 		execFileSync("git", ["rev-parse", "--verify", "--quiet", ref], {
+			cwd: gitCwd(),
 			stdio: ["ignore", "ignore", "ignore"],
 		});
 		return true;

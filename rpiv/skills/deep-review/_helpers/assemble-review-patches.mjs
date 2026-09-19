@@ -17,8 +17,16 @@ export function contextForPatchSize(patchSizeBytes) {
 	return patchSizeBytes > LARGE_PATCH_BYTES ? 10 : 30;
 }
 
+let gitRoot = null;
 function runGit(args, acceptedStatuses = [0]) {
+	if (gitRoot == null) {
+		const probe = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+			encoding: "utf8",
+		});
+		gitRoot = probe.stdout?.trim() || "";
+	}
 	const result = spawnSync("git", args, {
+		cwd: gitRoot || undefined,
 		encoding: "utf8",
 		maxBuffer: 64 * 1024 * 1024,
 	});

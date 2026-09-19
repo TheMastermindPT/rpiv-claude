@@ -19,6 +19,7 @@
 // interactive / autofix). Always exits 0 — every failure path collapses to a status line.
 
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 
 const OUT_LINE_CAP = 200;
@@ -27,7 +28,10 @@ const toPosix = (p) => p.replaceAll("\\", "/");
 
 // --- parse argv -------------------------------------------------------------
 const argv = process.argv.slice(2);
-const opt = (name) => { const i = argv.indexOf(name); return i >= 0 && i + 1 < argv.length ? argv[i + 1] : ""; };
+const opt = (name) => {
+	const i = argv.indexOf(name);
+	return i >= 0 && i + 1 < argv.length ? argv[i + 1] : "";
+};
 const tool = opt("--tool");
 const pattern = opt("--pattern");
 const lang = opt("--lang");
@@ -35,9 +39,14 @@ const config = opt("--config");
 const flagged = new Set();
 for (const n of ["--tool", "--pattern", "--lang", "--config"]) {
 	const i = argv.indexOf(n);
-	if (i >= 0) { flagged.add(i); flagged.add(i + 1); }
+	if (i >= 0) {
+		flagged.add(i);
+		flagged.add(i + 1);
+	}
 }
-const positional = argv.filter((a, i) => !flagged.has(i) && !a.startsWith("--"));
+const positional = argv.filter(
+	(a, i) => !flagged.has(i) && !a.startsWith("--"),
+);
 const targetArg = positional[positional.length - 1] || ".";
 
 // Run a binary; shell:false first (clean arg passing for real .exe binaries), fall back to
@@ -45,64 +54,127 @@ const targetArg = positional[positional.length - 1] || ".";
 // under that win32 shell:true fallback, space/metachar patterns may be re-split by cmd.exe — pass
 // simple patterns when a tool resolves to a .cmd shim on Windows.
 const spawn = (bin, args, cwd) => {
-	let r = spawnSync(bin, args, { cwd, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024 });
+	let r = spawnSync(bin, args, {
+		cwd,
+		encoding: "utf-8",
+		maxBuffer: 64 * 1024 * 1024,
+	});
 	if (r.error && process.platform === "win32") {
-		r = spawnSync(bin, args, { cwd, encoding: "utf-8", maxBuffer: 64 * 1024 * 1024, shell: true });
+		r = spawnSync(bin, args, {
+			cwd,
+			encoding: "utf-8",
+			maxBuffer: 64 * 1024 * 1024,
+			shell: true,
+		});
 	}
 	return r;
 };
 const top = spawn("git", ["rev-parse", "--show-toplevel"], process.cwd());
-const root = top.status === 0 ? toPosix(top.stdout.trim()) : toPosix(process.cwd());
-const targetAbs = toPosix(isAbsolute(targetArg) ? targetArg : resolve(process.cwd(), targetArg));
+const root =
+	top.status === 0 ? toPosix(top.stdout.trim()) : toPosix(process.cwd());
+// Target resolution: try cwd-relative first (the historical contract), then
+// repo-root-relative. Without the fallback, a root-relative target passed from
+// a subdirectory doubles the prefix (rpiv/rpiv/...) and silently filters every
+// hit — matches: 0 as a LIE, not an answer.
+const resolveTarget = (arg) => {
+	if (isAbsolute(arg)) return toPosix(arg);
+	const fromCwd = toPosix(resolve(process.cwd(), arg));
+	if (existsSync(fromCwd)) return fromCwd;
+	const fromRoot = toPosix(resolve(root, arg));
+	if (existsSync(fromRoot)) return fromRoot;
+	return fromCwd;
+};
+const targetAbs = resolveTarget(targetArg);
 const run = (bin, args) => spawn(bin, args, root);
-const present = (names) => names.find((b) => { const r = run(b, ["--version"]); return !r.error && r.status === 0; }) || "";
+const present = (names) =>
+	names.find((b) => {
+		const r = run(b, ["--version"]);
+		return !r.error && r.status === 0;
+	}) || "";
 
-const status = (msg) => { process.stdout.write(`---structural-status---\n${msg}\n`); process.exit(0); };
-if (!tool) status("unavailable: no --tool given (expected ast-grep | opengrep | rg)");
+const status = (msg) => {
+	process.stdout.write(`---structural-status---\n${msg}\n`);
+	process.exit(0);
+};
+if (!tool)
+	status("unavailable: no --tool given (expected ast-grep | opengrep | rg)");
 
-const underTarget = (p) => { const abs = toPosix(isAbsolute(p) ? p : resolve(root, p)); return abs === targetAbs || abs.startsWith(`${targetAbs}/`); };
+const underTarget = (p) => {
+	const abs = toPosix(isAbsolute(p) ? p : resolve(root, p));
+	return abs === targetAbs || abs.startsWith(`${targetAbs}/`);
+};
 const relOf = (file) => toPosix(relative(root, resolve(root, file)));
-const decode = (node) => node?.text ?? (node?.bytes ? Buffer.from(node.bytes, "base64").toString("utf-8") : "");
+const decode = (node) =>
+	node?.text ??
+	(node?.bytes ? Buffer.from(node.bytes, "base64").toString("utf-8") : "");
 
 const rows = [];
 let label = "";
 
 if (tool === "ast-grep") {
-	if (!pattern && !config) status("unavailable: ast-grep needs --pattern (+ --lang) or --config");
+	if (!pattern && !config)
+		status("unavailable: ast-grep needs --pattern (+ --lang) or --config");
 	label = "ast-grep";
 	const bin = present(["ast-grep", "sg"]);
 	if (!bin) status("unavailable: ast-grep not on PATH (install ast-grep)");
 	const args = pattern
-		? ["run", "--pattern", pattern, ...(lang ? ["--lang", lang] : []), "--json=stream", "."]
+		? [
+				"run",
+				"--pattern",
+				pattern,
+				...(lang ? ["--lang", lang] : []),
+				"--json=stream",
+				".",
+			]
 		: ["scan", "--config", config, "--json=stream", "."];
 	const res = run(bin, args);
 	for (const line of (res.stdout || "").split("\n")) {
 		const s = line.trim();
 		if (!s.startsWith("{")) continue;
-		let m; try { m = JSON.parse(s); } catch { continue; }
+		let m;
+		try {
+			m = JSON.parse(s);
+		} catch {
+			continue;
+		}
 		const file = m.file ?? "";
 		if (!file || !underTarget(file)) continue;
 		const lineNo = (m.range?.start?.line ?? 0) + 1; // ast-grep offsets are ZERO-based
-		const text = String(m.text ?? m.lines ?? "").split("\n")[0].trim();
+		const text = String(m.text ?? m.lines ?? "")
+			.split("\n")[0]
+			.trim();
 		rows.push(`${relOf(file)}:${lineNo}\t${text}`);
 	}
 } else if (tool === "opengrep") {
-	if (!config) status("unavailable: opengrep needs --config (e.g. auto, p/security-audit, or a local path)");
+	if (!config)
+		status(
+			"unavailable: opengrep needs --config (e.g. auto, p/security-audit, or a local path)",
+		);
 	label = "opengrep";
 	const bin = present(["opengrep", "semgrep"]);
 	if (!bin) status("unavailable: opengrep not on PATH (install opengrep)");
 	const res = run(bin, ["scan", "--config", config, "--json", "."]);
 	const raw = res.stdout || "";
 	const i = raw.indexOf("{");
-	let parsed; try { parsed = JSON.parse(i >= 0 ? raw.slice(i) : raw); }
-	catch { status(`unavailable: opengrep produced no JSON (config=${config}; registry configs like auto/p/* need network)`); }
+	let parsed;
+	try {
+		parsed = JSON.parse(i >= 0 ? raw.slice(i) : raw);
+	} catch {
+		status(
+			`unavailable: opengrep produced no JSON (config=${config}; registry configs like auto/p/* need network)`,
+		);
+	}
 	for (const r of parsed.results ?? []) {
 		const file = r.path ?? "";
 		if (!file || !underTarget(file)) continue;
 		const lineNo = r.start?.line ?? 0; // opengrep lines are 1-based
 		const sev = r.extra?.severity ?? "";
-		const msg = String(r.extra?.message ?? "").split("\n")[0].trim();
-		rows.push(`${relOf(file)}:${lineNo}\tcheck=${r.check_id ?? "?"}\tseverity=${sev}\t${msg}`);
+		const msg = String(r.extra?.message ?? "")
+			.split("\n")[0]
+			.trim();
+		rows.push(
+			`${relOf(file)}:${lineNo}\tcheck=${r.check_id ?? "?"}\tseverity=${sev}\t${msg}`,
+		);
 	}
 } else if (tool === "rg") {
 	if (!pattern) status("unavailable: rg needs --pattern");
@@ -112,17 +184,26 @@ if (tool === "ast-grep") {
 	for (const line of (res.stdout || "").split("\n")) {
 		const s = line.trim();
 		if (!s.startsWith("{")) continue;
-		let ev; try { ev = JSON.parse(s); } catch { continue; }
+		let ev;
+		try {
+			ev = JSON.parse(s);
+		} catch {
+			continue;
+		}
 		if (ev.type !== "match") continue;
 		const d = ev.data ?? {};
 		const file = decode(d.path); // handles {text} and {bytes} (base64)
 		if (!file || !underTarget(file)) continue;
 		const lineNo = d.line_number ?? 0; // rg line numbers are 1-based
-		const text = decode(d.lines).replace(/\r?\n$/, "").trim();
+		const text = decode(d.lines)
+			.replace(/\r?\n$/, "")
+			.trim();
 		rows.push(`${relOf(file)}:${lineNo}\t${text}`);
 	}
 } else {
-	status(`unavailable: unknown --tool "${tool}" (expected ast-grep | opengrep | rg)`);
+	status(
+		`unavailable: unknown --tool "${tool}" (expected ast-grep | opengrep | rg)`,
+	);
 }
 
 // --- emit (bounded) ---------------------------------------------------------
@@ -140,6 +221,7 @@ for (const r of rows) {
 	body += next;
 	count += 1;
 }
-if (count < rows.length) body += `(... ${rows.length - count} more truncated ...)\n`;
+if (count < rows.length)
+	body += `(... ${rows.length - count} more truncated ...)\n`;
 process.stdout.write(body);
 process.exit(0);
