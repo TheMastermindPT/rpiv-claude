@@ -1,0 +1,45 @@
+{
+  "skill_name": "deep-review",
+  "notes": "Git-anchored evals against the REAL GymApp project — no synthetic fixtures. Each eval is a case spec under rpiv/evals/cases/deep-review/ with a pinned worktree (detached at a fixed sha under C:/Users/pedro/Documents/GymApp-evals/), an optional planted patch (saved in cases/deep-review/patches/), and EXECUTABLE assertions graded by rpiv/evals/harness/grade-artifact.mjs (citation resolvability, verbatim-quote greppability, validate-artifact.mjs, recall of planted/known defects, blocker ceilings). Run one: node rpiv/evals/harness/run-eval.mjs --case rpiv/evals/cases/deep-review/DR-1.json --rundir <workspace/iteration-N/DR-1/with_skill>. Design + contamination controls: rpiv/evals/README.md.",
+  "evals": [
+    {
+      "id": 1,
+      "name": "planted-contract-divergence",
+      "prompt": "/rpiv:deep-review my working changes before I commit — small cleanup in the adaptive validation path.",
+      "expected_output": "A review artifact that flags the inlined load-cap formula in lib/generation/adaptive-context/validation.ts:~311 (operator-precedence divergence from load-cap.ts) as a blocker, with resolvable citations and a verification pass.",
+      "files": ["../../../evals/cases/deep-review/DR-1.json"],
+      "assertions": [
+        "grade-artifact: validate-artifact.mjs passes on the produced artifact",
+        "grade-artifact: >=95% of file:line citations resolve in the worktree; verbatim quotes match cited lines",
+        "grade-artifact: recall planted-cap-bug — validation.ts cited within ±12 of line 311",
+        "grade-artifact: frontmatter blockers_count >= 1 (severity calibration: a silent 10x cap error is a blocker)"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "style-diff-discrimination",
+      "prompt": "/rpiv:deep-review commit e80409c — an automated sqlfluff style pass over the SQL migrations; want to be sure it changed nothing behavioral.",
+      "expected_output": "The 47-file style diff hides exactly ONE real breakage (atlas.sum checksums went stale — confirmed live by `atlas migrate validate`). Correct review: exactly that one blocker, nothing invented on the behavior-preserving SQL churn.",
+      "files": ["../../../evals/cases/deep-review/DR-2.json"],
+      "assertions": [
+        "grade-artifact: validate-artifact.mjs passes",
+        "grade-artifact: >=95% citations resolve; verbatim quotes match",
+        "grade-artifact: mentions atlas.sum + the checksum/hash staleness (the one true blocker)",
+        "grade-artifact: frontmatter blockers_count == 1 (finds the real one, invents none)",
+        "grade-artifact: total flagged findings <= 6 (over-flagging ceiling)"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "unwired-variant-registration",
+      "prompt": "/rpiv:deep-review my working changes — gave the final strength intensification week its own peak narrative key.",
+      "expected_output": "The review chases the new narrativeKey value into its consumers and flags that cycle-narrative.ts getCyclePhaseFocusSuffix has no case for it (the default: silently swallows it). The consumer file is NOT in the diff.",
+      "files": ["../../../evals/cases/deep-review/DR-3.json"],
+      "assertions": [
+        "grade-artifact: validate-artifact.mjs passes",
+        "grade-artifact: >=95% citations resolve; verbatim quotes match",
+        "grade-artifact: recall unwired-narrative — lib/generation/cycle-narrative.ts is cited (a file outside the diff)"
+      ]
+    }
+  ]
+}

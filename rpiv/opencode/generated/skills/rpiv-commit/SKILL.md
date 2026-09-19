@@ -1,0 +1,87 @@
+---
+name: rpiv-commit
+description: "Create structured git commits by analyzing staged and unstaged changes and grouping them logically into one or more commits with clear, descriptive messages. Use when the user asks to commit, says \"commit this\" or \"commit my changes\", wants help writing a commit message, or has finished a chunk of work that needs committing."
+compatibility: opencode
+metadata:
+  source: rpiv
+  generated: "true"
+---
+
+> OpenCode adapter: use lowercase native tool names. Treat `task` as the
+> subagent dispatcher and `question` as the structured user-question tool. The text
+> supplied after `User arguments:` by an `/rpiv:*` command is `$ARGUMENTS`.
+> Resolve bundled scripts through `$RPIV_PLUGIN_ROOT` and project state through
+> `$RPIV_PROJECT_DIR`.
+
+# Commit Changes
+
+You are tasked with creating git commits for repository changes.
+
+## Input
+
+`$ARGUMENTS` — optional commit message hint. Empty/literal → infer from history and `git diff`.
+
+## Metadata
+
+Run this command with the `bash` tool and use its output:
+
+```sh
+node "$RPIV_PLUGIN_ROOT/skills/_shared/skill-context.mjs" changes subjects
+```
+
+`git-changes.mjs` output — `in_repo:` line, then `---status---` (capped `git status --short`), then `---diffstat---` (`git diff HEAD --stat` of staged + unstaged changes; full per-file diff is intentionally NOT included to stay under the output budget).
+
+`---recent-subjects---` — up to 20 most recent commit subject lines, used in Step 2 to match the repository's existing commit-message style. Empty on a no-HEAD initial repo.
+
+## Context:
+- **In-session**: If there's conversation history, use it to understand what was built/changed
+- **Standalone**: If no context available, rely entirely on git state and file inspection
+
+## Process:
+
+0. **Check git availability:**
+   - If `in_repo:` in the Metadata block is `no`, tell the user: "This directory is not a git repository. Run `git init` to initialize one." Stop — do not proceed.
+
+1. **Think about what changed:**
+   - **If in-session**: Review the conversation history to understand what was accomplished.
+   - The Metadata block gives you the file list and per-file diffstat (insertions/deletions). For files with a small diffstat (≲5 lines), the line counts alone are enough to write the message — skip `git diff`. Run `git diff <path>` only for files where the change is large or the intent isn't obvious from filename + line counts.
+   - For untracked directories shown in status (e.g. `?? path/`), assume their contents are the change unless the directory has many files; do NOT `cat`/`head` files to verify obvious purpose.
+   - Consider whether changes should be one commit or multiple logical commits.
+   - **Code Health note (tool-gated, advisory)**: if the `codescene_pre_commit_code_health_safeguard` tool is available to you (CodeScene MCP connected), run it on the repository root. If it reports a Code Health regression on a file being committed, surface it as a one-line advisory in the commit plan you present in Step 3 (`Code Health: {file} degraded — {smell}`). This NEVER blocks the commit and never edits code — the user decides at the Step 3 confirmation. If the tool is unavailable, omit it silently.
+
+2. **Plan your commit(s):**
+   - Identify which files belong together
+   - **Pinned change group — the decision ledger**: if the changes include `.rpiv/decisions/**` or an edit inside the `AGENTS.md` `Standing Decisions` block (between the `<!-- BEGIN standing-decisions ... -->` and `<!-- END standing-decisions -->` sentinels), NEVER classify these as unrelated noise and NEVER drop them. They are a byproduct of the work that recorded a standing decision. Stage them with the commit that produced them; only if the rest of the diff is genuinely unrelated, emit them as their own decision-ledger commit (subject in the repo's observed style, e.g. `docs(decisions): record <key>`). Never leave them uncommitted.
+   - Draft clear, descriptive commit messages
+   - Use imperative mood in commit messages
+   - **Match the subject style observed in `---recent-subjects---`** — same prefix convention (e.g. `feat:` / `fix(scope):` / `docs:` for Conventional Commits, gitmoji, bare sentence-case, ticket-prefixed, etc.), same length budget, same casing. If the sample is empty (initial repo) or mixed, default to imperative sentence-case with no prefix.
+   - Focus on why the changes were made, not just what
+   - Check for sensitive information (API keys, credentials) before committing
+
+3. **Present your plan to the user:**
+   - List the files you plan to add for each commit
+   - Show the commit message(s) you'll use
+   - Use the `question` tool to confirm the commit plan. Question: "{N} commit(s) with {M} files. Proceed?". Header: "Commit". Options: "Commit (Recommended)" (Create the commit(s) as planned); "Adjust" (Change the grouping or commit messages); "Review files" (Show me the full diff before committing).
+
+4. **Execute upon confirmation:**
+   - Use `git add` with specific files (never use `-A` or `.`)
+   - Create commits with your planned messages
+   - Show the result with `git log --oneline -n X` (where X = number of commits you just created)
+
+## Important:
+
+- **NEVER add co-author information or Claude attribution**
+- Commits should be authored solely by the user
+- Do not include any "Generated with Claude" messages
+- Do not add "Co-Authored-By" lines
+- Write commit messages as if the user wrote them
+
+## Remember:
+
+- Adapt your approach: use conversation context if available, otherwise infer from git state
+- In-session: you have full context of what was done; Standalone: infer from git analysis
+- Group related changes by purpose (feature, fix, refactor, docs)
+- Keep commits atomic: one logical change per commit
+- Split into multiple commits if: different features, mixing bugs with features, or unrelated concerns
+- The user trusts your judgment - they asked you to commit
+

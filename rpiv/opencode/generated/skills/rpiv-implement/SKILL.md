@@ -1,0 +1,75 @@
+---
+name: rpiv-implement
+description: "Execute one approved slice, prove its behavior, and pause for independent review and human acceptance before continuing."
+compatibility: opencode
+metadata:
+  source: rpiv
+  generated: "true"
+---
+
+> OpenCode adapter: use lowercase native tool names. Treat `task` as the
+> subagent dispatcher and `question` as the structured user-question tool. The text
+> supplied after `User arguments:` by an `/rpiv:*` command is `$ARGUMENTS`.
+> Resolve bundled scripts through `$RPIV_PLUGIN_ROOT` and project state through
+> `$RPIV_PROJECT_DIR`.
+
+# Implement
+
+## Read First
+
+READ `$RPIV_PLUGIN_ROOT/skills/_shared/candidate-workflow.md` before execution or resume. It owns the agreed brief and test contract, isolated workspace setup and dirty-state preservation, candidate and contract identity, reviewer dispatch, and acceptance/integration gates. Follow that loop directly; a missing or broken shared workflow blocks execution.
+
+This skill is human-invoked. Other skills that supervise a candidate use the shared loop directly rather than invoking this skill.
+
+## Input and Scope
+
+`$ARGUMENTS` accepts an approved short brief, design, slice, or plan, with an optional phase or slice selector. A full plan and a prior chained design are not prerequisites. Ask for the intended input when it is absent or ambiguous; agree and record its short behavioral contract through the shared workflow before source edits.
+
+A named phase limits the work; it does not waive the one-slice loop if it contains several slices. With no selector, agree the next pending real slice. Later detail stays under `Deferred Work` until its turn. Never interpret an omitted selector as authorization to execute the whole backlog.
+
+Read the input, its referenced normative sections, relevant project guidance, and the current source. Historical implementation fences in shipped plans are historical proposals, not code truth. Resolve disagreements against approved intent and observed behavior; route changed intent or contracts through revise, not through silent implementation changes.
+
+## 1. Verify and Prepare
+
+On start and resume, verify managed RPIV artifacts' recorded `content_hash` with `node "$RPIV_PLUGIN_ROOT/skills/_shared/validate-artifact.mjs" <absolute-artifact-path> --root <repository-path>` without `--stamp`. Verify ordinary guidance and pinned approved normative sections separately using the shared contract-identity rules, without requiring artifact frontmatter on every referenced document; append-only evidence is not part of those sections. A missing required pin or mismatch needs reconciliation and renewed approval, not a silent re-stamp.
+
+Reconcile the actual candidate, accepted predecessor, reviews, and evidence before selecting work. Existing checkmarks are claims to verify, not proof. Preserve the artifact status vocabulary `in-progress`, `in-review`, `ready`; document readiness is separate from slice acceptance and scope completion.
+
+Use the shared workspace setup for a dedicated branch and worktree for the active slice, preserving unrelated dirty work. Record the original integration target separately from the accepted predecessor base. If setup or identity cannot be verified, stop before changing implementation files.
+
+Completion criterion: one approved contract, one identified active slice, and a verified isolated workspace. Missing behavioral proof requirements are a contract gap, not an implied TDD exemption.
+
+## 2. Prove Each Behavior
+
+Follow the shared test contract one behavior at a time. An observed failing test must match its **Expected red** reason before the behavior's implementation is edited. Use the agreed public seam and oracle; compile/import errors and unrelated failures do not qualify. If the expected failure cannot be demonstrated, stop and resolve the contract mismatch with the human.
+
+Write the minimal implementation, run the focused test, and record green. Complete this red -> green pair before starting the next behavior. A documented non-behavioral exemption must satisfy the shared contract and actual project rules; existing implementation is not itself an exemption.
+
+Keep detailed evidence in a separate append-only record linked from `## TDD Evidence (implement)` in the owning artifact. Identify the slice, contract identity, behavior, test name/path, commands, observed failure and success, and evidence paths. Existing inline evidence stays historical; never rewrite or duplicate it. Record exemptions and their approved reasons. Preserve the chronological link from red through implementation to green; never fabricate historical red.
+
+Completion criterion: every in-scope behavior has its own observed expected red followed by green, or a valid recorded exemption. Green is the entry to review, not acceptance.
+
+## 3. Separate Independent Review/Refactor Gate
+
+After minimal green, enter the separate independent review/refactor gate in the shared workflow. Build its exact review input with `mode=candidate`; use its candidate revision and contract identity rules, not a branch label or an ad hoc tracked diff. Dispatch the independent reviewers through `task` using the shared dispatch contract. Reviewers are read-only; your own inspection does not substitute for their review.
+
+Apply project-defined gates and the shared **Available Quality Checks** for test-quality lint, CodeScene, and mutation. Discover actual commands, scope, thresholds, and tool guidance; preserve availability-based checks unless an explicit permitted exception is recorded. Record absent tools as `unavailable` and failed invocations as `broken` with diagnostics. A required gate stays blocking in either case; never silently waive it.
+
+Address verified findings in small changes. Re-run the affected tests and independent reviews after any edit; any new behavior starts its own expected-red cycle. Re-freeze the revision and discard stale approval claims, while keeping their old evidence. If dispatch or a required review fails, stop rather than self-approve.
+
+Completion criterion: the frozen current revision has passing required checks and fresh independent reviews with no unresolved blockers.
+
+## 4. Human Checkpoint
+
+Present the exact candidate revision, contract identity, changed scope, red/green evidence, review findings, gate outcomes, and remaining work. Ask the human to accept this revision, request changes, or pause. Passing tests and reviewer approval do not supply human acceptance.
+
+Stop until the human accepts the exact candidate revision. Edits after that checkpoint invalidate acceptance for the changed revision and require new tests, reviews, and acceptance. Only then may an authorized next slice start from this accepted predecessor via the shared setup. A request for one slice ends here even when more work is pending.
+
+Update only evidence-backed progress for this slice. Keep pending, deferred, and blocked scope visible; the active slice being done never marks the whole scope complete. When evidence or progress changes a document body, verify its approved normative sections are unchanged before finalizing its new `content_hash` with the artifact validator's `--finalizing --stamp`; retain the prior identity in the append-only audit trail. Contract edits belong to revise and require renewed approval.
+
+## 5. Integration and Close
+
+Slice acceptance is not integration permission. Request separate integration authorization for the exact accepted candidates and original target before any merge or equivalent integration action. Follow the shared integration gate, then require final combined integrated-tree validation against all accepted contracts, not merely the last slice's green checks.
+
+Report the artifact path, active slice and exact revision, evidence/review results, human acceptance, integration authorization and validation state, and remaining scope. If paused or blocked, name the missing evidence or decision. Offer revise for intent changes and a handoff for session pauses; neither passing checks nor a closing message authorizes commits, more slices, or integration.
+
