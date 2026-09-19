@@ -97,6 +97,16 @@
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/.claude/hooks/subagent-output-check.mjs\"",
             "timeout": 10
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/jev-row-lint.mjs\"",
+            "timeout": 45
+          },
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/agent-cite-check.mjs\"",
+            "timeout": 15
           }
         ]
       }

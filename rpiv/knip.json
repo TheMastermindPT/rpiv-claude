@@ -1,23 +1,21 @@
 {
-  "$schema": "https://unpkg.com/knip@6/schema.json",
-  "entry": [
-    "skills/**/*.mjs",
-    "evals/harness/**/*.mjs",
-    ".claude/hooks/**/*.mjs"
-  ],
-  "project": [
-    "skills/**/*.mjs",
-    "evals/harness/**/*.mjs",
-    ".claude/hooks/**/*.mjs"
-  ],
-  "ignoreBinaries": [
-    "rg",
-    "pip"
-  ],
-  "ignoreDependencies": [
-    "ts-morph"
-  ],
-  "tags": [
-    "-lintignore"
-  ]
+	"$schema": "https://unpkg.com/knip@6/schema.json",
+	"entry": [
+		"skills/**/*.mjs",
+		"evals/harness/**/*.mjs",
+		".claude/hooks/**/*.mjs",
+		"scripts/**/*.mjs",
+		"opencode/plugin.ts"
+	],
+	"project": [
+		"skills/**/*.mjs",
+		"evals/harness/**/*.mjs",
+		".claude/hooks/**/*.mjs",
+		"scripts/**/*.mjs",
+		"opencode/**/*.{mjs,ts}"
+	],
+	"ignore": ["opencode/generated/**"],
+	"ignoreBinaries": ["rg", "pip"],
+	"ignoreDependencies": ["ts-morph"],
+	"tags": ["-lintignore"]
 }
