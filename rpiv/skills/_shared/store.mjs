@@ -185,7 +185,15 @@ function validateDrFields(f) {
 	if (DR_NEEDS_WHY.has(sev) && !isNonEmptyStr(f.why)) errors.push(`kind:dr ${sev} finding requires a why`);
 	if (DR_NEEDS_FIX.has(sev) && !isNonEmptyStr(f.fix)) errors.push(`kind:dr ${sev} finding requires a fix`);
 	if (invalidWhenPresent(f.alt, isNonEmptyStr)) errors.push("alt must be a non-empty string or null (kind:dr)");
-	if (invalidWhenPresent(f.verify, (v) => AR_ENUMS.verify.includes(v))) errors.push(`verify must be one of ${AR_ENUMS.verify.join(" | ")} (got: ${f.verify})`);
+	if (!AR_ENUMS.verify.includes(f.verify)) errors.push(`verify must be one of ${AR_ENUMS.verify.join(" | ")} (got: ${f.verify})`);
+	if (f.verify === "Falsified" && f.status !== "withdrawn") {
+		errors.push("kind:dr Falsified finding must have status withdrawn");
+	} else if (f.verify !== "Falsified" && f.status === "withdrawn") {
+		errors.push("kind:dr withdrawn finding must be Falsified");
+	}
+	if (["Weakened", "Falsified"].includes(f.verify) && !isNonEmptyStr(f.verifyNote)) {
+		errors.push(`kind:dr ${f.verify} finding requires a verifyNote`);
+	}
 	return errors;
 }
 
@@ -379,6 +387,43 @@ export function initStore(artifactPath, spec) {
 	saveStore(storePath, store);
 	writeFileSync(artifactPath, text);
 	return { storePath, layers: layers.map((l) => l.n) };
+}
+
+/** Initialize a code-review store without altering the write-once Markdown body. */
+export function initReviewStore(artifactPath, spec) {
+	const storePath = deriveStorePath(artifactPath);
+	if (existsSync(storePath)) throw new Error(`store already initialized: ${storePath} (delete it to re-init)`);
+	if (!existsSync(artifactPath)) throw new Error(`artifact not found: ${artifactPath}`);
+	if (!isNonEmptyStr(spec?.target)) throw new Error("init --review: spec.target (non-empty string) is required");
+	if (!isPlainObject(spec.review)) throw new Error("init --review: spec.review must be an object");
+	if (spec.review.sections != null && !isStringArray(spec.review.sections)) {
+		throw new Error("init --review: review.sections must be a string array");
+	}
+	if (
+		spec.review.in_scope_files_count != null &&
+		(!Number.isInteger(spec.review.in_scope_files_count) || spec.review.in_scope_files_count < 0)
+	) {
+		throw new Error("init --review: review.in_scope_files_count must be a non-negative integer");
+	}
+	if (spec.review.status != null && spec.review.status !== "ready") {
+		throw new Error("init --review: review.status must be ready");
+	}
+	if (spec.review.review_status != null && spec.review.review_status !== "complete") {
+		throw new Error("init --review: review.review_status must be complete");
+	}
+	if (spec.review.merge_status != null) {
+		throw new Error("init --review: review.merge_status is derived from active blockers");
+	}
+	const store = {
+		schema: 1,
+		artifact: basename(artifactPath),
+		target: spec.target.trim(),
+		createdAt: new Date().toISOString(),
+		review: { ...spec.review, status: "ready", review_status: "complete" },
+		findings: [],
+	};
+	saveStore(storePath, store);
+	return { storePath };
 }
 
 /** Load the store. No more lazy-init: the store must be created by `store init`.
@@ -653,25 +698,39 @@ export function finalizeReview(artifactPath, root, healthScore) {
 
 /** Validate-then-append-then-render. Throws without writing on ANY validation,
  * fingerprint, or sentinel error; on success persists review.json AND the .md. */
-export function addFinding(artifactPath, root, finding) {
+export function addFindings(artifactPath, root, findings) {
+	if (!Array.isArray(findings) || findings.length === 0) {
+		throw new Error("add-many: expected a non-empty JSON array of findings");
+	}
 	const { storePath, store } = loadStore(artifactPath);
 	const counts = basenameCounts(root);
-	const errors = validateFinding(finding, counts, new Set(store.findings.map((x) => x.id)));
-	if (errors.length > 0) throw new Error(errors.map((e) => `invalid finding: ${e}`).join("\n"));
-	const grounding = checkEvidenceGrounding(finding, root);
-	if (grounding.length > 0) throw new Error(grounding.map((e) => `invalid finding: ${e}`).join("\n"));
-	const record = { ...finding, fp: computeFingerprint(finding) };
-	store.findings.push(record);
-	// AR renders into its layer sentinels; DR skips the per-add render (the whole .md is
-	// written write-once by renderReview via `store render --review`).
-	if ((record.kind ?? "ar") === "ar") {
-		const text = renderLayerText(readFileSync(artifactPath, "utf-8"), store, record.layer);
+	const ids = new Set(store.findings.map((finding) => finding.id));
+	const records = [];
+	for (const finding of findings) {
+		const errors = validateFinding(finding, counts, ids);
+		if (errors.length > 0) throw new Error(errors.map((error) => `invalid finding: ${error}`).join("\n"));
+		const grounding = checkEvidenceGrounding(finding, root);
+		if (grounding.length > 0) throw new Error(grounding.map((error) => `invalid finding: ${error}`).join("\n"));
+		const record = { ...finding, fp: computeFingerprint(finding) };
+		records.push(record);
+		ids.add(record.id);
+	}
+	store.findings.push(...records);
+	const arLayers = [...new Set(records.filter((record) => (record.kind ?? "ar") === "ar").map((record) => record.layer))];
+	if (arLayers.length > 0) {
+		let text = readFileSync(artifactPath, "utf-8");
+		for (const layer of arLayers) text = renderLayerText(text, store, layer);
 		saveStore(storePath, store);
 		writeFileSync(artifactPath, text);
 	} else {
 		saveStore(storePath, store);
 	}
-	return record;
+	return records;
+}
+
+/** Validate-then-append one finding through the batch implementation. */
+export function addFinding(artifactPath, root, finding) {
+	return addFindings(artifactPath, root, [finding])[0];
 }
 
 // ---- update (Slice 4 — verify transitions) ----------------------------------
@@ -714,6 +773,10 @@ function applyFalsified(f, patch) {
 	}
 	f.verifyNote = patch.verifyNote.trim();
 	f.status = "withdrawn"; // retire-not-delete — the record stays (append-only)
+	delete f.baselineState;
+	delete f.driftClass;
+	delete f.priorFp;
+	delete f.priorId;
 }
 
 // Content fields update may patch (each REPLACES the stored value wholesale, then the
@@ -762,6 +825,7 @@ export function updateFinding(artifactPath, root, patch) {
 	const f = store.findings.find((x) => x.id === patch.id);
 	if (!f) throw new Error(`update: no finding with id ${patch.id}`);
 	const kind = f.kind ?? "ar";
+	const wasFalsified = f.verify === "Falsified";
 	const touched = PATCHABLE.filter((k) => k in patch);
 	for (const k of touched) f[k] = patch[k];
 	if (patch.verify != null) {
@@ -769,17 +833,22 @@ export function updateFinding(artifactPath, root, patch) {
 		if (patch.verify === "Weakened") applyWeakened(f, kind, patch);
 		else if (patch.verify === "Falsified") applyFalsified(f, patch);
 		else if (isNonEmptyStr(patch.verifyNote)) f.verifyNote = patch.verifyNote.trim();
+		else delete f.verifyNote;
 	} else if (isNonEmptyStr(patch.verifyNote)) {
 		f.verifyNote = patch.verifyNote.trim();
 	}
 	if (typeof patch.status === "string") f.status = patch.status;
+	if (f.verify === "Falsified") f.status = "withdrawn";
+	if (wasFalsified && patch.verify != null && patch.verify !== "Falsified" && patch.status == null) {
+		throw new Error("update: changing a Falsified verdict requires an explicit status");
+	}
 	if (typeof patch.statusNote === "string") f.statusNote = patch.statusNote.trim();
 	revalidateAfterUpdate(f, root);
 	if (touched.includes("evidence")) {
 		const grounding = checkEvidenceGrounding(f, root);
 		if (grounding.length > 0) throw new Error(grounding.map((e) => `invalid finding after update: ${e}`).join("\n"));
 	}
-	// fp hashes { id, lens, quoted, symbol } — recompute when its inputs moved, so the
+	// fp hashes { lens, quoted, symbol }; id is correlation metadata only — recompute when inputs moved, so the
 	// next `store diff` sees the edited finding as changed content, not the old one.
 	if (touched.includes("evidence") || touched.includes("symbol")) f.fp = computeFingerprint(f);
 	saveStore(storePath, store);
@@ -830,10 +899,12 @@ export function diffReview(artifactPath, priorPath) {
 	const { storePath, store } = loadStore(artifactPath);
 	if (!existsSync(priorPath)) throw new Error(`diff: prior review not found: ${priorPath}`);
 	const prior = JSON.parse(readFileSync(priorPath, "utf-8"));
-	const priorByFp = new Map((prior.findings ?? []).map((f) => [f.fp, f]));
+	const activeCurrent = store.findings.filter((finding) => finding.status !== "withdrawn");
+	const activePrior = (prior.findings ?? []).filter((finding) => finding.status !== "withdrawn");
+	const priorByFp = new Map(activePrior.map((f) => [f.fp, f]));
 	const priorResolved = new Map((prior.drift?.resolved ?? []).map((r) => [r.fp, r]));
-	const currentFps = new Set(store.findings.map((f) => f.fp));
-	for (const f of store.findings) {
+	const currentFps = new Set(activeCurrent.map((f) => f.fp));
+	for (const f of activeCurrent) {
 		const p = priorByFp.get(f.fp);
 		if (p) {
 			f.driftClass = "Still-open";
@@ -852,7 +923,7 @@ export function diffReview(artifactPath, priorPath) {
 			f.priorId = null;
 		}
 	}
-	const resolved = (prior.findings ?? [])
+	const resolved = activePrior
 		.filter((p) => !currentFps.has(p.fp))
 		.map((p) => ({ id: p.id, title: p.title, fp: p.fp }));
 	store.drift = {
@@ -860,9 +931,9 @@ export function diffReview(artifactPath, priorPath) {
 		comparedAt: new Date().toISOString(),
 		resolved,
 		counts: {
-			new: store.findings.filter((f) => f.driftClass === "NEW").length,
-			stillOpen: store.findings.filter((f) => f.driftClass === "Still-open").length,
-			regressed: store.findings.filter((f) => f.driftClass === "Regressed").length,
+			new: activeCurrent.filter((f) => f.driftClass === "NEW").length,
+			stillOpen: activeCurrent.filter((f) => f.driftClass === "Still-open").length,
+			regressed: activeCurrent.filter((f) => f.driftClass === "Regressed").length,
 			resolved: resolved.length,
 		},
 	};
@@ -874,8 +945,11 @@ export function diffReview(artifactPath, priorPath) {
 	if (/^drift:/m.test(head)) {
 		text = setFrontmatterField(text, "drift", `{ resolved: ${c.resolved}, regressed: ${c.regressed}, still_open: ${c.stillOpen}, new: ${c.new}, net: ${net >= 0 ? "+" : ""}${net} }`);
 	}
-	text = spliceRegion(text, DRIFT_REGION, renderDrift(store));
-	writeFileSync(artifactPath, text);
+	const isDrReview = Boolean(store.review) || store.findings.every((finding) => (finding.kind ?? "ar") === "dr");
+	if (!isDrReview) {
+		text = spliceRegion(text, DRIFT_REGION, renderDrift(store));
+		writeFileSync(artifactPath, text);
+	}
 	return store.drift;
 }
 
@@ -1106,6 +1180,8 @@ export function renderReview(store) {
 		`scope_strategy: ${meta.scope_strategy ?? "working-tree"}`,
 		`in_scope_files_count: ${meta.in_scope_files_count ?? 0}`,
 		`status: ${meta.status ?? "needs_changes"}`,
+		`review_status: ${meta.review_status ?? "complete"}`,
+		`merge_status: ${n("critical") + n("important") > 0 ? "blocked" : "clear"}`,
 		`severity: { critical: ${n("critical")}, important: ${n("important")}, suggestion: ${n("suggestion")} }`,
 		`verification: { verified: ${vn("Verified")}, weakened: ${vn("Weakened")}, falsified: ${vn("Falsified")} }`,
 		`blockers_count: ${n("critical") + n("important")}`,
@@ -1122,6 +1198,10 @@ export function renderReview(store) {
 		const inTier = active.filter((f) => f.severity === tier.sev);
 		if (inTier.length) sections.push(`## ${tier.emoji} ${tier.section}`, "", inTier.map(renderDrFinding).join("\n\n---\n\n"));
 	}
+	const trailingSections = [
+		store.drift ? `## Drift Delta\n\n${renderDrift(store)}` : "",
+		...(meta.sections ?? []),
+	].filter(Boolean);
 	return [
 		fm, "",
 		`# Code Review — ${meta.scope ?? store.target ?? ""}`, "",
@@ -1129,7 +1209,7 @@ export function renderReview(store) {
 		"## Top Blockers", "", blockers.join("\n") || "_none_", "",
 		DR_LEGEND, "",
 		sections.join("\n\n"),
-		(meta.sections ?? []).join("\n\n"),
+		trailingSections.join("\n\n"),
 	].filter(Boolean).join("\n");
 }
 
@@ -1233,7 +1313,9 @@ export function toSarif(store) {
 
 const USAGE = [
 	"usage: store.mjs init --artifact <review.md> [--root <dir>] < {target,layers:[{n,name}]}.json",
+	"       store.mjs init --review --artifact <review.md> < {target,review:{...}}.json",
 	"       store.mjs add --artifact <review.md> [--root <dir>] < finding.json",
+	"       store.mjs add-many --artifact <review.md> [--root <dir>] < [finding, ...]",
 	"       store.mjs update --artifact <review.md> [--root <dir>] < {id,verify?,verifyNote?,status?,statusNote?,<content fields>}.json",
 	"           (content fields — title, anchor, what, why, evidence, remediation, severity, effort,",
 	"            blastRadius, class, symbol, entityStage, crossCutTag, dependsOn, fix, alt — each",
@@ -1265,8 +1347,22 @@ function cmdInit(ctx) {
 	if (!ctx.artifact) return usageExit(ctx);
 	const raw = stdinOrNull(ctx, "store init: empty stdin — pipe { target, layers:[{n,name}] } JSON\n");
 	if (raw === null) return 2;
+	if (ctx.rest.includes("--review")) {
+		const { storePath } = initReviewStore(resolve(ctx.artifact), JSON.parse(raw));
+		ctx.stdout.write(`initialized DR review ${storePath}\n`);
+		return 0;
+	}
 	const { storePath, layers } = initStore(resolve(ctx.artifact), JSON.parse(raw));
 	ctx.stdout.write(`initialized ${storePath} with layer(s) ${layers.join(", ")}\n`);
+	return 0;
+}
+
+function cmdAddMany(ctx) {
+	if (!ctx.artifact) return usageExit(ctx);
+	const raw = stdinOrNull(ctx, "store add-many: empty stdin — pipe a JSON array of findings\n");
+	if (raw === null) return 2;
+	const records = addFindings(resolve(ctx.artifact), ctx.root, JSON.parse(raw));
+	ctx.stdout.write(`added ${records.length} finding(s) -> ${deriveStorePath(resolve(ctx.artifact))}\n`);
 	return 0;
 }
 
@@ -1351,7 +1447,7 @@ function cmdExport(ctx) {
 }
 
 // Command table — dispatch is a lookup + a single try/catch (0 ok / 2 usage/arg / 1 thrown).
-const COMMANDS = { init: cmdInit, add: cmdAdd, update: cmdUpdate, query: cmdQuery, diff: cmdDiff, render: cmdRender, finalize: cmdFinalize, export: cmdExport };
+const COMMANDS = { init: cmdInit, add: cmdAdd, "add-many": cmdAddMany, update: cmdUpdate, query: cmdQuery, diff: cmdDiff, render: cmdRender, finalize: cmdFinalize, export: cmdExport };
 
 /** Importable CLI routing — the isMain tail extracted so vitest attributes its mutants.
  *  Returns an exit code (0 ok / 2 usage/arg error / 1 thrown). `io` defaults read fd 0 and

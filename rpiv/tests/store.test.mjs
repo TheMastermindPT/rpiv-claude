@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { validateFinding, toSarif, initStore, addFinding, updateFinding, diffReview, queryClusters, renderClusters, renderDrFinding, renderDrift, renderReview, renderFinding, renderTally, spliceRegion, sentinelsFor, renderInto, loadStore, deriveStorePath, checkEvidenceGrounding, finalizeReview } from "../skills/_shared/store.mjs";
+import { validateFinding, toSarif, initStore, initReviewStore, addFinding, addFindings, updateFinding, diffReview, queryClusters, renderClusters, renderDrFinding, renderDrift, renderReview, renderFinding, renderTally, spliceRegion, sentinelsFor, renderInto, loadStore, deriveStorePath, checkEvidenceGrounding, finalizeReview } from "../skills/_shared/store.mjs";
 // Namespace import so the Phase-7 dispatch tests read `store.dispatch` — before the
 // extraction lands that is `undefined` (a clean runtime "not a function" red), not an
 // ESM load-time error that would break the whole suite.
@@ -111,9 +111,11 @@ function mkReviewFixture({ seed = { "lib/x/service.ts": "export const x = 1;\n" 
 		"last_updated: 2026-07-19T00:00:00+0100",
 		"last_updated_by: Test",
 		`health_score: ${health}`,
+		"phases:",
+		'  - { n: 1, title: "Foundation", depends_on: [], blast_radius: internal, effort: S }',
 		"---",
 	].join("\n");
-	writeFileSync(artifact, `${fm}\n${DEFAULT_BODY}`);
+	writeFileSync(artifact, `${fm}\n${DEFAULT_BODY}\n### Phase 1 — Foundation\n\n**Goal:** test fixture phase.\n`);
 	const storePath = artifact.replace(/\.md$/, ".json");
 	// Phase-3 migration: seed the sibling envelope (no lazy-init).
 	writeFileSync(storePath, `${JSON.stringify({ schema: 1, artifact: "review.md", target: "", findings: [] }, null, 2)}\n`);
@@ -576,6 +578,7 @@ const DR_MIN = {
 	title: "race in loader",
 	severity: "important",
 	status: "open",
+	verify: "Verified",
 	evidence: [{ path: "lib/x/a.ts", startLine: 10, quoted: ["const x = 1;"] }],
 	why: "w",
 	fix: "f",
@@ -788,6 +791,47 @@ it("P3.3 init validates the spec, writing nothing on failure.", () => {
 	rmSync(fx.tmp, { recursive: true, force: true });
 });
 
+it("P3.3b initReviewStore creates DR metadata without rewriting Markdown.", () => {
+	const fx = mkLayersFixture();
+	const before = readFileSync(fx.artifact, "utf8");
+	const review = {
+		date: "2026-08-08T00:00:00+0100",
+		author: "Pedro",
+		repository: "rpiv",
+		branch: "feat/review",
+		commit: "abc123",
+		review_type: "pr",
+		scope: "main..HEAD",
+		scope_strategy: "explicit-range",
+		in_scope_files_count: 3,
+		status: "ready",
+		sections: ["## Notes\n\nGrounded."],
+	};
+	const ret = initReviewStore(fx.artifact, { target: "main..HEAD", review });
+	assert.equal(ret.storePath, fx.storePath);
+	const stored = JSON.parse(readFileSync(fx.storePath, "utf8"));
+	assert.deepEqual(stored.review, { ...review, review_status: "complete" });
+	assert.throws(
+		() => addFindings(fx.artifact, fx.root, [{ ...DR_C, verify: undefined }]),
+		/verify must be one of Verified \| Weakened \| Falsified/,
+	);
+	assert.equal(stored.layers, undefined, "DR stores do not carry AR layers");
+	assert.equal(readFileSync(fx.artifact, "utf8"), before, "DR init leaves Markdown byte-identical");
+	const badStatus = mkLayersFixture();
+	assert.throws(
+		() => initReviewStore(badStatus.artifact, { target: "main..HEAD", review: { status: "needs_changes" } }),
+		/review\.status must be ready/,
+	);
+	const suppliedMerge = mkLayersFixture();
+	assert.throws(
+		() => initReviewStore(suppliedMerge.artifact, { target: "main..HEAD", review: { merge_status: "clear" } }),
+		/merge_status is derived/,
+	);
+	rmSync(fx.tmp, { recursive: true, force: true });
+	rmSync(badStatus.tmp, { recursive: true, force: true });
+	rmSync(suppliedMerge.tmp, { recursive: true, force: true });
+});
+
 // P3.4 loadStore no longer lazy-inits; addFinding on an un-init'd artifact throws.
 it("P3.4 loadStore no longer lazy-inits; addFinding on an un-init'd artifact throws.", () => {
 	const tmp = mkdtempSync(join(tmpdir(), "store-noinit-"));
@@ -850,10 +894,31 @@ it("P4.2 Weakened demotes one tier and requires a verifyNote.", () => {
 // P4.3 Falsified retires-not-deletes — record stays, status->withdrawn, verifyNote required.
 it("P4.3 Falsified retires-not-deletes — record stays, status->withdrawn, verifyNote required.", () => {
 	const fx = mkUpdateFixture();
-	const rec = updateFinding(fx.artifact, fx.root, { id: "L0-01", verify: "Falsified", verifyNote: "quote not in file" });
+	const seeded = JSON.parse(readFileSync(fx.storePath, "utf8"));
+	Object.assign(seeded.findings[0], {
+		baselineState: "unchanged",
+		driftClass: "Still-open",
+		priorFp: "prior-fp",
+		priorId: "OLD-1",
+	});
+	writeFileSync(fx.storePath, `${JSON.stringify(seeded, null, 2)}\n`);
+	const rec = updateFinding(fx.artifact, fx.root, { id: "L0-01", verify: "Falsified", verifyNote: "quote not in file", status: "accepted" });
 	assert.equal(rec.verify, "Falsified", "verify Falsified");
 	assert.equal(rec.status, "withdrawn", "status withdrawn");
+	assert.equal(rec.driftClass, undefined, "falsification clears stale drift classification");
+	assert.equal(rec.baselineState, undefined, "falsification clears stale SARIF baseline state");
 	assert.equal(JSON.parse(readFileSync(fx.storePath, "utf-8")).findings.length, 1, "record retained (not deleted)");
+	assert.throws(
+		() => updateFinding(fx.artifact, fx.root, { id: "L0-01", verify: "Verified" }),
+		/changing a Falsified verdict requires an explicit status/,
+	);
+	const reactivated = updateFinding(fx.artifact, fx.root, {
+		id: "L0-01",
+		verify: "Verified",
+		status: "accepted",
+	});
+	assert.equal(reactivated.status, "accepted", "explicit status reactivates the corrected verdict");
+	assert.equal(reactivated.verifyNote, undefined, "stale falsification note is removed");
 	const fx2 = mkUpdateFixture();
 	assert.throws(() => updateFinding(fx2.artifact, fx2.root, { id: "L0-01", verify: "Falsified" }), /Falsified requires a verifyNote/, "no note throws");
 	rmSync(fx.tmp, { recursive: true, force: true });
@@ -1168,7 +1233,7 @@ it("P6.7 CLI query --clusters prints the report; missing flag errors.", () => {
 // ---- Phase 8: DR render mode (kind:"dr" arm + whole-document assembly) -------
 
 /** A fully-valid kind:"dr" critical finding grounding at lib/x/a.ts:10. */
-const DR_C = { kind: "dr", id: "S1", lens: "S", title: "race", severity: "critical", status: "open", evidence: [{ path: "lib/x/a.ts", startLine: 10, quoted: ["const x = 1;"] }], why: "w", fix: "f" };
+const DR_C = { kind: "dr", id: "S1", lens: "S", title: "race", severity: "critical", status: "open", verify: "Verified", evidence: [{ path: "lib/x/a.ts", startLine: 10, quoted: ["const x = 1;"] }], why: "w", fix: "f" };
 
 /** A DR fixture: seeds lib/x/a.ts (line 10 = `const x = 1;`) + review.json + a plain .md. */
 function mkDrFixture({ findings = [], mdBody = "# DR\n" } = {}) {
@@ -1192,7 +1257,27 @@ it("P8.1 DR validation arm — I/Q/S/G lens, per-tier why/fix, capitalized verif
 	const disErrs = validateFinding({ kind: "dr", id: "S1", lens: "S", title: "race", severity: "discuss", status: "open", evidence: DR_C.evidence, fix: "f" }, new Map(), new Set());
 	assert.ok(disErrs.includes("kind:dr discuss finding requires a why"), "discuss requires a why");
 	assert.ok(!disErrs.some((e) => e.includes("requires a fix")), "discuss does NOT require a fix");
-	assert.deepEqual(validateFinding({ ...DR_C, verify: "Falsified" }, new Map(), new Set()), [], "capitalized verify accepted");
+	assert.deepEqual(
+		validateFinding(
+			{ ...DR_C, verify: "Falsified", verifyNote: "contradicted by caller", status: "withdrawn" },
+			new Map(),
+			new Set(),
+		),
+		[],
+		"falsified withdrawn finding is accepted",
+	);
+	assert.ok(
+		validateFinding({ ...DR_C, verify: "Falsified" }, new Map(), new Set()).includes(
+			"kind:dr Falsified finding must have status withdrawn",
+		),
+		"falsified active finding is rejected",
+	);
+	assert.ok(
+		validateFinding({ ...DR_C, verify: "Falsified", status: "withdrawn" }, new Map(), new Set()).includes(
+			"kind:dr Falsified finding requires a verifyNote",
+		),
+		"falsified finding keeps its verifier justification",
+	);
 	assert.ok(validateFinding({ ...DR_C, verify: "verified" }, new Map(), new Set()).includes("verify must be one of Verified | Weakened | Falsified (got: verified)"), "lowercase verify rejected");
 });
 
@@ -1210,19 +1295,21 @@ it("P8.2 renderDrFinding degrades per tier + byte-preserves the emoji.", () => {
 
 // P8.3 renderReview assembles the whole document.
 it("P8.3 renderReview assembles the whole document.", () => {
-	const store = { schema: 1, target: "lib/x", review: { review_type: "pr", status: "needs_changes", scope: "lib/x", commit: "abc123", date: "2026-07-20T00:00:00+0100" }, findings: [
+	const store = { schema: 1, target: "lib/x", review: { review_type: "pr", status: "needs_changes", merge_status: "clear", scope: "lib/x", commit: "abc123", date: "2026-07-20T00:00:00+0100" }, findings: [
 		{ ...DR_C, verify: "Verified" },
 		{ ...DR_C, id: "I1", lens: "I", severity: "important", why: "w", fix: "f2" },
 		{ ...DR_C, id: "Q1", lens: "Q", severity: "suggestion", fix: "f3" },
-		{ ...DR_C, id: "G1", severity: "critical", status: "withdrawn" },
+		{ ...DR_C, id: "G1", severity: "critical", status: "withdrawn", verify: "Falsified", verifyNote: "contradicted" },
 	] };
 	const out = renderReview(store);
 	assert.ok(out.includes("template_version: 2"), "template_version 2");
 	assert.ok(out.includes("date: 2026-07-20T00:00:00+0100"), "date");
 	assert.ok(out.includes("commit: abc123"), "commit");
 	assert.ok(out.includes("severity: { critical: 1, important: 1, suggestion: 1 }"), "severity counts (withdrawn excluded)");
-	assert.ok(out.includes("verification: { verified: 1, weakened: 0, falsified: 0 }"), "verification counts");
+	assert.ok(out.includes("verification: { verified: 3, weakened: 0, falsified: 1 }"), "verification counts");
 	assert.ok(out.includes("blockers_count: 2"), "blockers_count");
+	assert.ok(out.includes("review_status: complete"), "review completion is separate from merge readiness");
+	assert.ok(out.includes("merge_status: blocked"), "active blockers derive a blocked merge status");
 	assert.ok(out.includes("## 🔴 Critical") && out.includes("### S1 🔴"), "critical section");
 	assert.ok(out.includes("## 🟡 Important") && out.includes("### I1 🟡"), "important section");
 	assert.ok(out.includes("## 🔵 Suggestions") && out.includes("### Q1 🔵"), "suggestions section");
@@ -1230,7 +1317,7 @@ it("P8.3 renderReview assembles the whole document.", () => {
 	assert.ok(out.includes("**S1**") && out.includes("**I1**"), "Top Blockers lists S1 + I1");
 	assert.ok(out.includes("**Commit:** `abc123`"), "post-heading summary commit");
 	assert.ok(out.includes("**Findings:** 1🔴 · 1🟡 · 1🔵"), "summary findings line");
-	assert.ok(out.includes("**Verification:** 1✓ / 0− / 0✗"), "summary verification line");
+	assert.ok(out.includes("**Verification:** 3✓ / 0− / 1✗"), "summary verification line");
 	assert.ok(out.includes("[precedent-weighted]"), "Legend Annotate row");
 });
 
@@ -1241,6 +1328,50 @@ it("P8.4 addFinding skips the AR-sentinel render for kind:\"dr\".", () => {
 	assert.equal(rec.id, "S1", "returns the record");
 	assert.equal(JSON.parse(readFileSync(fx.storePath, "utf-8")).findings.length, 1, "one finding persisted");
 	assert.equal(readFileSync(fx.artifact, "utf-8"), "---\nstatus: in-progress\n---\n# DR\n", ".md unchanged by the DR add (write-once later)");
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
+it("P5.7 withdrawn findings stay auditable but do not participate in drift.", () => {
+	const fx = mkDiffFixture({
+		findings: [{ kind: "dr", id: "F2", title: "current false positive", fp: "F2", status: "withdrawn" }],
+	});
+	const drift = diffReview(
+		fx.artifact,
+		writePrior(fx, {
+			artifact: "prior.md",
+			findings: [{ kind: "dr", id: "F1", title: "prior false positive", fp: "F1", status: "withdrawn" }],
+		}),
+	);
+	assert.deepEqual(drift.counts, { new: 0, stillOpen: 0, regressed: 0, resolved: 0 });
+	assert.deepEqual(drift.resolved, []);
+	const stored = JSON.parse(readFileSync(fx.storePath, "utf-8")).findings[0];
+	assert.equal(stored.status, "withdrawn", "falsified record remains persisted");
+	assert.equal(stored.driftClass, undefined, "withdrawn record receives no drift class");
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
+it("P8.4b addFindings validates the whole DR batch before one atomic write.", () => {
+	const fx = mkDrFixture();
+	const records = addFindings(fx.artifact, fx.root, [DR_C, { ...DR_C, id: "I1", lens: "I" }]);
+	assert.deepEqual(records.map((record) => record.id), ["S1", "I1"]);
+	assert.equal(JSON.parse(readFileSync(fx.storePath, "utf8")).findings.length, 2);
+	const before = readFileSync(fx.storePath, "utf8");
+	assert.throws(
+		() => addFindings(fx.artifact, fx.root, [{ ...DR_C, id: "Q1", lens: "Q" }, { ...DR_C, id: "Q1", lens: "Q" }]),
+		/duplicate id/,
+	);
+	assert.equal(readFileSync(fx.storePath, "utf8"), before, "invalid batch leaves the store byte-identical");
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
+it("P8.4c falsified DR findings remain counted but stay out of blockers and body.", () => {
+	const fx = mkDrFixture();
+	addFinding(fx.artifact, fx.root, DR_C);
+	updateFinding(fx.artifact, fx.root, { id: "S1", verify: "Falsified", verifyNote: "contradicted" });
+	const out = renderReview(loadStore(fx.artifact).store);
+	assert.ok(out.includes("verification: { verified: 0, weakened: 0, falsified: 1 }"));
+	assert.ok(out.includes("blockers_count: 0"));
+	assert.ok(!out.includes("### S1"));
 	rmSync(fx.tmp, { recursive: true, force: true });
 });
 
@@ -1314,6 +1445,52 @@ it("dispatch init", () => {
 	assert.equal(runDispatch(["init"]).code, 2, "init without --artifact -> 2");
 	rmSync(fx.tmp, { recursive: true, force: true });
 	rmSync(fx2.tmp, { recursive: true, force: true });
+});
+
+it("P8.6 DR drift persists only the store until the explicit render.", () => {
+	const fx = mkDrFixture();
+	const current = addFinding(fx.artifact, fx.root, DR_C);
+	writeFileSync(fx.artifact, `${renderReview(loadStore(fx.artifact).store)}\n`);
+	const beforeDrift = readFileSync(fx.artifact, "utf8");
+	const prior = join(fx.tmp, "prior.json");
+	writeFileSync(
+		prior,
+		JSON.stringify({
+			artifact: "prior.md",
+			findings: [
+				{ ...current, id: "OLD-SAME" },
+				{ ...current, id: "OLD-GONE", fp: "ffffffffffffffff", title: "resolved issue" },
+			],
+		}),
+	);
+	const drift = diffReview(fx.artifact, prior);
+	assert.deepEqual(drift.counts, { new: 0, stillOpen: 1, regressed: 0, resolved: 1 });
+	assert.equal(readFileSync(fx.artifact, "utf8"), beforeDrift, "diff does not emit the DR body");
+	const rendered = renderReview(loadStore(fx.artifact).store);
+	assert.ok(rendered.includes("## Drift Delta"));
+	assert.ok(rendered.includes("| Still-open | 1 |"));
+	assert.ok(rendered.includes("OLD-GONE — resolved issue"));
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
+it("dispatch init --review and add-many", () => {
+	const fx = mkLayersFixture({ seed: { "lib/x/a.ts": `${[...Array.from({ length: 9 }, (_, i) => `// ${i}`), "const x = 1;"].join("\n")}\n` } });
+	const spec = { target: "main..HEAD", review: { scope: "main..HEAD", status: "ready", sections: [] } };
+	const initialized = runDispatch(["init", "--review", "--artifact", fx.artifact], JSON.stringify(spec));
+	assert.equal(initialized.code, 0, initialized.err);
+	assert.match(initialized.out, /^initialized DR review/);
+	const batch = runDispatch(
+		["add-many", "--artifact", fx.artifact, "--root", fx.root],
+		JSON.stringify([
+			{ ...DR_C, verify: "Verified" },
+			{ ...DR_C, id: "I1", lens: "I", verify: "Verified" },
+		]),
+	);
+	assert.equal(batch.code, 0, batch.err);
+	assert.match(batch.out, /^added 2 finding\(s\)/);
+	assert.equal(runDispatch(["add-many", "--artifact", fx.artifact, "--root", fx.root], "{}").code, 1);
+	assert.equal(runDispatch(["add-many", "--artifact", fx.artifact], "").code, 2);
+	rmSync(fx.tmp, { recursive: true, force: true });
 });
 
 // D4. dispatch update — happy path + empty-stdin + no-artifact.
@@ -1431,13 +1608,15 @@ const GOLDEN_DR_REVIEW = [
 	"scope_strategy: working-tree",
 	"in_scope_files_count: 0",
 	"status: needs_changes",
+	"review_status: complete",
+	"merge_status: blocked",
 	"severity: { critical: 1, important: 1, suggestion: 1 }",
-	"verification: { verified: 1, weakened: 0, falsified: 0 }",
+	"verification: { verified: 3, weakened: 0, falsified: 1 }",
 	"blockers_count: 2",
 	"tags: [code-review]",
 	"---",
 	"# Code Review — lib/x",
-	"**Commit:** `abc123` · **Status:** `needs_changes` · **Findings:** 1🔴 · 1🟡 · 1🔵 · **Verification:** 1✓ / 0− / 0✗",
+	"**Commit:** `abc123` · **Status:** `needs_changes` · **Findings:** 1🔴 · 1🟡 · 1🔵 · **Verification:** 3✓ / 0− / 1✗",
 	"## Top Blockers",
 	"1. **S1** — race",
 	"2. **I1** — race",
@@ -1724,7 +1903,7 @@ it("MA1. renderReview whole-document byte-exact", () => {
 		{ ...DR_C, verify: "Verified" },
 		{ ...DR_C, id: "I1", lens: "I", severity: "important", why: "w", fix: "f2" },
 		{ ...DR_C, id: "Q1", lens: "Q", severity: "suggestion", fix: "f3" },
-		{ ...DR_C, id: "G1", severity: "critical", status: "withdrawn" },
+		{ ...DR_C, id: "G1", severity: "critical", status: "withdrawn", verify: "Falsified", verifyNote: "contradicted" },
 	] };
 	assert.equal(renderReview(store), GOLDEN_DR_REVIEW, "renderReview output byte-identical to the frozen golden");
 });
@@ -1782,7 +1961,6 @@ const ERR_DR_AS_AR = [
 	"layer must be N or N.M (got: undefined)",
 	"effort must be one of S | M | L (got: undefined)",
 	"class must be one of polish | redesign (got: undefined)",
-	"verify must be one of Verified | Weakened | Falsified (got: undefined)",
 	"blastRadius must be a non-empty array of strings (recommended: internal | public-API | on-disk | cross-module | other; free-form allowed)",
 	"remediation must be an object",
 	"dependsOn must be a string array (may be empty)",
@@ -1823,6 +2001,7 @@ const ERR_DR_FIELDS = [
 	"lens must be one of I/Q/S/G for kind:dr (got: Z)",
 	"kind:dr critical finding requires a why",
 	"kind:dr critical finding requires a fix",
+	"verify must be one of Verified | Weakened | Falsified (got: undefined)",
 ];
 
 const ERR_DRIFT = [
@@ -1974,11 +2153,11 @@ it("MC6. addFinding rejection messages (in-process)", () => {
 // MC7. updateFinding — the DR cross-tier demotion guard (both sides), in-process.
 it("MC7. updateFinding DR cross-tier demotion guard (in-process)", () => {
 	const fx = mkDrFixture();
-	addFinding(fx.artifact, fx.root, { kind: "dr", id: "S1", lens: "S", title: "race", severity: "suggestion", status: "open", evidence: [{ path: "lib/x/a.ts", startLine: 10, quoted: ["const x = 1;"] }], fix: "f" });
+	addFinding(fx.artifact, fx.root, { kind: "dr", id: "S1", lens: "S", title: "race", severity: "suggestion", status: "open", verify: "Verified", evidence: [{ path: "lib/x/a.ts", startLine: 10, quoted: ["const x = 1;"] }], fix: "f" });
 	assert.equal(throwMsg(() => updateFinding(fx.artifact, fx.root, { id: "S1", verify: "Weakened", verifyNote: "narrower" })), "update: cannot Weaken S1 to discuss — that tier requires a `why` this finding lacks", "demotion into a tier that needs a missing field is refused");
 	rmSync(fx.tmp, { recursive: true, force: true });
 	const fx2 = mkDrFixture();
-	addFinding(fx2.artifact, fx2.root, { kind: "dr", id: "S1", lens: "S", title: "race", severity: "critical", status: "open", evidence: [{ path: "lib/x/a.ts", startLine: 10, quoted: ["const x = 1;"] }], why: "w", fix: "f" });
+	addFinding(fx2.artifact, fx2.root, { kind: "dr", id: "S1", lens: "S", title: "race", severity: "critical", status: "open", verify: "Verified", evidence: [{ path: "lib/x/a.ts", startLine: 10, quoted: ["const x = 1;"] }], why: "w", fix: "f" });
 	assert.equal(updateFinding(fx2.artifact, fx2.root, { id: "S1", verify: "Weakened", verifyNote: "n" }).severity, "important", "critical weakens to important when why+fix present");
 	rmSync(fx2.tmp, { recursive: true, force: true });
 });
@@ -2138,6 +2317,8 @@ const GOLDEN_REVIEW_DEFAULTS = [
 	"scope_strategy: working-tree",
 	"in_scope_files_count: 0",
 	"status: needs_changes",
+	"review_status: complete",
+	"merge_status: blocked",
 	"severity: { critical: 1, important: 0, suggestion: 0 }",
 	"verification: { verified: 0, weakened: 0, falsified: 0 }",
 	"blockers_count: 1",
@@ -2192,6 +2373,8 @@ const GOLDEN_REVIEW_EMPTY = [
 	"scope_strategy: working-tree",
 	"in_scope_files_count: 0",
 	"status: needs_changes",
+	"review_status: complete",
+	"merge_status: clear",
 	"severity: { critical: 0, important: 0, suggestion: 0 }",
 	"verification: { verified: 0, weakened: 0, falsified: 0 }",
 	"blockers_count: 0",

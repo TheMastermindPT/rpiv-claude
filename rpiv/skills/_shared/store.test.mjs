@@ -595,6 +595,7 @@ const DR_MIN = {
 	title: "race in loader",
 	severity: "important",
 	status: "open",
+	verify: "Verified",
 	evidence: [{ path: "lib/x/a.ts", startLine: 10, quoted: ["const x = 1;"] }],
 	why: "w",
 	fix: "f",
@@ -886,7 +887,7 @@ function mkUpdateFixture() {
 // P4.3 Falsified retires-not-deletes — record stays, status->withdrawn, verifyNote required.
 {
 	const fx = mkUpdateFixture();
-	const rec = updateFinding(fx.artifact, fx.root, { id: "L0-01", verify: "Falsified", verifyNote: "quote not in file" });
+	const rec = updateFinding(fx.artifact, fx.root, { id: "L0-01", verify: "Falsified", verifyNote: "quote not in file", status: "accepted" });
 	assert.equal(rec.verify, "Falsified", "verify Falsified");
 	assert.equal(rec.status, "withdrawn", "status withdrawn");
 	assert.equal(JSON.parse(readFileSync(fx.storePath, "utf-8")).findings.length, 1, "record retained (not deleted)");
@@ -1037,6 +1038,24 @@ const writePrior = (fx, prior) => { const p = join(fx.tmp, "prior.json"); writeF
 	console.log("OK — P5 diff rejects missing prior.");
 }
 
+// P5.7 Withdrawn findings stay auditable but do not participate in drift.
+{
+	const fx = mkDiffFixture({
+		findings: [{ kind: "dr", id: "F2", title: "current false positive", fp: "F2", status: "withdrawn" }],
+	});
+	const drift = diffReview(fx.artifact, writePrior(fx, {
+		artifact: "prior.md",
+		findings: [{ kind: "dr", id: "F1", title: "prior false positive", fp: "F1", status: "withdrawn" }],
+	}));
+	assert.deepEqual(drift.counts, { new: 0, stillOpen: 0, regressed: 0, resolved: 0 });
+	assert.deepEqual(drift.resolved, []);
+	const stored = JSON.parse(readFileSync(fx.storePath, "utf-8")).findings[0];
+	assert.equal(stored.status, "withdrawn", "falsified record remains persisted");
+	assert.equal(stored.driftClass, undefined, "withdrawn record receives no drift class");
+	rmSync(fx.tmp, { recursive: true, force: true });
+	console.log("OK — P5 withdrawn findings are retained outside drift arithmetic.");
+}
+
 // ---- Phase 6: store query --clusters (read-only cluster discovery) ----------
 
 /** The 3-finding cluster fixture from the Phase-6 contract. */
@@ -1149,7 +1168,7 @@ const cl = (clusters, dim, key) => clusters.find((x) => x.dimension === dim && x
 // ---- Phase 8: DR render mode (kind:"dr" arm + whole-document assembly) -------
 
 /** A fully-valid kind:"dr" critical finding grounding at lib/x/a.ts:10. */
-const DR_C = { kind: "dr", id: "S1", lens: "S", title: "race", severity: "critical", status: "open", evidence: [{ path: "lib/x/a.ts", startLine: 10, quoted: ["const x = 1;"] }], why: "w", fix: "f" };
+const DR_C = { kind: "dr", id: "S1", lens: "S", title: "race", severity: "critical", status: "open", verify: "Verified", evidence: [{ path: "lib/x/a.ts", startLine: 10, quoted: ["const x = 1;"] }], why: "w", fix: "f" };
 
 /** A DR fixture: seeds lib/x/a.ts (line 10 = `const x = 1;`) + review.json + a plain .md. */
 function mkDrFixture({ findings = [], mdBody = "# DR\n" } = {}) {
@@ -1173,7 +1192,8 @@ function mkDrFixture({ findings = [], mdBody = "# DR\n" } = {}) {
 	const disErrs = validateFinding({ kind: "dr", id: "S1", lens: "S", title: "race", severity: "discuss", status: "open", evidence: DR_C.evidence, fix: "f" }, new Map(), new Set());
 	assert.ok(disErrs.includes("kind:dr discuss finding requires a why"), "discuss requires a why");
 	assert.ok(!disErrs.some((e) => e.includes("requires a fix")), "discuss does NOT require a fix");
-	assert.deepEqual(validateFinding({ ...DR_C, verify: "Falsified" }, new Map(), new Set()), [], "capitalized verify accepted");
+	assert.deepEqual(validateFinding({ ...DR_C, verify: "Falsified", verifyNote: "contradicted by caller", status: "withdrawn" }, new Map(), new Set()), [], "falsified withdrawn finding accepted");
+	assert.ok(validateFinding({ ...DR_C, verify: "Falsified" }, new Map(), new Set()).includes("kind:dr Falsified finding must have status withdrawn"), "falsified active finding rejected");
 	assert.ok(validateFinding({ ...DR_C, verify: "verified" }, new Map(), new Set()).includes("verify must be one of Verified | Weakened | Falsified (got: verified)"), "lowercase verify rejected");
 	console.log("OK — P8 dr validation arm: lens I/Q/S/G, per-tier why/fix, capitalized verify.");
 }
@@ -1197,14 +1217,14 @@ function mkDrFixture({ findings = [], mdBody = "# DR\n" } = {}) {
 		{ ...DR_C, verify: "Verified" },
 		{ ...DR_C, id: "I1", lens: "I", severity: "important", why: "w", fix: "f2" },
 		{ ...DR_C, id: "Q1", lens: "Q", severity: "suggestion", fix: "f3" },
-		{ ...DR_C, id: "G1", severity: "critical", status: "withdrawn" },
+		{ ...DR_C, id: "G1", severity: "critical", status: "withdrawn", verify: "Falsified", verifyNote: "contradicted" },
 	] };
 	const out = renderReview(store);
 	assert.ok(out.includes("template_version: 2"), "template_version 2");
 	assert.ok(out.includes("date: 2026-07-20T00:00:00+0100"), "date");
 	assert.ok(out.includes("commit: abc123"), "commit");
 	assert.ok(out.includes("severity: { critical: 1, important: 1, suggestion: 1 }"), "severity counts (withdrawn excluded)");
-	assert.ok(out.includes("verification: { verified: 1, weakened: 0, falsified: 0 }"), "verification counts");
+	assert.ok(out.includes("verification: { verified: 3, weakened: 0, falsified: 1 }"), "verification counts");
 	assert.ok(out.includes("blockers_count: 2"), "blockers_count");
 	assert.ok(out.includes("## 🔴 Critical") && out.includes("### S1 🔴"), "critical section");
 	assert.ok(out.includes("## 🟡 Important") && out.includes("### I1 🟡"), "important section");
@@ -1213,7 +1233,7 @@ function mkDrFixture({ findings = [], mdBody = "# DR\n" } = {}) {
 	assert.ok(out.includes("**S1**") && out.includes("**I1**"), "Top Blockers lists S1 + I1");
 	assert.ok(out.includes("**Commit:** `abc123`"), "post-heading summary commit");
 	assert.ok(out.includes("**Findings:** 1🔴 · 1🟡 · 1🔵"), "summary findings line");
-	assert.ok(out.includes("**Verification:** 1✓ / 0− / 0✗"), "summary verification line");
+	assert.ok(out.includes("**Verification:** 3✓ / 0− / 1✗"), "summary verification line");
 	assert.ok(out.includes("[precedent-weighted]"), "Legend Annotate row");
 	console.log("OK — P8 renderReview: full frontmatter, severity-grouped, withdrawn omitted, counts + blockers derived.");
 }
