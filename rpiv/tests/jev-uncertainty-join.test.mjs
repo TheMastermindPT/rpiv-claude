@@ -1,0 +1,122 @@
+// tests/jev-uncertainty-join.test.mjs — contract tests for the
+// uncertainty-routing join. Pure data: synthetic logs and store records.
+// Pins the invariants:
+//   - records read from arrays and { records: [...] } envelopes, dirs expanded
+//   - outcomes join by finding id; died = Falsified or withdrawn
+//   - the contingency report is honest: insufficient data below the guard,
+//     predictive only when the flagged rate measurably exceeds the ok rate
+
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
+
+import {
+	contingency,
+	died,
+	expandStorePaths,
+	joinOutcomes,
+	MIN_ROWS,
+	readLintRows,
+	readStoreRecords,
+	renderReport,
+} from "../scripts/jev-uncertainty-join.mjs";
+
+const tmp = mkdtempSync(join(tmpdir(), "jev-join-"));
+afterAll(() => rmSync(tmp, { recursive: true, force: true }));
+
+const lintRow = (id, verdict) => ({
+	agent: "claim-verifier",
+	id,
+	p: 0.5,
+	verdict,
+});
+
+describe("inputs", () => {
+	it("reads lint rows and filters to claim-verifier with a probability", () => {
+		const path = join(tmp, "log.jsonl");
+		writeFileSync(
+			path,
+			`${[
+				JSON.stringify(lintRow("Q1", "flag")),
+				JSON.stringify({ agent: "other", id: "Q2", p: 0.1, verdict: "flag" }),
+				JSON.stringify(lintRow("Q3", "ok")),
+			].join("\n")}\n`,
+		);
+		const rows = readLintRows(path);
+		expect(rows.map((r) => r.id)).toEqual(["Q1", "Q3"]);
+	});
+
+	it("reads records from arrays, envelopes, and directories", () => {
+		const dir = join(tmp, "stores");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(
+			join(dir, "a.json"),
+			JSON.stringify([
+				{ id: "Q1", verify: "Falsified" },
+				{ id: "Q2", verify: "Verified" },
+			]),
+		);
+		writeFileSync(
+			join(dir, "b.json"),
+			JSON.stringify({ records: [{ id: "Q3", status: "withdrawn" }] }),
+		);
+		const files = expandStorePaths([dir]);
+		expect(files).toHaveLength(2);
+		const records = readStoreRecords(files);
+		expect(records).toHaveLength(3);
+	});
+
+	it("died is Falsified or withdrawn", () => {
+		expect(died({ verify: "Falsified" })).toBe(true);
+		expect(died({ status: "withdrawn" })).toBe(true);
+		expect(died({ verify: "Verified", status: "open" })).toBe(false);
+	});
+});
+
+describe("join and report", () => {
+	it("joins outcomes by id and computes the contingency", () => {
+		const rows = [
+			lintRow("Q1", "flag"),
+			lintRow("Q2", "review"),
+			lintRow("Q3", "ok"),
+			lintRow("Q4", "ok"),
+		];
+		const records = [
+			{ id: "Q1", verify: "Falsified" },
+			{ id: "Q2", verify: "Verified" },
+			{ id: "Q3", verify: "Verified" },
+		];
+		const tiers = joinOutcomes(rows, records);
+		expect(tiers.flag).toMatchObject({ n: 1, died: 1 });
+		expect(tiers.review).toMatchObject({ n: 1, survived: 1 });
+		expect(tiers.ok).toMatchObject({ n: 2, survived: 1, unknown: 1 });
+		const c = contingency(tiers);
+		expect(c.flaggedRate).toBe(0.5);
+		expect(c.okRate).toBe(0);
+	});
+
+	it("reports insufficient data below the guard, even when seemingly predictive", () => {
+		const rows = [lintRow("Q1", "flag")];
+		const records = [{ id: "Q1", verify: "Falsified" }];
+		const text = renderReport(joinOutcomes(rows, records));
+		expect(text).toContain("INSUFFICIENT DATA");
+		expect(MIN_ROWS).toBe(20);
+	});
+
+	it("reports predictive only when the flagged rate exceeds the ok rate", () => {
+		const rows = [];
+		const records = [];
+		for (let i = 0; i < 30; i++) {
+			rows.push(lintRow(`F${i}`, "flag"));
+			records.push({ id: `F${i}`, verify: i < 20 ? "Falsified" : "Verified" });
+		}
+		for (let i = 0; i < 30; i++) {
+			rows.push(lintRow(`O${i}`, "ok"));
+			records.push({ id: `O${i}`, verify: i < 5 ? "Falsified" : "Verified" });
+		}
+		const text = renderReport(joinOutcomes(rows, records));
+		expect(text).toContain("PREDICTIVE");
+		expect(text).toContain("flag+review died rate: 67%");
+	});
+});
