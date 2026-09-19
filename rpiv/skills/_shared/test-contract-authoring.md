@@ -1,13 +1,16 @@
 # Test Contract Authoring — think like a tester
 
-Shared authoring standard for the Step 6.1 Test Contract in `design` and `blueprint`. Read this before generating a slice/phase's `#### Test Contract:` (design) / `### Test Contract:` (blueprint). The heading level and the slice-vs-phase noun belong to the calling skill; the discipline below is identical for both, and lives here so the two skills cannot drift.
+Read this before authoring or changing a slice's Test Contract. Keep the contract
+once in its authoritative brief; scheduling views link to its section and hash.
+This file owns the authoring format and discipline across design, blueprint,
+plan, and revise. Execution and review use `candidate-workflow.md`.
 
 **Before writing, think like a tester.** A Test Contract that only
 asserts the happy path with a single fixture value will produce
 survivors at mutation time — the same gaps you'd catch now at design
 time, where they cost one sentence instead of a test rewrite plus a
-3-minute mutation re-run. You are not listing tests. You are proving
-to yourself that the code actually does what the contract claims.
+mutation re-run. Describe approved behavior before choosing implementation;
+the contract is an obligation, not proof that unbuilt code works.
 
 1. Boundaries. Every conditional and range check has edges. If
    `if (remaining > 0)` has three values that matter (-1, 0, 5)
@@ -19,9 +22,34 @@ to yourself that the code actually does what the contract claims.
 3. Error paths. A function that validates and throws on bad input
    needs an Oracle that asserts the throw. If you only test valid
    input, every error-path mutant survives. Cover each error surface.
-4. Branch exhaustiveness. Count the decision points the slice's code
-   makes. Count the Behaviors in the contract. If code has more
-   branches than the contract has Behaviors, some path is untested.
-   Either add a Behavior or tag it TDD-exempt with a reason.
+4. Branch coverage. Enumerate meaningful alternatives in the approved behavior.
+   During candidate review, inspect reachable implementation paths for missing
+   scenarios. Several branches can implement one behavior; branch counts alone
+   do not prove coverage. Add independently justified scenarios for real gaps,
+   not TDD-exempt labels for untested behavior.
 
-The **Format** of the contract block (heading level, `Behavior` / `Oracle` / `Expected red` / `TDD-exempt` shape) stays in each skill's Step 6.1 — it differs by nesting (design nests the contract one level deeper than blueprint). This file owns only the authoring *discipline* above.
+## Format
+
+Use `### Test Contract:` for executable phases, or one level deeper for design
+slices. Each Behavior has a stable ID, plain-language expectation, public seam,
+named test location, exact Oracle, and Expected red reason. For example:
+
+```markdown
+### Test Contract:
+- **Behavior B1**: At the agreed limit, another item is rejected without changing the collection.
+  - Seam: the collection's public add operation.
+  - Test: `rejects an item at capacity` -> `path/to/collection.test.ext`
+  - Oracle: capacity 2, existing [A, B], add C -> capacity failure; collection remains [A, B].
+  - Expected red: the current operation accepts C and changes the collection to [A, B, C].
+```
+
+Use the strongest checkable oracle. Justify any genuinely nondeterministic
+expected value; do not weaken exact behavior to shape/presence assertions.
+Check the current source so Expected red is plausible. If behavior already
+exists, record that fact and refine the missing behavior instead of inventing red.
+List automated commands and observable manual criteria separately under
+`### Success Criteria:`. A success-criteria reference is not evidence of a pass.
+
+A genuinely non-behavioral item uses `- **TDD-exempt**: item - reason`.
+Configuration changes and refactors may affect behavior; labels alone do not
+qualify them. Repository-required TDD cannot be waived by an artifact marker.

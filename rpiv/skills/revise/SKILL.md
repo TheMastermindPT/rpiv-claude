@@ -1,315 +1,60 @@
 ---
 name: revise
-description: Surgically update an existing implementation plan in .rpiv/artifacts/plans/ based on review feedback, mid-implementation discoveries, or new constraints, preserving structure and quality rather than rewriting. Use when the user wants a plan adjusted after code-review feedback, has hit a blocker mid-implement, scope changed, or asks to "revise the plan".
-argument-hint: "[plan-path] [feedback]"
+description: Revise an approved brief, design, slice, or plan when feedback changes pending work, preserving intent IDs and prior evidence. Use for contract changes, reordering, splitting, merging, or deferring slices.
+argument-hint: "[brief-design-slice-or-plan-path] [feedback]"
 shell-timeout: 10
 ---
 
 # Revise
 
-You are tasked with updating existing implementation plans based on user feedback. You should be skeptical, thorough, and ensure changes are grounded in actual codebase reality.
+## Read First
 
-## Input
+READ `${CLAUDE_PLUGIN_ROOT}/skills/_shared/candidate-workflow.md` before revising or resuming. It owns brief/test-contract requirements, workspace preservation, candidate and contract identity, review dispatch, and gates. Use `${CLAUDE_PLUGIN_ROOT}/skills/_shared/test-contract-authoring.md` when authoring or changing a behavior contract; do not copy its schema here.
 
-`$ARGUMENTS` — plan path plus feedback, e.g. `.rpiv/artifacts/plans/2025-10-16_09-00-00_feature.md "Split Phase 2 into two phases"`.
+Revise changes intent artifacts, not implementation or review reports. An approved short brief or slice is sufficient input; a full plan and prior chained design are not required.
 
-## Metadata
+## Input and Metadata
+
+`$ARGUMENTS` supplies the target artifact and feedback. If given only a review, ask which intent artifact it should change and which findings apply. If either target or requested change is missing, ask for that information rather than requiring a new planning chain.
 
 ```!
-node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/skill-context.mjs" now recent .rpiv/artifacts/plans 10
+node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/skill-context.mjs" now
 ```
 
-- `now.mjs` (line 1) — `<iso>\t<slug>` tab-separated.
+## 1. Reconcile the Current State
 
-## Flow
+Read the target, its referenced normative sections, decisions, and evidence. On start and resume, verify every referenced document's `content_hash` with `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <absolute-artifact-path> --root <repository-path>` without `--stamp`. Verify approved normative sections separately through the shared contract identity. A mismatch or missing approval pin requires reconciliation before editing; do not silently replace the approved identity.
 
-1. Input → 2. Research if needed → 3. Present approach → 4. Update plan → 5. Sync & review → 6. Follow-ups
+Separate accepted slices, the active candidate, pending slices, and deferred intent. Verify claimed completion from actual candidate and review evidence; old checkmarks are not proof. Preserve the original integration target and exact accepted predecessor relationships. Research only the code or decision uncertainty needed for this revision.
 
-The revised artifact stays in `.rpiv/artifacts/plans/` for `/rpiv:implement` to resume.
+Completion criterion: the feedback is mapped to specific intent IDs and affected candidate/contract identities, with existing accepted history understood.
 
-## Steps
+## 2. Agree the Revision
 
-### Step 1: Input Handling
+Present the smallest change that addresses the feedback and its effect on scope, dependencies, proof, and existing approvals. Confirm any choice the user's request has not already settled. Resolve active-slice behavioral questions before treating the new contract as executable.
 
-When this command is invoked:
+Pending work may split, merge, or reorder while preserving intent IDs. Give newly separated execution slices distinct slice IDs and retain an explicit old-to-new mapping; renumbering display phases must not change identity. For a merge, retain every covered intent ID and its original evidence links. Explain changed dependencies and what becomes invalid rather than silently relabeling old evidence.
 
-1. **Parse the input to identify**:
-   - Plan file path (e.g., `.rpiv/artifacts/plans/2025-10-16_09-00-00_feature.md`)
-   - Whether the user accidentally provided a review artifact path instead (e.g., `.rpiv/artifacts/reviews/2025-10-16_10-00-00_feature.md`)
-   - Requested changes/feedback
+Place unresolved or later detail under `Deferred Work`, with its intent ID, reason, and trigger for refinement. Deferred Work is not a fake executable phase, a completed item, or an excuse to omit the active slice's contract. Keep the next real slice short and agreed; defer implementation detail until that slice is active.
 
-2. **Handle different input scenarios**:
+Completion criterion: the human agrees the changed intent and the active slice has the shared behavioral contract, or the unresolved work is explicitly deferred and not executable.
 
-   **If a REVIEW artifact path is provided**:
-   ```
-   `revise` updates implementation plans, not review artifacts.
+## 3. Edit the Artifact
 
-   If you want to act on code-review findings, provide the target plan path plus the changes to make.
+Make focused edits that preserve unaffected intent. Use behavior, boundaries, constraints, source references, and project-derived verification commands; plans contain no implementation fences. Keep automated checks distinct from manual acceptance criteria.
 
-   Example:
-   `/rpiv:revise .rpiv/artifacts/plans/2025-10-16_09-00-00_feature.md "Address the findings from .rpiv/artifacts/reviews/2025-10-16_10-00-00_feature.md by tightening validation in Phase 2 and expanding success criteria."`
-   ```
-   Wait for user input.
+Treat old shipped fence-based plans as historical proposals, not code truth. Preserve their historical record and retire superseded normative sections explicitly. Derive replacement contracts from approved intent, user-visible behavior, and current public seams, not from copying proposed implementation. Read the shared test-contract authoring standard for the replacement contract.
 
-   **If NO plan file provided**, branch on the `recent plans:` listing in the Metadata block:
-   - **Empty** — no plans under `.rpiv/artifacts/plans/`; tell the user and suggest running `/rpiv:plan` first.
-   - **Exactly one entry** — confirm with `ask_user_question`: "Revise this plan?" with options "Revise `<filename>` (Recommended)" and "Pick a different path".
-   - **Two or more entries** — present the top 4 filenames as `ask_user_question` options.
+Preserve prior approvals, review records, and `## TDD Evidence (implement)` verbatim. Append a timestamped Follow-up recording the change, intent/slice mapping, prior and new contract identities, affected dependencies, and invalidated approvals. Never fabricate, rewrite, or reassign old evidence to a new contract. Missing historical red stays an unproven gap; being implemented pre-TDD is not a TDD exemption.
 
-   If the user is coming from `/rpiv:deep-review`, also ask which findings should change the plan. Wait for user selection, then re-check for feedback.
+If accepted behavior must change, create explicit new pending work linked to the accepted revision rather than rewriting what was accepted. An active candidate affected by this revision needs renewed tests, independent reviews, and exact-revision human acceptance under the shared loop. Scope reduction or deferral requires explicit agreement; it cannot silently make the whole scope complete.
 
-   **If plan file provided but NO feedback**:
-   ```
-   I've found the plan at {path}. What changes would you like to make?
+Update `last_updated`, `last_updated_by`, and a concise `last_updated_note` where frontmatter is used. Preserve `in-progress`, `in-review`, `ready` as document statuses, distinct from candidate acceptance. Reopen changed normative content for review; do not preserve a stale ready/approved claim.
 
-   For example:
-   - "Add a phase for migration handling"
-   - "Update the success criteria to include performance tests"
-   - "Adjust the scope to exclude feature X"
-   - "Split Phase 2 into two separate phases"
-   ```
-   Wait for user input.
+## 4. Review and Resume
 
-   **If BOTH plan file AND feedback provided**:
-   - Proceed to substep 3 — no preliminary questions needed.
+Dispatch independent read-only intent review with `mode=intent` and the exact input fields in the shared workflow. Freeze and verify the revised contract identity, including the actual approved normative sections and referenced document hashes, excluding append-only evidence. Resolve findings and repeat review after edits. Capture human approval of the exact revised contract, not merely permission to edit the document.
 
-3. **Read the existing plan file COMPLETELY**:
-   - Use the Read tool WITHOUT limit/offset parameters
-   - Understand the current structure, phases, and scope
-   - Note the success criteria and implementation approach
+Before finalizing a revised artifact, use `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <absolute-artifact-path> --root <repository-path> --finalizing --stamp` after reconciling the old identity and preserving history. Verify the new `content_hash` without `--stamp`. This document hash is not a candidate approval and cannot replace the shared approved-contract pin.
 
-4. **Understand the requested changes**:
-   - Parse what the user wants to add/modify/remove
-   - Identify if changes require codebase research
-   - Determine scope of the update
-
-### Step 2: Research If Needed
-
-**Only spawn research tasks if the changes require new technical understanding.**
-
-If the user's feedback requires understanding new code patterns or validating assumptions:
-
-1. **Spawn parallel agents for research** using the Agent tool:
-   **For code investigation:**
-   - Use the **codebase-locator** agent to find relevant files
-   - Use the **codebase-analyzer** agent to understand implementation details
-   - Use the **codebase-pattern-finder** agent to find similar patterns
-
-   **For historical context:**
-   - Use the **artifacts-locator** agent to find related research or decisions in `.rpiv/artifacts/`
-   - Use the **artifacts-analyzer** agent to extract insights from documents
-
-   **Be EXTREMELY specific about directories**:
-   - Include full path context in prompts
-
-2. **Read any new files identified by research**:
-   - Read them FULLY into the main context
-   - Cross-reference with the plan requirements
-
-3. **Wait for ALL agents to complete** before proceeding
-
-### Step 3: Present Understanding and Approach
-
-Before making changes, confirm your understanding:
-
-```
-Based on your feedback, I understand you want to:
-- {Change 1 with specific detail}
-- {Change 2 with specific detail}
-
-My research found:
-- {Relevant code pattern or constraint}
-- {Important discovery that affects the change}
-
-I plan to update the plan by:
-1. {Specific modification to make}
-2. {Another modification}
-
-Does this align with your intent?
-```
-
-Use the `ask_user_question` tool to confirm before editing. Question: "{Summary of planned modifications}. Proceed with these edits?". Header: "Changes". Options: "Proceed (Recommended)" (Apply the planned changes to the existing plan); "Adjust approach" (Modify what will be changed before editing); "Show me first" (Show the exact text changes before applying).
-
-### Step 4: Update the Plan
-
-1. **Make focused, precise edits** to the existing plan:
-   - Use the Edit tool for surgical changes
-   - NEVER use Write tool - plan files already exist, use Edit tool only
-   - Maintain the existing structure unless explicitly changing it
-   - Keep all file:line references accurate
-   - Update success criteria if needed
-
-2. **Ensure consistency**:
-   - If adding a new phase, ensure it follows the existing pattern
-   - If modifying scope, update "What We're NOT Doing" section
-   - If changing approach, update "Implementation Approach" section
-   - Maintain the distinction between automated vs manual success criteria
-   - If a change touches a phase's behavior, keep its `### Test Contract:` in sync — same rigor as authoring (exact Oracle values, Expected red reason, justified exemptions). A phase whose code changed but whose contract didn't is a revision defect.
-   - Never touch the `## TDD Evidence (implement)` section — it is implement's append-only audit trail
-   - If the plan has YAML frontmatter, set `last_updated` to `<iso>` from the Metadata block; set `last_updated_by` to your name. Copy the offset verbatim — do not reformat.
-
-3. **Preserve quality standards**:
-   - Include specific file paths and line numbers for new content
-   - Write measurable success criteria
-   - Use project's build/test commands (`make`, `npm`, etc.) for automated verification
-   - Keep language clear and actionable
-
-### Step 5: Sync and Review
-
-1. **Present the changes made**:
-   ```
-   Plan updated at `.rpiv/artifacts/plans/{filename}.md`
-
-   Changes made:
-   - {Specific change 1}
-   - {Specific change 2}
-
-   The updated plan now:
-   - {Key improvement}
-   - {Another improvement}
-
-   Let me know if you want further adjustments — otherwise chain forward.
-
-   ---
-
-   💬 Follow-up: describe further plan changes in chat — each `/rpiv:revise` call appends another timestamped Follow-up section, history is preserved.
-
-   **Next step:** `/rpiv:implement .rpiv/artifacts/plans/{filename}.md Phase {N}` — resume execution at the affected phase (or omit `Phase {N}` to run all phases sequentially).
-
-   > 🆕 Tip: start a fresh session with `/new` first — chained skills work best with a clean context window.
-   ```
-
-### Step 6: Handle Follow-ups
-
-- **Each invocation appends history.** Every `/rpiv:revise` call adds another timestamped Follow-up section — do not collapse history. Prior phase decisions stay visible.
-- **Bump frontmatter.** Update `last_updated` + `last_updated_by`; set `last_updated_note: "<one-line summary of revision>"`.
-- **Surgical edits only.** Make precise edits to specific phases or success criteria — not wholesale rewrites. Preserve good content that doesn't need changing.
-- **When to re-invoke instead.** For deep architectural changes, the upstream design or research is the right place to revise — re-run those rather than expanding revise's scope. The previous block's `Next step:` stays valid for the existing plan.
-
-## Important Guidelines
-
-1. **Be Skeptical**:
-   - Don't blindly accept change requests that seem problematic
-   - Question vague feedback - ask for clarification
-   - Use AskUserQuestion tool for structured clarification when there are multiple valid approaches
-   - Verify technical feasibility with code research
-   - Point out potential conflicts with existing plan phases
-
-2. **Be Surgical**:
-   - Make precise edits, not wholesale rewrites
-   - Preserve good content that doesn't need changing
-   - Only research what's necessary for the specific changes
-   - Don't over-engineer the updates
-
-3. **Be Thorough**:
-   - Read the entire existing plan before making changes
-   - Research code patterns if changes require new technical understanding
-   - Ensure updated sections maintain quality standards
-   - Verify success criteria are still measurable
-
-4. **Be Interactive**:
-   - Confirm understanding before making changes
-   - Show what you plan to change before doing it
-   - Allow course corrections
-   - Don't disappear into research without communicating
-
-5. **Track Progress**:
-   - Update todos as you complete research
-   - Mark tasks complete when done
-
-6. **No Open Questions**:
-   - If the requested change raises questions, ASK
-   - Research or get clarification immediately
-   - Do NOT update the plan with unresolved questions
-   - Every change must be complete and actionable
-
-## Test Contract Retrofit (pre-TDD plans)
-
-When the feedback asks to add Test Contracts to a plan that predates them (the routing `/rpiv:implement` prints when its contract gate refuses a plan), revise is the authoring surface — the plan's design is already fixed, so the contract derives from what each phase's code fence and criteria already commit to:
-
-1. For each behavior-changing phase, author a `### Test Contract:` section (placed before `### Success Criteria:`):
-
-   ```markdown
-   ### Test Contract:
-   - **Behavior**: {the behavior this phase must prove, one sentence}
-     - Test: `{test name}` -> `path/to/test-file.ext`
-     - Oracle: {exact input -> expected-output values — strongest checkable; concrete values, not shapes. Justify inline any weakening}
-     - Expected red: {why this test fails before this phase's code lands}
-   - **TDD-exempt**: `{item}` — {reason}
-   ```
-
-2. Derive Behaviors from the phase's code fence + Overview; pin Oracle values from the code's actual input/output shapes (research via agents if the domain values aren't obvious — do not guess oracles).
-3. Non-behavioral phases get a single whole-phase `TDD-exempt` line with the reason.
-4. For phases already implemented AND verified (checked-off criteria), mark the contract `- **TDD-exempt**: whole phase — implemented pre-TDD; behavior covered by existing checked criteria` rather than fabricating retroactive red evidence — the red->green loop only applies to phases not yet executed.
-5. Same rigor as design-time authoring: an oracle that says "returns the right value" is a defect; it must say WHICH value.
-
-## Success Criteria Guidelines
-
-When updating success criteria, always maintain the two-category structure:
-
-1. **Automated Verification** (can be run by execution agents):
-   - Commands that can be run: `make test`, `npm run lint`, etc.
-   - Specific files that should exist
-   - Code compilation/type checking
-
-2. **Manual Verification** (requires human testing):
-   - UI/UX functionality
-   - Performance under real conditions
-   - Edge cases that are hard to automate
-   - User acceptance criteria
-
-## Subagent Invocation Best Practices
-
-When spawning research agents:
-
-1. **Only spawn if truly needed** - don't research for simple changes
-2. **Parallel dispatch** — every `Agent(...)` call in the same assistant message (multiple tool_use blocks in one response), never one per turn. Call shape: `Agent({ subagent_type: "<agent-name>", description: "<3-5 word task label>", prompt: "<task>" })`.
-3. **Each agent should be focused** on a specific area
-4. **Provide detailed instructions** including:
-   - Exactly what to search for
-   - Which directories to focus on
-   - What information to extract
-   - Expected output format
-5. **Request specific file:line references** in responses
-6. **Wait for all agents to complete** before synthesizing
-7. **Verify agent results** - if something seems off, spawn follow-up agents
-
-## Example Interaction Flows
-
-**Scenario 1: User provides everything upfront**
-```
-User: /rpiv:revise .rpiv/artifacts/plans/2025-10-16_09-00-00_feature.md - add phase for error handling
-Assistant: {Reads plan, researches error handling patterns, updates plan}
-```
-
-**Scenario 2: User provides just plan file**
-```
-User: /rpiv:revise .rpiv/artifacts/plans/2025-10-16_09-00-00_feature.md
-Assistant: I've found the plan. What changes would you like to make?
-User: Split Phase 2 into two phases - one for backend, one for frontend
-Assistant: {Proceeds with update}
-```
-
-**Scenario 3: User provides no arguments**
-```
-User: /rpiv:revise
-Assistant: Which plan would you like to update? Please provide the path...
-User: .rpiv/artifacts/plans/2025-10-16_09-00-00_feature.md
-Assistant: I've found the plan. What changes would you like to make?
-User: Add more specific success criteria
-Assistant: {Proceeds with update}
-```
-
-**Scenario 4: User passes a review artifact instead of a plan**
-```
-User: /rpiv:revise .rpiv/artifacts/reviews/2025-10-16_10-00-00_feature.md
-Assistant: `revise` updates implementation plans, not review artifacts. Please provide the target plan path plus the changes to make.
-User: /rpiv:revise .rpiv/artifacts/plans/2025-10-16_09-00-00_feature.md "Address the review findings by splitting Phase 2 and adding validation coverage"
-Assistant: {Proceeds with update}
-```
-
-**Scenario 5: Contract retrofit (routed from implement's contract gate)**
-```
-User: /rpiv:revise .rpiv/artifacts/plans/2025-10-16_09-00-00_feature.md "Retrofit Test Contracts onto each behavior-changing phase"
-Assistant: {Reads plan, derives Behavior/Oracle/Expected-red per phase from code fences + criteria per the Test Contract Retrofit section, presents approach, edits}
-```
+Report the artifact path, changed intent IDs, active slice, deferred work, invalidated proof, and approval state. Resume only the authorized active slice through the shared loop after contract approval; then require observed expected red, minimal green, separate independent review/refactor, and human acceptance. The next slice, integration consent, and final combined validation remain separate checkpoints.

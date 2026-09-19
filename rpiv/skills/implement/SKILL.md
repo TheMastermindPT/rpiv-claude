@@ -1,218 +1,67 @@
 ---
 name: implement
-description: Execute an approved implementation plan from .rpiv/artifacts/plans/ phase by phase, applying changes with TDD where behavior changes are involved, and verifying each phase against automated tests, success criteria, and runtime proof requirements before moving on. Use when the user invokes /implement, asks to "implement this plan", or wants an existing phased plan executed. Pair with revise to update plans mid-flight and validate to confirm completion.
-argument-hint: "[plan-path] [Phase N]"
-allowed-tools: Read, Edit, Write, Bash(*), Glob, Grep, mcp__codescene__code_health_review
+description: Execute one approved slice, prove its behavior, and pause for independent review and human acceptance before continuing.
+argument-hint: "[brief-design-slice-or-plan-path] [optional phase or slice]"
+allowed-tools: Read, Edit, Write, Bash(*), Glob, Grep, Agent, ask_user_question, mcp__codescene__code_health_review
 disable-model-invocation: true
 ---
 
 # Implement
 
-You are tasked with implementing an approved technical plan from `.rpiv/artifacts/plans/`. These plans contain phases with specific changes and success criteria.
+## Read First
 
-## Input
+READ `${CLAUDE_PLUGIN_ROOT}/skills/_shared/candidate-workflow.md` before execution or resume. It owns the agreed brief and test contract, isolated workspace setup and dirty-state preservation, candidate and contract identity, reviewer dispatch, and acceptance/integration gates. Follow that loop directly; a missing or broken shared workflow blocks execution.
 
-$ARGUMENTS
+This skill is human-invoked. Other skills that supervise a candidate use the shared loop directly rather than invoking this skill.
 
-The input above is `<plan-path> [phase]`:
-- First token is the plan path under `.rpiv/artifacts/plans/`.
-- Anything after it (e.g. "Phase 2") names a single phase to scope to.
+## Input and Scope
 
-Rules:
-- If a phase is named, implement ONLY that phase. Stop and print the closing block as soon as its success criteria pass. Do not read, edit, or check off other phases' sections.
-- If no phase is named, implement every phase in the plan sequentially.
-- If the input is empty or the plan path is missing/literal, ask the user for the plan path before proceeding.
+`$ARGUMENTS` accepts an approved short brief, design, slice, or plan, with an optional phase or slice selector. A full plan and a prior chained design are not prerequisites. Ask for the intended input when it is absent or ambiguous; agree and record its short behavioral contract through the shared workflow before source edits.
 
-## Getting Started
+A named phase limits the work; it does not waive the one-slice loop if it contains several slices. With no selector, agree the next pending real slice. Later detail stays under `Deferred Work` until its turn. Never interpret an omitted selector as authorization to execute the whole backlog.
 
-With a plan path in hand:
-- Read the plan completely and check for any existing checkmarks (- [x])
-- Extract each phase's `### Test Contract:` (Behavior/Oracle/Expected-red entries + TDD-exempt markers) and `### Success Criteria:`
-- **Contract gate**: if any in-scope behavior-changing phase has no `### Test Contract:` (or an empty one), STOP before editing any file and print:
+Read the input, its referenced normative sections, relevant project guidance, and the current source. Historical implementation fences in shipped plans are historical proposals, not code truth. Resolve disagreements against approved intent and observed behavior; route changed intent or contracts through revise, not through silent implementation changes.
 
-  ```
-  This plan has no Test Contract for Phase {N} ({name}) — pre-TDD plan.
-  TDD is the standard workflow: implement does not execute behavior-changing
-  phases without a contract.
+## 1. Verify and Prepare
 
-  Retrofit contracts first:
-  /rpiv:revise {plan-path} "Retrofit Test Contracts onto each behavior-changing phase"
+On start and resume, verify managed RPIV artifacts' recorded `content_hash` with `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <absolute-artifact-path> --root <repository-path>` without `--stamp`. Verify ordinary guidance and pinned approved normative sections separately using the shared contract-identity rules, without requiring artifact frontmatter on every referenced document; append-only evidence is not part of those sections. A missing required pin or mismatch needs reconciliation and renewed approval, not a silent re-stamp.
 
-  Then re-run /rpiv:implement.
-  ```
+Reconcile the actual candidate, accepted predecessor, reviews, and evidence before selecting work. Existing checkmarks are claims to verify, not proof. Preserve the artifact status vocabulary `in-progress`, `in-review`, `ready`; document readiness is separate from slice acceptance and scope completion.
 
-  A phase whose contract is a single whole-phase `TDD-exempt` marker passes the gate — that's an explicit exemption, not a missing contract.
-- Read the original ticket and all files mentioned in the plan
-- **Read files fully** - never use limit/offset parameters, you need complete context
-- Think deeply about how the pieces fit together
-- Create a todo list to track your progress
-- Start implementing if you understand what needs to be done
+Use the shared workspace setup for a dedicated branch and worktree for the active slice, preserving unrelated dirty work. Record the original integration target separately from the accepted predecessor base. If setup or identity cannot be verified, stop before changing implementation files.
 
-## Implementation Philosophy
+Completion criterion: one approved contract, one identified active slice, and a verified isolated workspace. Missing behavioral proof requirements are a contract gap, not an implied TDD exemption.
 
-Plans are carefully designed, but reality can be messy. Your job is to:
-- Follow the plan's intent while adapting to what you find
-- Implement each in-scope phase fully before starting the next
-- Verify your work makes sense in the broader codebase context
-- Update checkboxes in the plan as you complete sections
+## 2. Prove Each Behavior
 
-When things don't match the plan exactly, think about why and communicate clearly. The plan is your guide, but your judgment matters too.
+Follow the shared test contract one behavior at a time. An observed failing test must match its **Expected red** reason before the behavior's implementation is edited. Use the agreed public seam and oracle; compile/import errors and unrelated failures do not qualify. If the expected failure cannot be demonstrated, stop and resolve the contract mismatch with the human.
 
-If you encounter a mismatch:
-- STOP and think deeply about why the plan can't be followed
-- Present the issue clearly:
-  ```
-  Issue in Phase {N}:
-  Expected: {what the plan says}
-  Found: {actual situation}
-  Why this matters: {explanation}
+Write the minimal implementation, run the focused test, and record green. Complete this red -> green pair before starting the next behavior. A documented non-behavioral exemption must satisfy the shared contract and actual project rules; existing implementation is not itself an exemption.
 
-  ```
+Keep detailed evidence in a separate append-only record linked from `## TDD Evidence (implement)` in the owning artifact. Identify the slice, contract identity, behavior, test name/path, commands, observed failure and success, and evidence paths. Existing inline evidence stays historical; never rewrite or duplicate it. Record exemptions and their approved reasons. Preserve the chronological link from red through implementation to green; never fabricate historical red.
 
-  Use the `ask_user_question` tool to resolve the mismatch. Question: "{Brief summary of the mismatch}". Header: "Mismatch". Options: "Follow the plan" (Adapt the plan's approach to the current code state); "Skip this change" (Move on without this change — it may not be needed); "Update the plan" (The plan needs to be revised before continuing).
+Completion criterion: every in-scope behavior has its own observed expected red followed by green, or a valid recorded exemption. Green is the entry to review, not acceptance.
 
-## TDD Execution (per behavior-changing item)
+## 3. Separate Independent Review/Refactor Gate
 
-Work each phase's `### Test Contract:` Behavior entries red -> green, one at a time, BEFORE writing the implementation code they prove:
+After minimal green, enter the separate independent review/refactor gate in the shared workflow. Build its exact review input with `mode=candidate`; use its candidate revision and contract identity rules, not a branch label or an ad hoc tracked diff. Dispatch the independent reviewers through `Agent` using the shared dispatch contract. Reviewers are read-only; your own inspection does not substitute for their review.
 
-1. **Red** — author the test by transcribing the contract: the contract's Oracle values become the test's assertions verbatim (exact inputs, exact expected outputs — do not weaken to shape/presence checks), in the contract's named test file. Run it. It must fail **for the contract's Expected red reason**. A compile/import error or an unrelated failure is not a valid red — fix the test until the failure matches, and if the contract's expected-red reason turns out to be impossible, that's a plan mismatch (use the mismatch flow above; contract changes go through `/rpiv:revise`).
-2. **Green** — write the smallest implementation that passes the test. Run it again; confirm pass.
-3. **Refactor** — clean up while keeping the test green.
+Apply project-defined gates and the shared **Available Quality Checks** for test-quality lint, CodeScene, and mutation. Discover actual commands, scope, thresholds, and tool guidance; preserve availability-based checks unless an explicit permitted exception is recorded. Record absent tools as `unavailable` and failed invocations as `broken` with diagnostics. A required gate stays blocking in either case; never silently waive it.
 
-Items marked `TDD-exempt` in the contract skip the loop — note the exemption in evidence and proceed. Never edit implementation files for a contract Behavior before its failing test exists and has been observed red.
+Address verified findings in small changes. Re-run the affected tests and independent reviews after any edit; any new behavior starts its own expected-red cycle. Re-freeze the revision and discard stale approval claims, while keeping their old evidence. If dispatch or a required review fails, stop rather than self-approve.
 
-**Test-theater lint** (after a phase's tests are written or changed): if the project exposes a test-lint command (e.g. an npm script like `lint:test-theater`) or an ast-grep rule pack (an `sgconfig.yml` under `tools/` or the repo root), run it on the changed test files. Rule-pack **warnings** on newly written tests: fix before marking the phase complete. **Hints**: fix or record a one-line justification in evidence. If no pack/tool exists, record `test-lint: unavailable` and move on — never fail on absence.
+Completion criterion: the frozen current revision has passing required checks and fresh independent reviews with no unresolved blockers.
 
-**Code Health safeguard (tool-gated, advisory — runs EVERY phase after implementation files are written).** This runs per-phase, immediately after the phase's source files are written or changed and before mutation testing. The tools are `codescene_code_health_score` (numeric baseline) and `codescene_code_health_review` (detailed smell breakdown). Both require CodeScene MCP to be connected — probe once with `codescene_verify_installation` at phase start; if absent, record `code-health: unavailable` in every phase's evidence and skip. When present:
+## 4. Human Checkpoint
 
-  1. **Baseline each changed file.** Run `codescene_code_health_score` on each changed source file BEFORE the phase's code is written (immediately after the previous phase completes or HEAD is the baseline). Record the pre-change score.
+Present the exact candidate revision, contract identity, changed scope, red/green evidence, review findings, gate outcomes, and remaining work. Ask the human to accept this revision, request changes, or pause. Passing tests and reviewer approval do not supply human acceptance.
 
-  2. **After writing, review each file.** Run `codescene_code_health_review` on each file the phase modified. If ALL files score ≥ 9.0 with no new smells vs baseline, record `clean` and proceed to mutation testing.
+Stop until the human accepts the exact candidate revision. Edits after that checkpoint invalidate acceptance for the changed revision and require new tests, reviews, and acceptance. Only then may an authorized next slice start from this accepted predecessor via the shared setup. A request for one slice ends here even when more work is pending.
 
-  3. **For each degraded file** (score < 9.0 OR new smell vs baseline):
+Update only evidence-backed progress for this slice. Keep pending, deferred, and blocked scope visible; the active slice being done never marks the whole scope complete. When evidence or progress changes a document body, verify its approved normative sections are unchanged before finalizing its new `content_hash` with the artifact validator's `--finalizing --stamp`; retain the prior identity in the append-only audit trail. Contract edits belong to revise and require renewed approval.
 
-     a. **Read the review.** The output names the specific smell (Complex Method, Bumpy Road, Complex Conditional, etc.) and cites the function + line. That IS the diagnosis — you don't need to guess what's wrong.
+## 5. Integration and Close
 
-     b. **Refactor in small steps targeting THAT smell.** One extraction, one guard-clause conversion, one compound-conditional decomposition at a time. Do NOT rewrite the file. The goal is to eliminate the named smell, not to restructure everything. Follow the pattern:
-        - Extract one concern into a 3-arg pure function (CodeScene penalizes many tiny functions, rewards a few well-named ones)
-        - Replace nested conditionals with early-return guard clauses
-        - Break compound conditionals (`a && b && c`) into named predicates
-        - Merge redundant checks into a single switch or lookup table
+Slice acceptance is not integration permission. Request separate integration authorization for the exact accepted candidates and original target before any merge or equivalent integration action. Follow the shared integration gate, then require final combined integrated-tree validation against all accepted contracts, not merely the last slice's green checks.
 
-     c. **Re-verify after EACH step.** Run the phase's tests (they must still pass — refactoring preserves behavior). Run `codescene_code_health_score` to confirm the score moved up. Run `codescene_code_health_review` to confirm the named smell shrank or disappeared. If the score dropped further, revert the last step and try a different extraction — you introduced a new problem.
-
-     d. **Stop when the score is ≥ 9.0 AND the named smell is gone.** Partial improvement is acceptable if you reached the score threshold. Record the final score, the smell eliminated, and the steps taken (e.g. "extracted `parseAgentResults` → CC 12→5, score 8.8→9.3").
-
-     e. **Record in evidence.** Under the `### Phase {N}` entry, the `Code Health:` line traces baseline → steps → final score. This is the audit trail `/rpiv:validate` can cross-check against the plan's changed files.
-
-**Mutation testing** (after all in-phase tests are written or changed and test-lint is clean): if the project exposes a plan-scoped mutation command (e.g. an npm script like `mutate:plan`), run it on the plan's changed source — `npm run mutate:plan -- <plan-path>`. Triage each survivor as either **killable** (a real test-strength gap — the code is fresh and you understood it moments ago) or **justified** (an equivalent mutant, e.g. the file was flagged as source-text/Hazard-4 optimistic by the runner). Skip justified survivors — the mutation runner is not grading your tests. For killable survivors, it is telling you what you forgot.
-
-For each survivor, go to the mutated line. The mutator name IS the diagnosis:
-  - ConditionalExpression → you only tested one branch. Which input
-    reaches the other side?
-  - EqualityOperator → you're off by one at a boundary. What's the
-    edge value?
-  - OptionalChaining → you never tested the null case. What input
-    makes this property undefined?
-  - BlockStatement → the removed block had a side effect you never
-    asserted. What observable state did it write?
-
-Strengthen the assertion, re-run, confirm killed. **The re-run uses the plan-scoped command's default mode** — if the project's `mutate:plan` script defaults to full-scope, the re-run is full-scope (which is correct: you changed the assertions, not the source, so the entire suite regates). If the project script supports incremental mode, it will only re-test against surviving mutants — faster but with no correctness difference. Record the kill in TDD Evidence. Then mark the phase
-complete. A test that tolerated a mutant you understood is a test that
-will tolerate a regression you didn't. If the project has no mutation
-command, record `mutation: unavailable` and move on — never fail on
-absence.
-
-**Evidence** — append a `## TDD Evidence (implement)` section at the end of the plan file (create it on first use; append per phase, never rewrite prior entries). This is the audit trail `/rpiv:validate` checks:
-
-```markdown
-## TDD Evidence (implement)
-
-### Phase {N}: {name}
-- Behavior: {behavior} — Test: `{test name}` (`path/to/test-file.ext`)
-  - Red: `{command}` -> {one-line failure output proving the Expected red reason}
-  - Green: `{command}` -> pass
-- TDD-exempt: `{item}` — {reason from the contract}
-- Test-lint: {clean | {K} warnings fixed, {J} hints justified | unavailable}
-- Mutation: {clean | {N} survivors killed, re-run clean | unavailable}
-- Code Health: {clean | `{file}`: baseline {score} → {steps} → {final score} ({eliminated smell}) | unavailable}
-```
-
-## Verification Approach
-
-After implementing a phase:
-- Run the success criteria checks (usually `make check test` covers everything)
-- Fix any issues before proceeding
-- Update your progress in both the plan and your todos
-- Check off completed items in the plan file itself using Edit
-- If the input scopes you to a single phase, stop immediately after that phase's checks pass — do not advance to other phases
-
-For non-behavioral chores (renames, config, TDD-exempt items), don't let verification interrupt your flow — batch it at natural stopping points. Behavior-changing items are the exception: their red -> green cycle IS the flow and cannot be batched (the red must be observed before the implementation exists).
-
-## If You Get Stuck
-
-When something isn't working as expected:
-- First, make sure you've read and understood all the relevant code
-- Consider if the codebase has evolved since the plan was written
-- Present the mismatch clearly and ask for guidance
-
-Use skills sparingly - mainly for targeted debugging or exploring unfamiliar territory.
-
-## Resuming Work
-
-If the plan has existing checkmarks:
-- Trust that completed work is done
-- Pick up from the first unchecked item
-- Verify previous work only if something seems off
-
-Remember: You're implementing a solution, not just checking boxes. Keep the end goal in mind and maintain forward momentum.
-
-## Present and Chain
-
-When the last in-scope phase is complete, print the **completion** closing block:
-
-```
-Implementation complete:
-`.rpiv/artifacts/plans/{filename}.md`
-
-{P} phases completed, {M} files changed, {T} tests passing.
-TDD evidence: {B} behaviors red->green, {E} exemptions (recorded in the plan's TDD Evidence section).
-Outstanding: none.
-
-Please review the diff and let me know if anything should reopen a phase.
-
----
-
-💬 Follow-up: surface code/plan mismatches inline via the `ask_user_question` flow ("Follow the plan / Skip this change / Update the plan") — that is implement's only in-skill follow-up surface. For plan-level changes run `/rpiv:revise <plan-path>`; for session pauses run `/rpiv:create-handoff`.
-
-**Next step:** `/rpiv:validate .rpiv/artifacts/plans/{filename}.md` — verify the implementation against the plan's success criteria before committing.
-
-> 🆕 Tip: start a fresh session with `/new` first — chained skills work best with a clean context window.
-```
-
-If the run was paused mid-plan rather than completed, print the **paused** variant instead:
-
-```
-Implementation paused at Phase {N}:
-`.rpiv/artifacts/plans/{filename}.md`
-
-{P} phases completed, {M} files changed, {T} tests passing.
-Outstanding: {list of unchecked items, blockers}.
-
-Please review what landed and let me know if anything needs to change before resuming.
-
----
-
-💬 Follow-up: surface code/plan mismatches inline via the `ask_user_question` flow ("Follow the plan / Skip this change / Update the plan") — that is implement's only in-skill follow-up surface. For plan-level changes run `/rpiv:revise <plan-path>` first.
-
-**Next step:** `/rpiv:create-handoff` — capture in-flight state so the next session can resume cleanly via `/rpiv:resume-handoff`.
-
-> 🆕 Tip: start a fresh session with `/new` first — chained skills work best with a clean context window.
-```
-
-## Handle Follow-ups
-
-- **Implement owns checkboxes and TDD evidence, not plan content.** Check off `#### Automated Verification:` items `- [ ]` → `- [x]` as each phase's checks pass, and append to the `## TDD Evidence (implement)` section (append-only — never rewrite prior entries). Everything else — including `### Test Contract:` changes — is revise's: run `/rpiv:revise <plan-path>`; never rewrite plan content from inside implement.
-- **For plan-level changes.** Run `/rpiv:revise <plan-path>` first — it appends a timestamped Follow-up section to the plan and preserves history. Then resume implement at the affected phase.
-- **For session pauses.** Run `/rpiv:create-handoff` to capture in-flight state, then `/new` and `/rpiv:resume-handoff` in the next session.
-- **Mismatch handling stays inline.** When code reality diverges from the plan, use the inline `ask_user_question` flow ("Follow the plan / Skip this change / Update the plan") — that is implement's only follow-up surface; everything else escalates to revise or create-handoff.
+Report the artifact path, active slice and exact revision, evidence/review results, human acceptance, integration authorization and validation state, and remaining scope. If paused or blocked, name the missing evidence or decision. Offer revise for intent changes and a handoff for session pauses; neither passing checks nor a closing message authorizes commits, more slices, or integration.

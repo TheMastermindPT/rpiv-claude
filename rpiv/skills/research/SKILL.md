@@ -346,8 +346,10 @@ Please review and let me know if you have follow-up questions.
 💬 Follow-up: describe the change in chat to append a timestamped Follow-up section to this artifact. Re-run `/rpiv:research` for a fresh artifact.
 
 **Next step (choose one):**
-- `/rpiv:design .rpiv/artifacts/research/{filename}.md` — iterative design with vertical-slice decomposition (produces design artifact for plan)
-- `/rpiv:blueprint .rpiv/artifacts/research/{filename}.md` — lightweight fast path for smaller tasks; combined design + phased plan in one pass (produces implement-ready plan directly)
+- `/rpiv:design .rpiv/artifacts/research/{filename}.md` — optional architectural refinement into a lean intent brief; a separate plan is not required before an approved slice can be built.
+- `/rpiv:blueprint .rpiv/artifacts/research/{filename}.md` — shape the next-slice brief, then develop real candidates only with explicit bounded build and workspace approval. Planning-only requests stay document-only.
+
+Use `/rpiv:plan` only when existing contracts need a separate dependency/scheduling view.
 
 > 🆕 Tip: start a fresh session with `/new` first — chained skills work best with a clean context window.
 ```

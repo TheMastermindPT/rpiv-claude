@@ -1,91 +1,71 @@
 ---
-template_version: 4
-date: {Current date and time with timezone in ISO format}
-author: {`author:` from Metadata block}
-commit: {Current commit hash}
-branch: {Current branch name}
+template_version: 5
+date: {Current ISO timestamp with timezone}
+author: {Author from Metadata}
+commit: {Observed repository commit, not a substitute for candidate_revision}
+branch: {Observed branch, not a substitute for candidate_revision}
 repository: {Repository name}
-topic: "Validation of {plan topic}"
+topic: "Validation of {approved artifact topic}"
 status: ready
 verdict: {pass | fail}
-parent: "{plan path}"
-tags: [validation, {inherit relevant tags from the plan's frontmatter}]
-last_updated: {Same ISO timestamp as date: above}
-last_updated_by: {`author:` from Metadata block}
+parent: "{approved artifact path}"
+tags: [validation, {relevant inherited tags}]
+last_updated: {Same ISO timestamp as date}
+last_updated_by: {Author from Metadata}
 ---
 
-## Validation Report: {Plan topic}
+## Validation Report: {Topic}
+
+### Scope and Identity
+
+- Audit scope: {candidate slice | final combined integrated tree; exact included intent/slice IDs}
+- Review input: `mode=candidate`; `artifact_path`: {path}; `slice_id`: {ID}; `repository_path`: {absolute candidate workspace}; `base_commit`: {exact accepted predecessor base}; `candidate_revision`: {shared immutable revision identity}; `evidence_paths`: {paths}
+- Candidate representation: {explicitly authorized commit plus verified clean state, or complete immutable patch and included file digest manifest as defined by the shared workflow; verification evidence or blocker}
+- Approved contract identity: {pin for the actual approved normative sections, referenced document hashes, and approval record; append-only evidence excluded}
+- Document integrity: {content_hash checks and normative section hash comparisons; any missing pin or mismatch}
+- Original integration target: {target and recorded base, separate from the accepted predecessor base_commit}
+- Before/after candidate identity: {matching observations or drift diagnostic}
 
 ### Implementation Status
 
-- ✓ Phase 1: {name} — {Fully implemented | Partially implemented (see Findings) | Not implemented}
-- ✓ Phase 2: {name} — {…}
-- ⚠️ Phase 3: {name} — {Partial — see Findings}
+{One evidence-backed result per included intent/slice ID: verified, partial, or unproven, with evidence paths. If no verified candidate exists, state blocked and verdict: fail even when documents are ready.}
 
 ### TDD Evidence Audit
 
-{One line per contract Behavior, checked against the plan's `## TDD Evidence (implement)` section. For pre-TDD plans emit the single line: "Pre-TDD plan (no Test Contracts) — evidence audit not applicable."}
+{One result per behavior: test name/path, agreed seam/oracle, expected-red reason, observed red before implementation, subsequent green, and linked revision/contract evidence. Record explicit valid exemptions with reasons. Missing historical red is a proof gap, never an automatic pre-TDD exemption.}
 
-- ✓ Phase {N} — {behavior}: red (`{expected-red reason observed}`) -> green; test `{name}` asserts the contract's Oracle values
-- ✗ Phase {N} — {behavior}: {missing red | red for the wrong reason | test asserts weaker oracle than contract} — **forces verdict: fail**
-- ✓ Phase {N} — TDD-exempt: `{item}` — {reason recorded}
+### Independent Review/Refactor Audit
+
+{Reviewer identities and report paths; matching contract, candidate_revision, and base_commit; review after minimal green; findings and disposition; fresh tests and reviews after every edit. Missing or stale review is a blocker, not a clean review.}
 
 ### Automated Verification Results
 
-- ✓ {1-line label}: `{command from plan}` — {brief outcome, e.g., "368 files, no errors"}
-- ✓ {1-line label}: `{command from plan}` — {brief outcome}
-- ✗ {1-line label}: `{command from plan}` — {failure summary}
-- ✓ No regressions detected
+{One result per actual project command: scope, command, outcome, evidence path. Distinguish passed, failed, unavailable, and broken; identify required versus optional gates and missing runtime proof.}
 
 ### Test Quality
 
-- Test-theater lint (advisory — never affects the verdict): {clean | {K} warnings / {J} hints on changed test files — listed below | unavailable}
-  - {rule-id}: `{file}:{line}` — {one-line finding}
-- Mutation gate: {not applicable ({no mutation command | wholly TDD-exempt plan}) | {score}% on the plan's changed source (`{command}`)}
-  - {Per surviving mutant on changed source: `{file}:{line}` {mutator} — killable (test-strength gap → action required, listed under Potential Issues) | justified: equivalent mutant / Hazard-4-optimistic file}
-  - {When mandatory and clean:} No survivors on changed source — gate passed.
-- Code Health safeguard (advisory — mirrors the mutation gate): {not applicable (CodeScene MCP absent) | passed — no regression on the plan's changed source | regression on changed source, listed below}
-  - {Per degraded file on changed source: `{file}` {before} -> {after} ({smell}) — {accepted by developer, advisory | action required, listed under Potential Issues}}
+{Project gate requirements and observed outcomes for test-quality lint, mutation, and CodeScene. Include survivor/regression evidence and justified dispositions. No hardcoded tool mandate or score threshold; unavailable optional tools remain unavailable, broken invocations retain diagnostics, and any unmet required gate blocks. Validation makes no source or test fixes.}
 
-### Code Review Findings
+### Findings
 
-#### Matches Plan:
+{Verified matches, deviations, and action-required gaps with source/evidence references. If none, state none found within the declared scope, with any testing limitations.}
 
-- {file:line — what matches plan specification}
-- {…}
+### Human Acceptance
 
-#### Deviations from Plan:
+{Exact accepted contract and candidate revision, human decision evidence, or awaiting acceptance. Technical pass is not acceptance or permission to advance.}
 
-- {file:line — what diverged and why (improvement vs gap)}
-- {or:} None. Implementation is a faithful realization of the plan.
+### Integration Authorization and Validation
 
-#### Pattern Conformance:
+{Separate human integration consent for exact candidates and target, or not authorized. For final combined scope, record integrated-tree identity, included accepted candidates, all-contract and combined-gate results. For candidate-only scope, state integrated-tree validation not performed; no claim of whole-scope completion.}
 
-_Optional subsection — include when codebase-pattern-finder surfaced observations worth recording. Omit the whole `#### Pattern Conformance:` block when there is nothing to say._
+### Manual Verification
 
-- ✓ {Imports / test structure / naming / mock patterns / etc.} follow established codebase conventions
-- Minor observation: {non-blocking variation worth flagging — explicitly tag as "acceptable variation, not a deviation"}
+{Required manual/runtime criteria, verified evidence and outstanding steps; or not applicable with a reason.}
 
-#### Potential Issues:
+### Remaining Scope
 
-_Optional subsection — include when risks not covered by the plan surface (missing indexes, rollback gaps, perf concerns). Omit the whole `#### Potential Issues:` block when there are none._
+{Pending, deferred, and blocked intent/slice IDs with next refinement triggers. Active-slice completion does not complete the whole scope. If none, explain the evidence supporting that conclusion.}
 
-- {file:line — risk not covered by the plan}
+### Verdict and Next Decision
 
-### Manual Testing Required:
-
-{Bulleted checklist when manual criteria exist:}
-
-1. {area}:
-   - [ ] {verifiable step}
-   - [ ] {verifiable step}
-
-{Or, when the plan has no manual criteria:}
-
-None — {one-line reason, e.g., "the plan explicitly requires no functional changes, only documentation and tests."}
-
-### Recommendations:
-
-- {Actionable bullet — e.g., "Address linting warnings before merge"}
-- {…}
-- {Or, when `verdict: pass`:} Ready to commit — implementation is complete and validated.
+{pass | fail for the declared scope, with reasons and workflow blockers. A ready report is not a verified or accepted candidate. Name the next human decision or route fixes to implement/revise; no automatic commit or integration.}

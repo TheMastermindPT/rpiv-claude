@@ -1,72 +1,81 @@
-# Independent Artifact Review — reviewer dispatch, persist, tally, failure
+# Independent Artifact Review
 
-Shared post-finalization review protocol for `plan` and `blueprint`. Both dispatch the same reviewer pair against the finalized artifact at HEAD and persist an identical `## Plan Review` table, then hand the findings to a developer triage step. The two skills differ only in which numbered step does the Write, the review, and the triage — so the calling skill supplies three references when it runs this protocol:
+Before dispatch or triage, read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/candidate-workflow.md`. It owns the common packet, frozen identities, referenced contracts, evidence validity, and readiness/acceptance rules. This file owns only dispatch of the independent code/coverage pair, their merged table, and user triage. Preserve the public agent names and role boundaries.
 
-- **write-step** — where the skill wrote the artifact (plan: Step 3; blueprint: Step 5). Reuse that exact `Write` `file_path` verbatim — the runtime already resolved it for this platform; do not rebuild from `pwd`.
-- **review-step** — this review step (plan: Step 4; blueprint: Step 8). Names the `## Plan Review (<review-step>)` heading and the failure notes.
-- **triage-step** — where findings are triaged (plan: Step 5; blueprint: Step 9). The `resolution` column is filled there.
+The caller supplies **write-step** (the existing artifact write), **review-step** (the review heading), and **triage-step** (where the user decides findings). Reuse the write-step's resolved artifact path; do not rebuild it from the current directory. Substitute these references below rather than assuming fixed step numbers.
 
-Substitute those three values wherever this file writes `<write-step>` / `<review-step>` / `<triage-step>`.
+## 1. Check and dispatch one frozen packet
 
-## 1. Dispatch the reviewer pair (parallel)
+Require an explicit `mode=intent` or `mode=candidate`. Read the shared contract and validate the caller's common inputs: `mode`, `workflow_path`, `artifact_path`, `slice_id`, `repository_path`, `base_commit`, `candidate_revision`, and `evidence_paths`, plus its required identity/contract references. Resolve `workflow_path` to the readable absolute path of `${CLAUDE_PLUGIN_ROOT}/skills/_shared/candidate-workflow.md` in the installed plugin before dispatch. `slice_id` may be omitted for the pair's whole-current-brief review; it is required by slice-verifier. Verify the artifact and required inputs are readable before dispatch. Missing inputs mean incomplete review, not an inferred mode or empty candidate.
 
-`ls` the write-step `file_path` to verify it still exists; abort dispatch on miss. Send both Agent calls in a single assistant message so they run in parallel:
+- **Intent:** no actual candidate is required. Review feasible intent, scope, contracts, and test seams before build. A clean intent review cannot claim tested/runtime readiness or implementation correctness.
+- **Candidate:** the parent has already frozen the actual worktree and evidence under the shared contract. Review the actual diff/files/tests against the exact accepted predecessor/base `base_commit`, not the original integration target base. Inspect the supplied immutable `candidate_revision`; never reconstruct HEAD plus artifact code fences.
 
-```
+The parent owns snapshot derivation and evidence collection. Validate its commit-or-frozen-patch identity and accepted-predecessor evidence using the shared contract, without creating a second snapshot format here. Ensure contract references bind exact content hashes and include referenced normative behavior sections, not merely headings or local summaries. Each reviewer must inspect the same frozen target and evidence. No per-reviewer revisions, modified packets, or substitute branch tips.
+
+Serialize the validated shared packet once as `review_packet`, a string containing the common inputs and their existing bindings. Both roles receive that identical string; their registered agent instructions supply the different review lenses. When slice-verifier is also mandatory, give it the same frozen packet, including `slice_id`, independently of the pair's outputs. Reviewers receive no other reviewer's conclusions. Their read-only registrations are unchanged: direct Git reads require an existing narrow permission; otherwise the parent supplies read-only Git evidence. Do not broaden shell/write permissions or ask a reviewer to generate snapshots or run tests.
+
+Send the two Agent calls together to run in parallel:
+
+```javascript
 Agent({
   subagent_type: "rpiv:artifact-code-reviewer",
-  description: "post-finalization plan code review",
-  prompt: `Plan artifact: {<write-step> Write file_path, ls-verified}
-
-Review the finalized plan against the live codebase at HEAD. Walk every Phase code fence, audit against code-quality / codebase-fit / actionability, emit one severity-tagged row per finding.`
+  description: "independent code and test-contract review",
+  prompt: review_packet
 })
 
 Agent({
   subagent_type: "rpiv:artifact-coverage-reviewer",
-  description: "post-finalization plan coverage review",
-  prompt: `Plan artifact: {<write-step> Write file_path, ls-verified}
-
-Review the finalized plan's verification-intent coverage. Walk every ## Verification Notes and ## Precedents & Lessons entry; for each, verify it lands in either a phase's ### Success Criteria: bullet or as a visible code mirror. Emit one severity-tagged row per uncovered entry.`
+  description: "independent verification-coverage review",
+  prompt: review_packet
 })
 ```
 
-## 2. Persist the merged review table
+## 2. Validate outcomes and persist the table
 
-Each agent returns a markdown table with columns `plan-loc | codebase-loc | severity | dimension | finding | recommendation`. Merge both tables into one section, prepending a `source` column (`code` for artifact-code-reviewer rows, `coverage` for artifact-coverage-reviewer rows) and appending a `resolution` column (initially blank, filled progressively at the triage-step):
+Before merging, validate each response's mode, scope, reviewed identity/contract bindings, outcome, diagnostics, and role output against the supplied packet and shared contract. Candidate files and contract bindings must still match the frozen target after inspection. Missing outcome/identity or malformed output is broken review, not an empty findings list. A changed target invalidates the review.
+
+The parent persists responses and their identities in the existing evidence/artifact location outside the frozen candidate; reviewers return text only. Collect all responses before writing review bookkeeping. If persistence would change a bound artifact, contract, or candidate input, follow the shared invalidation rule rather than silently mutating the reviewed target.
+
+Each pair member returns `plan-loc | codebase-loc | severity | dimension | finding | recommendation`. Merge confirmed rows into `## Plan Review (<review-step>)`, adding `source` (`code` or `coverage`) and `resolution` (blank until user triage). Keep inspection outcomes/diagnostics above the table, separate from defects. Preserve actual `codebase-loc` values from both sources.
 
 ```markdown
 ## Plan Review (<review-step>)
 
-_Independent post-finalization review by artifact-code-reviewer and artifact-coverage-reviewer subagents. Findings triaged at <triage-step>._
+Mode: {mode}. Reviewed target: {shared packet identity and contract bindings}.
+Code review: {outcome and diagnostic}. Coverage review: {outcome and diagnostic}.
 
-| source   | plan-loc          | codebase-loc                | severity   | dimension             | finding   | recommendation   | resolution                  |
-| -------- | ----------------- | --------------------------- | ---------- | --------------------- | --------- | ---------------- | --------------------------- |
-| code     | {plan-loc}        | {codebase-loc}              | {severity} | {dimension}           | {finding} | {recommendation} | (filled at <triage-step>)   |
-| coverage | {plan-loc}        | <n/a>                       | {severity} | verification-coverage | {finding} | {recommendation} | (filled at <triage-step>)   |
-| ...      |                   |                             |            |                       |           |                  |                             |
+| source | plan-loc | codebase-loc | severity | dimension | finding | recommendation | resolution |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| code | {plan-loc} | {codebase-loc} | {severity} | {dimension} | {finding} | {recommendation} | |
+| coverage | {plan-loc} | {codebase-loc} | {severity} | verification-coverage | {finding} | {recommendation} | |
 ```
 
-Sort merged rows by severity first (blocker → concern → suggestion), then by source (`code` before `coverage` for stable ordering within a severity). Within a `(severity, source)` bucket, preserve each agent's own emitted order — do not re-sort across source spaces (the two agents key on different artifact loci: `Phase N §M` for code, `## Verification Notes §K` for coverage).
+Sort by severity (`blocker`, `concern`, `suggestion`), then source (`code`, `coverage`); retain each reviewer's emitted order within that bucket. One finding per row. Keep the header and confirmed rows if one source cannot complete.
 
-If both agents emit zero rows, still emit the section with a single line: `_No findings — both reviewers cleared the artifact._`. Persistence is mandatory regardless of finding count — the section is the durable audit trail.
+Only when both reviewers completed successfully on the identical target and returned zero findings, add `_No findings - both reviewers completed the stated mode on the frozen review target._`. An empty table alone is never clearance. In intent mode this marker clears only intent inspection; in candidate mode it does not replace execution evidence, other mandatory reviews, or user approval. Persist diagnostics even when there are no rows.
 
-## 3. Tally findings for the triage-step's prompt
+## 3. Classify gaps without a ready fallback
 
-Count merged rows by severity. Store the counts in main context for the triage-step's developer prompt:
+Apply the shared outcome rules, retaining confirmed findings independently of inspection gaps:
 
-```
-{B} blockers, {C} concerns, {S} suggestions
-```
+- Missing required review capability: `unavailable` with the exact missing capability.
+- Reviewer crash, malformed output, or timeout: `broken` with the observed diagnostic.
+- Identified mandatory defects: the gate is `failed` with severity-tagged findings; do not mislabel defects as tool unavailability. Retain completed inspection and nonblocking findings separately.
+- Missing evidence or an uncompleted inspection: incomplete, never clean. A mandatory incomplete, unavailable, or broken review blocks ready/acceptance even if the other reviewer is clean.
 
-Do NOT auto-apply any finding. The orchestrator never makes the apply / defer / dismiss judgment alone — that lives with the developer at the triage-step. The reviewers' role is to surface; the developer's role is to triage.
+Record each source's outcome and cause under Plan Review and note the blocked gate in Developer Context. The user may triage existing findings or resolve the blockage, but there is no fallback to ready/acceptance without the mandatory review. Do not silently turn candidate mode into intent mode to bypass missing evidence.
 
-## 4. Failure handling
+## 4. Triage and re-review
 
-Per-agent: if one reviewer errors out (subprocess crash, malformed output, timeout) and the other succeeds, persist the successful agent's rows and append a one-line failure note for the missing source. If both fail, append the failure note alone.
+Present `{B} blockers, {C} concerns, {S} suggestions` together with inspection status, including a blocked status when counts are zero. At the triage-step, record the user's decision and reason for every finding in `resolution`; never auto-apply or invent an apply/defer/dismiss decision.
 
-- Successful side: persist its rows as in section 2.
-- Failed side: append `_<review-step> {code|coverage} review failed: {one-line cause}._` under the `## Plan Review (<review-step>)` heading.
-- Record any failure in `## Developer Context`: `<review-step> {code|coverage} review unavailable; proceeded to developer review without {agent-name} findings.`
-- Proceed to the triage-step regardless.
+A defer/dismiss label is not a silent scope, TDD, or approval waiver. Scope or contract changes require explicit user approval and the shared invalidation process. Findings requiring changes remain tied to their original review; do not rewrite old evidence as though it reviewed the fix.
 
-The 8-column header is retained when only one source returns; only rows from the failing agent are absent. The triage-step iterates whatever rows are present.
+Keep inspection completion separate from finding disposition. A completed review
+can clear after explicit triage of nonblocking concerns with recorded residual risk,
+but only when no mandatory blocker, required proof gap, or incomplete inspection
+remains. Record that clearance separately from the original findings and outcome;
+accepted concerns do not become a zero-findings review.
+
+After changes, the parent obtains fresh evidence and reviews at the new identity, including new normative contract hashes where applicable. Re-run every invalidated mandatory role on the same new frozen packet. Retry a broken invocation on the same identity only if the target and evidence have not changed. There is no fixed retry cap that converts unresolved findings or incomplete inspection into acceptance. Stop blocked when required proof or approval cannot be obtained.

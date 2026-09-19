@@ -1,10 +1,17 @@
 # Dimension Sweep + Developer Checkpoint — shared ambiguity-resolution protocol
 
-Shared Step 3 + Step 4 for `design` and `blueprint`. Both walk the same six architectural dimensions to separate settled decisions from genuine ambiguities, then resolve the ambiguities through grounded one-question-at-a-time developer checkpoints. The two skills differ only in what the sweep maps onto downstream (design → the phased plan's sections; blueprint → the plan artifact's own sections) — the calling skill states that in its Step 3 header. Everything below is identical for both, and lives here so the two skills' checkpoint discipline cannot drift.
+Shared ambiguity assessment for design and blueprint. Read
+`${CLAUDE_PLUGIN_ROOT}/skills/_shared/candidate-workflow.md` first. Resolve
+decisions that constrain the next slice or an irreversible commitment; retain
+later questions under Deferred Work with the condition that unlocks them.
+The sweep is a reasoning checklist, not a requirement to write six sections or
+ask six questions on every task.
 
 ## Step 3 — Dimension Sweep
 
-Walk Step 2 findings, inherited research Q/As, and carried Open Questions through six architectural dimensions that map 1:1 to the downstream artifact's section coverage — the sweep guarantees downstream completeness. Add **migration** as a seventh dimension only if the feature changes persisted schema.
+Walk current findings, inherited decisions, and open questions through the
+applicable dimensions. Add migration when persisted schema changes; explicitly
+identify rollback or irreversible effects before authorizing that work.
 
 - **Data model** — types, schemas, entities
 - **API surface** — signatures, exports, routes
@@ -20,7 +27,10 @@ Walk Step 2 findings, inherited research Q/As, and carried Open Questions throug
 
 For each dimension, classify findings as **simple decisions** (one valid option, obvious from codebase — record in Decisions with `file:line` evidence, do not ask) or **genuine ambiguities** (multiple valid options, conflicting patterns, scope questions, novel choices — queue for Step 4). Inherited research Q/As land as simple; Open Questions filter by dimension — architectural survives, implementation-detail defers.
 
-**Pre-validate every option** before queuing it against research constraints and runtime code behavior. Eliminate or caveat options that contradict Steps 1-2 evidence. **Coverage check**: every Step 2 file read appears in at least one decision or ambiguity; every dimension is addressed (silently-resolved valid, skipped-unchecked not).
+**Pre-validate every option** against current source and accepted constraints.
+Eliminate or caveat contradictory choices. Preserve every material risk as an
+applicable decision, next-slice question, or explicitly deferred obligation;
+reading a file does not require inventing a decision about it.
 
 ## Step 4 — Developer Checkpoint
 
@@ -38,7 +48,7 @@ Use the grounded-questions-one-at-a-time pattern. Use a **❓ Question:** prefix
 - **Novel approach**: "No existing {X} in the project. Options: (A) {library/pattern} — {evidence/rationale}, (B) {library/pattern} — {evidence/rationale}. Which fits?"
 
 - **Testing strategy** (when the Verification sweep flagged high
-  test-risk behaviors). The agent writes the contract from the code.
+   test-risk behaviors). The agent derives the contract from approved intent.
   Only you know whether the contract describes the right thing. A
   contract that is structurally sound but behaviorally wrong produces
   tests that pass green and ship bugs — mutation can't catch
@@ -57,7 +67,9 @@ Use the grounded-questions-one-at-a-time pattern. Use a **❓ Question:** prefix
 **Critical rules:**
 - Ask ONE question at a time. Wait for the answer before asking the next.
 - Lead with the most architecturally significant ambiguity.
-- Every answer becomes a FIXED decision — no revisiting unless the developer explicitly asks.
+- Record each answer with its rationale. If new implementation evidence conflicts
+  with it, surface that evidence and ask to reopen the decision; never silently
+  change intended behavior to match the code.
 
 **Choosing question format:**
 
@@ -82,7 +94,9 @@ Use the grounded-questions-one-at-a-time pattern. Use a **❓ Question:** prefix
 **Scope adjustment** (e.g., "skip the UI, backend only", "include tests"):
 - Record in Developer Context. Adjust scope.
 
-**After all ambiguities are resolved**, present a brief design summary (under 15 lines):
+**After next-slice blockers are resolved**, present a brief summary (under 15
+lines), including remaining deferred questions rather than implying all future
+work is decided:
 
 ```
 Design: {feature name}
@@ -97,4 +111,7 @@ Scope: {what's in} | Not building: {what's out}
 Files: {N} new, {M} modified
 ```
 
-Use the `ask_user_question` tool to confirm before proceeding. Question: "{Summary from design brief above}. Ready to proceed to decomposition?". Header: "Design". Options: "Proceed (Recommended)" (Decompose into vertical slices, then generate code slice-by-slice); "Adjust decisions" (Revisit one or more architectural decisions above); "Change scope" (Add or remove items from the building/not-building lists).
+Use `ask_user_question` when approval is not already explicit. Ask whether to
+accept the stated intent, adjust a decision, or change scope. This checkpoint
+approves document content only. Build authorization is a separate decision with
+the workspace and permitted effects named by the candidate workflow.

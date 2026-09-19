@@ -1,17 +1,19 @@
 ---
 name: blueprint
-description: Go from a research artifact straight to an implement-ready phased plan in ONE pass — design and plan combined — decomposing into vertical slices (one slice = one phase) with developer micro-checkpoints between slices, written to .rpiv/artifacts/plans/. Use when the user wants research turned directly into an executable plan with mid-flight review — e.g. 'from research to a plan in one pass with checkpoints', 'blueprint this feature', 'don't split design and plan, get me to an implement-ready plan with review gates' — for complex features where reviewing each slice as it's generated matters. Requires a research or solutions artifact. Prefer blueprint over the design-then-plan two-step when one combined pass with per-slice checkpoints is wanted. NOT for architecture-only with no plan (design), an EXISTING design doc (plan), or understanding existing code (research).
-argument-hint: "[research artifact path]"
+description: Shape a lean brief and, only with explicit bounded build and workspace approval, develop real candidate slices with test-first evidence and independent review. Use for combined design and candidate iteration from a request, brief, research, or solutions artifact. A plan-only or legacy blueprint planning request stays document-only until the user asks to build.
+argument-hint: "[request or brief/research/solutions path; optional bounded build request]"
 shell-timeout: 10
 ---
 
 # Blueprint
 
-You are tasked with planning how code will be shaped for a feature or change AND emitting an implement-ready phased plan. Decompose the feature into vertical slices (one slice = one phase), generate code slice-by-slice with developer micro-checkpoints between slices, and write the final artifact directly into `.rpiv/artifacts/plans/` for `/rpiv:implement` to consume.
+Blueprint connects architectural intent to real, reviewable candidate slices. The brief holds contracts and decisions; source lives in an approved candidate worktree, never duplicated in document code fences.
 
-## Input
+## Required Contract
 
-`$ARGUMENTS` — path to a research artifact (`.rpiv/artifacts/research/*.md`) or a solutions artifact (`.rpiv/artifacts/solutions/*.md`).
+Read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/candidate-workflow.md` before proceeding. Apply its **Intent And Brief**, **Workspace And Authority**, **Candidate Identity**, **Slice Loop**, **Integration**, and **States And Evidence** directly; they are the common workflow, not optional advice.
+
+Use **Slice Loop** for authorized builds. `/rpiv:implement` is user-invoked; blueprint must not silently invoke it to perform this loop.
 
 ## Metadata
 
@@ -19,405 +21,90 @@ You are tasked with planning how code will be shaped for a feature or change AND
 node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/skill-context.mjs" now git recent .rpiv/artifacts/research 4 recent .rpiv/artifacts/solutions 4
 ```
 
-- `now.mjs` (line 1) — `<iso>\t<slug>` tab-separated.
+Copy values verbatim, including timestamp offsets. Use the returned slug for `.rpiv/artifacts/plans/<slug>_<topic>.md` when a new brief is needed.
 
-Copy values verbatim — do not reformat the timezone offset.
+## 1. Establish Intent And Authority
 
-## Flow
+1. Read the request and supplied brief, research, or solutions artifact. Direct user intent is valid input; do not force a research/design/plan chain.
+2. Read repository guidance, applicable decisions, and source at the relevant public seam, callers, and integration points. Verify upstream hashes and source facts before inheriting decisions.
+3. Research meaningful gaps that affect the next slice. Reuse valid findings; dispatch targeted research agents only for questions that benefit from independent investigation.
+4. Classify the request: planning only, or an explicit bounded build request. An old-style "blueprint this" or "make a plan" invocation remains document-only. Intent approval is not permission to write source.
+5. Record the requested bound and outstanding permissions. Apply **Workspace And Authority** before any candidate source writes; absent authority means continue with documents or ask, not assume.
 
-1. Input → 2. Research → 3. Dimension sweep → 4. Checkpoint → 5. Decompose → 6. Generate slices → 7. Finalize → 8. Independent review → 9. Triage & iterate → 10. Follow-ups
+Done when the desired outcome and the allowed kind of work are explicit.
 
-The final artifact is implement-ready.
+## 2. Stabilize The Next-Slice Brief
 
-## Steps
+Read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/dimension-sweep-and-checkpoint.md` and apply it to the next slice. Resolve material ambiguities now; record distant unknowns with triggers in Deferred Work instead of deciding the entire feature in advance.
 
-### Step 1: Input Handling
+Use the existing authoritative brief when suitable. Otherwise create the plan-path brief with `status: in-progress`, metadata fields `date`, `author`, `commit`, `branch`, `repository`, `topic`, `tags`, `last_updated`, and `last_updated_by`. Set `parent` only to an actual upstream artifact; omit it for direct input.
 
-When this command is invoked:
-
-1. **Read research artifact**:
-
-   **Research artifact provided** (argument contains a path to a `.md` file in `.rpiv/artifacts/`):
-   - Read the research artifact FULLY using the Read tool WITHOUT limit/offset
-   - Extract: Summary, Code References, Integration Points, Architecture Insights, Precedents & Lessons, Developer Context, Open Questions
-   - **Read the key source files from Code References** into the main context — especially hooks, shared utilities, and integration points the design will depend on. Read them FULLY. This ensures you have complete understanding before proceeding.
-   - These become starting context — no need to re-discover what exists
-   - Research Developer Context Q/As = inherited decisions (record in Decisions, never re-ask); Open Questions = starting ambiguity queue, filtered by dimension in Step 3
-
-   **No arguments provided**, branch on the `recent research:` and `recent solutions:` listings in the Metadata block:
-   - **Both empty** — no upstream artifacts available; tell the user and suggest running `/rpiv:research` (or `/rpiv:explore` for option comparison) first.
-   - **Exactly one entry total** — confirm with `ask_user_question`: "Blueprint from this artifact?" with options "Blueprint from `[<source>] <filename>` (Recommended)" and "Pick a different path".
-   - **Two or more entries total** — present up to 4 most-recent across both listings as `ask_user_question` options, each prefixed `[research]` or `[solutions]` to flag source class.
-
-2. **Read any additional files mentioned** — tickets, related designs, existing implementations. Read them FULLY before proceeding.
-
-### Step 2: Targeted Research
-
-This is NOT a discovery sweep. Focus on DEPTH (how things work, what patterns to follow) not BREADTH (where things are).
-
-1. **Spawn parallel research agents** using the Agent tool:
-
-   - Use **codebase-pattern-finder** to find existing implementations to model after — the primary template for code shape
-
-   For integration wiring (inbound refs, outbound deps, config/DI/event registration), use the `## Integration Points` section already extracted from research in Step 1. For precedent context (similar past changes, blast radius, follow-up fixes, lessons), use the `## Precedents & Lessons` section already extracted from research in Step 1. Do NOT dispatch a fresh agent to re-map either surface. **Exception**: when the input is a solutions artifact (from explore) or otherwise lacks those sections, dispatch **integration-scanner** and/or **precedent-locator** to fill exactly the missing surface (precedent-locator only when `commit` is available; otherwise note "git history unavailable" in Verification Notes) — the same fallback `design` applies.
-
-   **Novel work** (new libraries, first-time patterns, no existing codebase precedent):
-   - Add **web-search-researcher** for external documentation, API references, and community patterns
-   - Instruct it to return LINKS with findings — include those links in the final design artifact
-
-   Agent prompts should focus on (labeled by target agent):
-   - **codebase-pattern-finder**: "Find the implementation pattern I should model after for {feature type}"
-
-   NOT: "Find all files related to X" — that's discovery's job, upstream of this skill. NOT: "Analyze {component} integration" — the integration surface is in research's `## Integration Points`; if a specific anchor needs deeper inspection, defer to the on-demand `codebase-analyzer` dispatch in Step 4 (correction path) or Step 6.1 (mid-generation gap).
-
-2. **Read all key files identified by agents** into the main context — especially the pattern templates you'll model after.
-
-3. **Wait for ALL agents to complete** before proceeding.
-
-4. **Analyze and verify understanding**:
-   - Cross-reference research findings with actual code read in Step 1
-   - Identify any discrepancies or misunderstandings
-   - Note assumptions that need verification
-   - Determine true scope based on codebase reality
-
-### Step 3: Identify Ambiguities — Dimension Sweep
-
-Run the **Step 3 — Dimension Sweep** section of `${CLAUDE_PLUGIN_ROOT}/skills/_shared/dimension-sweep-and-checkpoint.md` (shared with design). Walk Step 2 findings, inherited research Q/As, and carried Open Questions through the six (+migration) architectural dimensions, classifying each as a simple decision (record with `file:line`, don't ask) or a genuine ambiguity (queue for Step 4). For blueprint, the sweep maps 1:1 to the **plan artifact's** own section coverage.
-
-### Step 4: Developer Checkpoint
-
-Run the **Step 4 — Developer Checkpoint** section of `${CLAUDE_PLUGIN_ROOT}/skills/_shared/dimension-sweep-and-checkpoint.md` (shared with design): resolve every queued ambiguity through grounded, one-question-at-a-time developer checkpoints (question patterns, testing-strategy dialogue, format choice, response classification are all in the shared file), then present the design summary and get the `ask_user_question` confirmation before decomposition (Step 5).
-
-### Step 5: Feature Decomposition
-
-After the design summary is confirmed, decompose the feature into vertical slices. Each slice is a self-contained unit: types + implementation + wiring for one concern.
-
-1. **Decompose holistically** — define ALL slices, dependencies, and ordering before generating any code:
-
-   ```
-   Feature Breakdown: {feature name}
-
-   Slice 1: {name} — {what this slice delivers}
-     Files: path/to/file.ext (NEW), path/to/file.ext (MODIFY)
-     Depends on: nothing (foundation)
-
-   Slice 2: {name} — {what this slice delivers}
-     Files: path/to/file.ext (NEW), path/to/file.ext (MODIFY)
-     Depends on: Slice 1
-
-   Slice 3: {name} — {what this slice delivers}
-     Files: path/to/file.ext (NEW)
-     Depends on: Slice 2
-   ```
-
-2. **Slice properties**:
-   - End-to-end vertical: each slice is a complete cross-section of one concern (types + impl + wiring)
-   - ~512-1024 tokens per slice (maps to individual file blocks)
-   - Sequential: each builds on the previous (never parallel)
-   - Foundation first: types/interfaces always Slice 1
-
-3. **Confirm decomposition** using the `ask_user_question` tool. Question: "{N} slices for {feature}. Slice 1: {name} (foundation). Slices 2-N: {brief}. Approve decomposition?". Header: "Slices". Options: "Approve (Recommended)" (Proceed to slice-by-slice code generation); "Adjust slices" (Reorder, merge, or split slices before generating); "Change scope" (Add or remove files from the decomposition).
-
-4. **Create skeleton artifact** — immediately after decomposition is approved:
-   - Determine metadata from the Metadata block above: filename `.rpiv/artifacts/plans/<slug>_<topic>.md` (use `<slug>` from `now.mjs` line 1); `repository:` from `repo:`; `branch:` / `commit:` from matching labels; `author:` ← matching label (fallback: `unknown`).
-   - Timestamp: use `<iso>` from `now.mjs` line 1 for `date:` and `last_updated:` (copy the offset verbatim).
-   - Write skeleton using the Write tool with `status: in-progress` in frontmatter
-   - **Include all prose sections filled** from Steps 1-5: Overview, Requirements, Current State Analysis, Desired End State, What We're NOT Doing, Decisions, Ordering Constraints, Verification Notes, Performance Considerations, Migration Notes, Pattern References, Developer Context, References
-   - **Phase sections**: one `## Phase N: {slice name}` heading per slice from the decomposition (in slice order), each with `### Overview`, `### Changes Required:` (one `#### N. path/to/file.ext` subsection per file with empty code fence + NEW/MODIFY label), `### Test Contract:` (empty — filled in Step 6.4 on approval), and `### Success Criteria:` (empty Automated + Manual subsection headers — filled in Step 6.4 on approval)
-   - **Plan History section**: list all phases with `— pending` status
-   - This is the living artifact — all subsequent writes use the Edit tool
-
-   **Artifact template sections** (all required in skeleton):
-
-   - **Frontmatter**: date, author, commit, branch, repository, topic, tags, `status: in-progress`, parent, phase_count, unresolved_phase_count (initialized to phase_count, decrements as each phase's code is approved in Step 6.4), last_updated, last_updated_by
-   - **# {Feature Name} Implementation Plan**
-   - **## Overview**: 2-3 sentences — what we're building and the chosen architectural approach. Settled decision, not a discussion.
-   - **## Requirements**: Bullet list from ticket, research, or developer input.
-   - **## Current State Analysis**: What exists now, what's missing, key constraints. Include `### Key Discoveries` with `file:line` references, patterns to follow, constraints to work within.
-   - **## Desired End State**: Usage examples showing the feature in use from a consumer's perspective — concrete code, not prose.
-   - **## What We're NOT Doing**: Developer-stated exclusions AND likely scope-creep vectors (alternative architectures not chosen, nearby code that looks related but shouldn't be touched).
-   - **## Decisions**: `###` per decision. Complex: Ambiguity → Explored (Option A/B with `file:line` + pro/con) → Decision. Simple: just state decision with evidence. ALWAYS include the standing TDD decision verbatim as the first entry:
-
-     ```markdown
-     ### TDD Standard (standing)
-     Every behavior-changing phase MUST carry a `### Test Contract:` with at least one **Behavior** whose **Oracle** pins exact input -> expected-output values (the strongest checkable oracle; any weakening justified inline) and an **Expected red** reason. Non-behavioral phases/items carry explicit `TDD-exempt` markers with reasons. Recorded as a commitment so slice-verifier's commitments audit flags violations per slice.
-     ```
-
-     **Standing decisions (opt-in promotion):** any decision here that must outlive this feature and bind future work — a testing standard, a boundary rule, a technology choice — can be promoted to the repo's decision ledger. To opt in, add three lines to its `###` entry: `scope: standing`, `key: <kebab-case>`, and `rule: <one sentence>` (the `rule` is what lands in the CLAUDE.md Standing Decisions block). Default is feature-local — no tag, stays in this artifact only. The TDD entry above is enforced structurally by slice-verifier's commitments audit and is NOT promoted — do not tag it. Full protocol: `${CLAUDE_PLUGIN_ROOT}/skills/_shared/decision-ledger.md`.
-   - **## Phase N: {slice name}** (one per slice, in slice order):
-     - `### Overview`: one sentence describing what this phase delivers + parallelism note from `Depends on:` (e.g., "Depends on Phase 1; can run in parallel with Phase 3.").
-     - `### Changes Required:` — one `#### N. path/to/file.ext` subsection per file in this slice. Each subsection has `**File**: path`, `**Changes**: {NEW | MODIFY — summary}`, and an empty code fence (filled in Step 6.4). NEW files get full implementation. MODIFY files get only modified/added code — no "Current" block, the original is on disk.
-     - `### Test Contract:` — empty in skeleton; filled in Step 6.4 on phase approval with the Behavior/Oracle/Expected-red entries generated in 6.1. This is what `implement` transcribes into failing tests at red time.
-     - `### Success Criteria:` with empty `#### Automated Verification:` and `#### Manual Verification:` subsection headers — no TBD bullets; filled in Step 6.4 on phase approval, scoped to that phase's deliverables and matching `## Verification Notes`.
-   - **## Ordering Constraints**: What must come before what. What can run in parallel. (Carries the cross-phase view; per-phase parallelism note also lives in each Phase Overview.)
-   - **## Verification Notes**: Carry forward from research — known risks, build/test warnings, precedent lessons. Format as verifiable checks (commands, grep patterns, visual inspection). Step 6.1 lifts these into per-phase Success Criteria during slice generation; Step 6.4 writes them to the artifact on approval.
-   - **## Performance Considerations**: Any performance implications or optimizations.
-   - **## Migration Notes**: If applicable — existing data, schema changes, rollback strategy, backwards compatibility. Empty if not applicable.
-   - **## Pattern References**: `path/to/similar.ext:line-range` — what pattern to follow and why.
-   - **## Developer Context**: Record questions exactly as asked during checkpoint, including `file:line` evidence. Also record micro-checkpoint interactions from Step 6.3 and Step 8.4 reviewer-failure fallback notes.
-   - **## Plan History**: Phase approval/revision log. `- Phase N: {name} — pending/approved as generated/revised: {what changed}`. implement ignores this section.
-   - **## References**: Research artifacts, tickets, similar implementations.
-
-   **Phase Changes Required format in skeleton**:
-   - **NEW files**: `#### N. path/to/file.ext` + `**File**: path` + `**Changes**: NEW — {purpose}` + empty code fence (generated in Step 6.1, written in Step 6.4)
-   - **MODIFY files**: `#### N. path/to/file.ext:line-range` + `**File**: path` + `**Changes**: MODIFY — {summary}` + empty code fence (generated in Step 6.1 with only the modified code, written in Step 6.4 — no "Current" block, the original is on disk)
-
-### Step 6: Generate Slices (Iterative)
-
-Generate code one slice at a time. Each slice sees the fixed code from all previous slices.
-
-**Before slice 1**: look at the decomposition. For slices whose code shape isn't already covered by Step 2's pattern-finder result (different layer, different file kind, different concern), dispatch additional **codebase-pattern-finder** calls in parallel — one assistant message, one tool call per slice that needs its own template. Slices whose shape matches a sibling reuse that sibling's result. Hold the returned templates in context for 6.1; do not re-dispatch per slice during generation.
-
-**For each slice in the decomposition (sequential order):**
-
-#### 6.1. Generate slice code, Test Contract, and success criteria (internal)
-
-Generate complete, copy-pasteable code AND the phase's `### Test Contract:` AND `### Success Criteria:` for every file in this slice — but **hold all three for the artifact, do NOT present full code to the developer**. The developer sees a condensed review in 6.3; the full code, contract, and criteria go into the artifact in 6.4.
-
-- **New files**: complete code — imports, types, implementation, exports. Follow the pattern template from Step 2.
-- **Modified files**: read current file FULLY, generate only the modified/added code scoped to changed sections (no full "Current" block — the original is on disk)
-- **Test Contract** (replaces authoring test-file code at blueprint time — implement writes the actual tests at red time, transcribing this contract): for every behavior this phase introduces or changes, emit one Behavior entry. Pre-written test code tends to mirror the planned implementation (theater at the source); the contract pins the oracle instead so the test author has no freedom to weaken it.
-
-  **Before writing, think like a tester** — read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/test-contract-authoring.md` and apply its boundary / invariant / error-path / branch-exhaustiveness discipline to this phase's contract. That file is the shared authoring standard for design and blueprint; it exists so the two skills' contract discipline cannot drift. The discipline is the load-bearing part — a contract that only asserts the happy path with one fixture value ships survivors at mutation time.
-
-  Format:
-
-  ```markdown
-  ### Test Contract:
-  - **Behavior**: {the behavior this phase must prove, one sentence}
-    - Test: `{test name}` -> `path/to/test-file.ext`
-    - Oracle: {exact input -> expected-output values — the strongest checkable oracle; pin concrete values, not shapes. Justify inline any weakening (genuinely nondeterministic output only)}
-    - Expected red: {why this test fails before this phase's code lands — the failure implement must observe}
-  - **TDD-exempt**: `{item}` — {reason}   <!-- only for non-behavioral items (renames, config, pure re-exports) -->
-  ```
-
-  A phase with no behavior change carries a single `- **TDD-exempt**: whole phase — {reason}` line. Test files are NOT `### Changes Required:` entries — the contract names them; implement authors them.
-- **Wiring**: show where new code hooks into existing code
-- **Success Criteria**: derive `### Success Criteria:` from this phase's file changes plus `## Verification Notes` entries that map to this phase's scope. Use the same `- [ ]` format as 6.4 (see template below). Project-baseline checks (`npm run check`, `npm test`) go on the terminal phase only. Commands in backticks.
-
-If additional context is needed, spawn a targeted **codebase-analyzer** agent.
-
-No pseudocode, no TODOs, no placeholders — the code must be copy-pasteable by implement. Success Criteria must be atomic for this phase: no bullets that depend on symbols/files a later phase introduces.
-
-**Context grounding** (after slice 2): Before generating, re-read the artifact's prior `## Phase N` sections for files this slice touches (a file may appear in earlier phases; if so, this phase extends or revisits it). The artifact is the source of truth — generate code that extends what's already emitted, not what you remember from conversation.
-
-#### 6.2. Verify slice
-
-Mandatory for every slice — no skipping, no shortcuts. Dispatch the `slice-verifier` agent with:
-- `artifact_path`: the Step-5 Write `file_path` (contains the skeleton plus locked prior phases)
-- `slice_id`: `Phase N`
-- `current_slice_code`: inline the just-generated slice verbatim — every `#### N. path/...` block with its full code fence AND the `### Test Contract:` block AND the `### Success Criteria:` block (Automated + Manual subsections). The standing TDD decision is in the artifact's `## Decisions`, so a missing/oracle-less contract on a behavior-changing phase surfaces as a Commitments VIOLATION.
-- `target_files`: files this slice modifies, plus key files prior phases introduced
-
-The agent emits a 3-row summary (`Decisions / Cross-slice / Research`). On any VIOLATION, take one of:
-
-- **Fix-and-re-dispatch**: when the finding is a real gap, fix the slice in-place per the citation and re-dispatch until OK.
-- **Surface-and-proceed**: when the finding is plausibly by-design (e.g. foundation-phase atomicity tension, deferred resolution covered by ordering constraints), include the verbatim VIOLATION row in the 6.3 slice presentation with a one-line by-design rationale. The existing 6.3 approve question is the ratification — no separate prompt.
-
-Never proceed to 6.3 with a VIOLATION absent from the presentation.
-
-#### 6.3. Developer micro-checkpoint
-
-Present a **condensed review** of the slice — NOT the full generated code. The developer reviews the design shape, not every line. For each file in the slice, show:
-
-1. **Summary** (1-2 sentences): what changed, what pattern used, what it connects to
-2. **Signatures**: type/interface definitions, exported function signatures with parameter and return types
-3. **Key code blocks**: factory calls, wiring, non-obvious logic — the interesting parts that show the design decision in action
-
-**Omit**: boilerplate, import lists, full function bodies, obvious implementations.
-**MODIFY files**: focused diff (`- old` / `+ new`) with ~3 lines context. **Test Contract**: shown IN FULL. The agent wrote this contract from the code, not from your domain knowledge. It knows what the code does; you know what it SHOULD do. Those are not the same thing. A contract that is precise but wrong passes green and ships a bug — the mutation runner won't catch it because the test was precise about the wrong behavior. Scrutinize it:
-  1. Intent. Read the plain-English description, not the Oracle. Does it
-     describe what you actually want? "Returns age in days" when it
-     should be years — catch this here, not at ship time.
-  2. Boundaries. A single-input Oracle proves the function works for
-     that input. It doesn't prove the function is correct. Look for the
-     edge the Oracle didn't test.
-  3. Invariants. What must always hold but isn't asserted?
-  4. Error paths. Count what can go wrong vs. what the contract covers.
-
-**If the developer asks to see full code**, show it inline — exception, not default.
-
-Use the `ask_user_question` tool to confirm. Question: "Slice {N/M}: {slice name} — {files affected}. {1-line summary}. Approve?". Header: "Slice {N}". Options: "Approve (Recommended)" (Lock this slice, write to artifact, proceed to slice {N+1}); "Revise this slice" (Adjust code before proceeding — describe what to change); "Rethink remaining slices" (This slice reveals a design issue — revisit decomposition); "Revisit a decision" (A Step-4 decision is wrong — return to Step 4 for that decision before continuing).
-
-**Final slice**: prepend `Cross-slice: {OK | violations: ...}.` to the question using slice-verifier's Cross-slice row from the final slice's 6.2 dispatch. Approve subtext becomes "Lock, write, run Step 7 finalize and Step 8 reviewer dispatch automatically; pause at Step 9 for triage." Replace "Rethink remaining slices" with "Reopen earlier phase" (cascade per 6.4.Rethink) — no remaining slices to rethink.
-
-**Checkpoint cadence**: One slice per checkpoint. Present each slice individually, regardless of slice count.
-
-#### 6.4. Incorporate feedback
-
-**Approve**: Lock this slice's code, Test Contract, and criteria and **Edit the artifact immediately**:
-1. For each file in this slice, Edit the skeleton artifact to replace the empty code fence under that file's `#### N. path/...` subsection inside this slice's `## Phase N: {slice name}` section with the full generated code from 6.1
-2. If a later slice contributes to a file already filled by an earlier phase: emit a NEW `#### N. path/to/file.ext` subsection inside the later phase with only that phase's incremental changes (do NOT mutate the earlier phase's code fence — implement runs phases sequentially and the codebase state evolves between them). Each phase's code fence is the change set for that phase, applied on top of the codebase state after the previous phase.
-3. After fill, verify within this phase: no duplicate function definitions inside the same code fence, imports deduplicated, exports list complete
-4. **Write `### Test Contract:`** for this phase: Edit the empty section with the Behavior/Oracle/Expected-red entries (and TDD-exempt markers) generated in 6.1. Contract: `implement` transcribes each Behavior's Oracle into a failing test at red time and records red->green evidence; `validate` audits that evidence against this contract.
-5. **Write `### Success Criteria:`** for this phase: Edit the empty Automated + Manual subsections with the `- [ ]` bullets generated in 6.1. Contract: `implement` flips `- [ ]` → `- [x]` as it completes each; `validate` extracts and runs every command under `#### Automated Verification:`.
-
-   ```markdown
-   ### Success Criteria:
-
-   #### Automated Verification:
-   - [ ] Type checking passes: `npm run check`
-   - [ ] Tests pass: `npm test`
-   - [ ] Grep pattern from Verification Note: `grep -r "newApi" packages/ | wc -l` returns >= 3
-
-   #### Manual Verification:
-   - [ ] New widget renders correctly above the editor
-   - [ ] Performance acceptable with 1000+ todo items
-   ```
-6. Update the Plan History section: `- Phase N: {name} — approved as generated`
-7. Decrement frontmatter `unresolved_phase_count` by 1
-- Proceed to next slice
-
-**Revise**: Update code, Test Contract, and/or success criteria per developer feedback. Re-run verify (6.2). Re-present the same slice (6.3). The artifact is NOT touched — only "Approve" writes to the artifact.
-
-**Rethink**: Developer spotted a design issue. If a previously approved slice is affected, flag the conflict and offer cascade revision — developer decides whether to reopen (if yes, Edit the affected `## Phase N` entry).
-Update decomposition (add/remove/reorder remaining slices) and confirm before continuing.
-
-**Revisit a decision**: Re-run Step 4 for the flagged ambiguity (one question). If decomposition is unaffected, update `## Decisions` and resume 6.1. If affected, cascade like Rethink — for each invalidated approved phase, ask reopen vs. annotate Plan History, then update remaining slices. Re-run 6.2 before re-presenting 6.3; artifact untouched until approval.
-
-### Step 7: Finalize Plan Artifact
-
-The artifact was created as a skeleton in Step 5 and filled progressively in Step 6.4 (code fences + Success Criteria). This step verifies and flips status.
-
-1. **Verify all Phase content is filled**: every `#### N. path/...` has a non-empty code block AND every `### Test Contract:` is non-empty (at least one Behavior with an Oracle, or an explicit whole-phase TDD-exempt) AND every `### Success Criteria:` has non-empty Automated + Manual subsections (generated in Step 6.1, written in Step 6.4). If any are empty, **return to Step 6** — never fill at finalize time (bypasses 6.2/6.3). Empty here = workflow off-rail.
-
-2. **Verify frontmatter counters**:
-   - `unresolved_phase_count == 0` (every phase approved in Step 6.4)
-   - `phase_count` matches the number of `## Phase N` sections
-
-   If any check fails, return to Step 6. Do NOT flip status. (7.1 and 7.2 guard the same invariant — empty content ↔ unresolved counter.)
-
-3. **Update frontmatter** via Edit: `status: in-progress` → `status: in-review` (Step 9 flips to `ready` after triage — keeps consumers off an artifact still being edited). Leave `last_updated` / `last_updated_by` as-is.
-
-4. **Verify template completeness**: Ensure all sections from the template reference in Step 5 are present and filled. Edit to fix any gaps.
-
-5. **Phase Changes Required format reminder**:
-   - **NEW files**: `#### N. path/to/file.ext` + `**File**` + `**Changes**: NEW — {purpose}` + full implementation code block
-   - **MODIFY files**: `#### N. path/to/file.ext:line-range` + `**File**` + `**Changes**: MODIFY — {summary}` + code block with only the modified/added code (no "Current" block — the original is on disk, implement reads it)
-
-### Step 8: Independent Plan Review
-
-After Step 7 finalizes the artifact, dispatch two independent review subagents in parallel — one to walk every Phase code fence, one to walk every verification intent — both against the live codebase at HEAD.
-
-#### 8.1–8.4. Dispatch, persist, tally, failure handling
-
-Run the shared reviewer-dispatch protocol in `${CLAUDE_PLUGIN_ROOT}/skills/_shared/artifact-review-dispatch.md` (identical for plan and blueprint). Substitute: **write-step = Step 5** (reuse that `Write` `file_path`), **review-step = Step 8** (heading `## Plan Review (Step 8)`), **triage-step = Step 9**. It covers the parallel `artifact-code-reviewer` + `artifact-coverage-reviewer` dispatch, the merged `## Plan Review` table format + sort rules, the severity tally, and per-agent failure handling. Do NOT auto-apply any finding — triage is the developer's call at Step 9.
-
-### Step 9: Review & Iterate
-
-1. **Triage Step 8 reviewer findings first** (skip if Step 8 returned no findings):
-
-   Present the Plan Review table from Step 8 to the developer with severity-grouped framing:
-
-   ```
-   Plan-reviewer findings: {B} blockers, {C} concerns, {S} suggestions
-
-   Triage each row before the freeform review below:
-   - applied — code change made; I'll Edit the affected `## Phase N` code fence and fill the row's resolution as `applied: {one-line summary}`
-   - deferred — noted but not fixing now; resolution cites why (e.g., "out of scope for this plan", "follow-up commit")
-   - dismissed — not a real issue; resolution explains why the reviewer was wrong (e.g., "X is intentional because Y")
-   ```
-
-   Use `ask_user_question` with options "applied / deferred / dismissed":
-   - **applied**: Edit per the recommendation target — if the recommendation names a `## Phase N` code fence, Edit that fence; if it names a `### Success Criteria:` bullet, Edit that block; if it names both, Edit both. Routing follows the recommendation text, not the `source` column. Fill `resolution`.
-   - **deferred** / **dismissed**: fill `resolution` with the reason.
-
-   **Order and batching**: blockers sequentially (resolution may invalidate later rows). Concerns and suggestions: batch up to 4 independent rows per `ask_user_question` call (Step 4's rule). Independent = different files / different intents AND neither recommendation references the other's location; otherwise sequential.
-
-2. **Promote standing decisions, lint, then flip status**: once every row has a `resolution` (or the table is empty per Step 8's no-findings / failure-fallback path):
-   - **Standing decisions**: apply the decision-ledger protocol (`${CLAUDE_PLUGIN_ROOT}/skills/_shared/decision-ledger.md`) for any `## Decisions` entry tagged `scope: standing`, then regenerate the CLAUDE.md Standing Decisions block. Skip when nothing is tagged (the standing TDD decision is enforced structurally, never promoted — do not tag it).
-   - **Finalization lint**: run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <the plan artifact path> --finalizing --stamp`. If it exits non-zero, FIX the errors and re-run — never flip on a failing lint. On success it stamps `content_hash:` (last body-affecting action).
-   - **Flip**: Edit frontmatter `status: in-review` → `status: ready`. Artifact is now implement-ready.
-
-3. **Present the plan artifact location** (after triage is complete):
-   ```
-   Implementation plan written to:
-   `.rpiv/artifacts/plans/{filename}.md`
-
-   {N} architectural decisions fixed, {P} phases generated, {M} new files, {K} existing files modified.
-   {R} revisions during generation. {T} reviewer findings triaged at Step 9 ({A} applied, {D} deferred, {DD} dismissed).
-
-   Please review and let me know:
-   - Are the architectural decisions correct?
-   - Does the code match what you envision?
-   - Any missing integration points or edge cases?
-
-   ---
-
-   💬 Follow-up: describe the change in chat to append a timestamped Follow-up section to this artifact. Re-run `/rpiv:blueprint` for a fresh artifact.
-
-   **Next step:** `/rpiv:implement .rpiv/artifacts/plans/{filename}.md Phase 1` — start execution at Phase 1 (omit `Phase 1` to run all phases sequentially).
-
-   > 🆕 Tip: start a fresh session with `/new` first — chained skills work best with a clean context window.
-   ```
-
-### Step 10: Handle Follow-ups
-
-- **Edit in-place.** Use the Edit tool to update the plan artifact directly — phase code stays one source of truth.
-- **Bump frontmatter.** Update `last_updated` + `last_updated_by`; set `last_updated_note: "Updated <brief description>"`.
-- **Sync decisions ↔ code.** If the change affects decisions, update both the Decisions section AND the affected `## Phase N` code. Code is source of truth — if they conflict, the code wins, update the prose.
-- **Return to checkpoint on new ambiguities.** If new ambiguities surface, return to Step 4 (developer checkpoint) before regenerating phases.
-- **When to re-invoke instead.** For surgical edits to a specific phase, prefer `/rpiv:revise <plan-path>` over re-running the full skill. Re-run `/rpiv:blueprint` only when the underlying research changed materially. The previous block's `Next step:` stays valid for the existing plan.
-
-## Guidelines
-
-1. **Be Architectural**: Design shapes code; plans sequence work. Every decision must be grounded in `file:line` evidence from the actual codebase.
-
-2. **Be Interactive**: Don't produce the full design in one shot. Resolve ambiguities through the checkpoint first, get buy-in on the approach, THEN decompose and generate slice-by-slice.
-
-3. **Be Complete**: Code in every `## Phase N` `### Changes Required:` block must be copy-pasteable by implement. No pseudocode, no TODOs, no "implement here" placeholders. If you can't write complete code, an ambiguity wasn't resolved.
-
-4. **Be Skeptical**: Question vague requirements. If an existing pattern doesn't fit the new feature, say so and propose alternatives. Don't force a pattern where it doesn't belong.
-
-5. **Resolve Everything**: No unresolved questions in the final artifact. If something is ambiguous, ask during the checkpoint or micro-checkpoint. The plan must be complete enough that implement can execute each phase end-to-end without re-asking.
-
-6. **Present Condensed, Persist Complete**: Micro-checkpoints show the developer summaries, signatures, and key code blocks. The artifact always contains full copy-pasteable code. If the developer asks to see full code, show it — but never default to walls of code in checkpoints.
-
-## Subagent Usage
-
-| Context | Agents Spawned |
+| Section | Content |
 |---|---|
-| Default (research artifact provided) | codebase-pattern-finder |
-| Input lacks Integration Points / Precedents sections (e.g. solutions artifact) | + integration-scanner and/or precedent-locator (fill the missing surface only) |
-| Novel work (new library/pattern) | + web-search-researcher |
-| Step 4 correction path (developer flags missed area) | targeted codebase-analyzer (max 1-2) |
-| Step 6 pre-slice-1 template fetch | codebase-pattern-finder (one per slice needing its own template) |
-| Step 6.1 mid-generation gap (specific anchor unclear) | targeted codebase-analyzer (max 1) |
-| Step 6.2 per-slice verify (mandatory) | slice-verifier |
-| Step 8 post-finalization code review (mandatory) | artifact-code-reviewer |
-| Step 8 post-finalization coverage review (mandatory) | artifact-coverage-reviewer |
+| Intent | Outcome, non-goals, constraints, and references to authoritative requirements. |
+| Architecture | Boundaries, ownership, integration, important interface shapes, and source evidence. |
+| Decisions | Settled choices, inherited commitment references, rationale, and explicitly reopened commitments. |
+| Next Slice | Stable `slice_id`, behavior IDs, bounded deliverable, affected source/test paths, and canonical contract references. |
+| Test Contracts | Only contracts this brief owns; reference existing ones by file + section + exact content hash. |
+| Deferred Work | Future outcomes, dependencies, unknowns, and triggers; no placeholder Phase headings. |
+| Developer Context | Decision rationale and stable evidence locations for intent/build/workspace approvals, reviews, acceptance, and integration. |
+| References | Verified upstream artifacts, source anchors, and documentation links. |
 
-Spawn multiple agents in parallel when they're searching for different things. Each agent runs in isolation — provide complete context in the prompt, including specific directory paths when the feature targets a known module. Don't write detailed prompts about HOW to search — just tell it what you're looking for and where.
+Read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/test-contract-authoring.md` before authoring contracts. Follow **Intent And Brief**: preserve stable behavior IDs, the public seam, exact oracle, expected red, exclusions, constraints, and observable automated/manual criteria. Keep each contract authoritative once; the brief links to existing contracts rather than copying them.
 
-## Important Notes
+Only the next executable slice needs a complete contract. Expected red is an intent prediction until a real test run proves it. Keep implementation and test bodies in source, not the brief.
 
-- **Always chained**: This skill requires a research artifact produced by the research skill.
-- **File reading**: Always read research artifacts and referenced files FULLY (no limit/offset) before spawning agents
-- **Critical ordering**: Follow the numbered steps exactly
-  - ALWAYS read input files first (Step 1) before spawning agents (Step 2)
-  - ALWAYS wait for all agents to complete before identifying ambiguities (Step 3)
-  - ALWAYS resolve all ambiguities (Step 4) before decomposing into slices (Step 5)
-  - ALWAYS complete holistic decomposition before generating any slice code (Step 6)
-  - ALWAYS create the skeleton artifact immediately after decomposition approval (Step 5)
-  - ALWAYS generate the Test Contract AND Success Criteria in Step 6.1 alongside code; NEVER leave Phase code fences, Test Contracts, or Success Criteria empty after their slice is approved — all are written via Edit in Step 6.4 from what 6.1 produced
-  - NEVER fill empty Phase content at Step 7 — empty at finalize time = return to Step 6 (preserves the 6.3 micro-checkpoint)
-  - NEVER author test-file code at blueprint time — the Test Contract (behaviors + exact oracle + expected red) is the artifact-time test spec; implement authors the tests at red time. Test files are not Changes Required entries.
-  - ALWAYS dispatch slice-verifier at Step 6.2 for every slice before presenting at 6.3; never skip, never batch across slices
-  - NEVER silently dismiss a slice-verifier VIOLATION — either fix and re-dispatch, or surface the verbatim finding to the developer at 6.3 for ratification
-  - ALWAYS dispatch artifact-code-reviewer AND artifact-coverage-reviewer in parallel at Step 8 after Step 7 finalize, BEFORE the developer review at Step 9
-  - NEVER auto-apply a Step 8 reviewer finding; triage is the developer's call at Step 9
-  - ALWAYS hold `status: in-review` from Step 7 through Step 9; flip to `ready` only after every row has a `resolution` (or the table is empty)
-  - Step 6.3 → Step 4 exists for late-discovered decision errors; revisit rather than force a wrong shape through remaining slices
-- NEVER skip the developer checkpoint — developer input on architectural decisions is the highest-value signal in the planning process
-- NEVER edit source files — all code goes into the plan document, not the codebase. This skill produces a document, not implementation. Source file editing is implement's job.
-- **Code is source of truth** — if a `## Phase N` code block conflicts with the Decisions prose, the code wins. Update the prose.
-- **Checkpoint recordings**: Record micro-checkpoint interactions in Developer Context with `file:line` references, same as Step 4 questions.
-- **Frontmatter consistency**: Always include frontmatter, use snake_case for multi-word fields, keep tags relevant
+If the user wants a scheduling projection, use active `## Phase N:` sections with `### Overview`, `### Changes Required:`, `### Test Contract:`, and `### Success Criteria:` references, not code replicas. Splitting, merging, and reordering must preserve behavior IDs and explicitly reopen changed commitments.
 
-## Common Planning Patterns
+Set `phase_count` to executable Phase headings and `unresolved_phase_count` to those missing complete, build-approved contracts. Recompute when approval or scope changes. These are orchestrator-maintained workflow counts, not a store-enforced execution gate. Deferred Work stays outside both counts and Phase headings; moving an active commitment there requires scope agreement. Without executable headings both counts are zero, not evidence of completed work.
 
-- **New Features**: types first → backend logic → API surface → UI last. Research existing patterns first. Author the Test Contract alongside each phase (the tests themselves are written by implement at red time).
-- **Modifications**: Read current file FULLY. Show only the modified/added code scoped to changed sections. Check integration points for side effects.
-- **Database Changes**: schema/migration → store/repository → business logic → API → client. Include rollback strategy.
-- **Refactoring**: Document current behavior first. Plan incremental backwards-compatible changes. Verify existing behavior preserved (Test Contract oracles pin the preserved behavior's exact outputs).
-- **Novel Work**: Include approach comparison in Decisions. Ground in codebase evidence OR web research. Get explicit developer sign-off BEFORE writing code.
+Done when the user confirms next-slice intent and the authoritative contract is ready for independent review.
+
+## 3. Review Intent Before Building
+
+Stabilize and pin the brief and referenced contracts through **Candidate Identity**; persist evidence separately. Set `status: in-review`.
+
+1. Dispatch `slice-verifier` with `mode=intent`, exact `artifact_path` identity, and `slice_id`.
+2. Dispatch independent `artifact-code-reviewer` and `artifact-coverage-reviewer` agents in parallel on the same stabilized intent. Read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/artifact-review-dispatch.md` for dispatch and evidence persistence.
+3. Present verified findings; fix gaps or explicitly reopen the affected commitment with the user. Re-pin and rerun affected reviews whenever reviewed intent changes.
+4. Apply **States And Evidence**. Unavailable or broken review is not an empty clean result; failed gates remain failed. A filled `resolution` cell cannot replace missing evidence or waive a blocker.
+
+For a planning-only request, finalize the reviewed document in Step 6 and stop. Report build approval still pending; do not create a worktree or write source.
+
+For an explicit build request, continue only after required intent gates pass and the bounded contract is approved for build.
+
+## 4. Approve The Candidate Workspace
+
+Apply **Workspace And Authority** with the user: dedicated branch, linked worktree path, agreed base, and bounded write/test authority. Keep existing dirty state where it is unless transfer of specified changes is explicitly approved.
+
+Derive permissions for secrets, network, and external effects from actual consent; a worktree or build approval supplies none implicitly. If workspace setup or required tooling fails, record the distinct diagnostic and pause that operation.
+
+Bind the candidate using **Candidate Identity**: `artifact_path` at the exact contract content hash including referenced documents, `slice_id`, candidate-worktree `repository_path`, exact predecessor `base_commit`, `candidate_revision`, and `evidence_paths`. Keep the original integration-target base separate from later accepted predecessors.
+
+Use a commit SHA plus clean state, or an immutable patch with the complete included-file digest manifest covering new files, modes, and deletions. Never identify a mutable working directory or moving branch name as the reviewed revision. The shared snapshot path supports durable predecessors without committing; request commit permission only if choosing the commit path, never manufacture it to satisfy identity.
+
+Done when workspace authority and the exact candidate inputs are recorded, with no implied dirty-state transfer or external permissions.
+
+## 5. Run The Shared Slice Loop
+
+Execute **Slice Loop** directly for the one authorized slice: real behavioral red, minimal green in source, then the separate independent review/refactor gate. Record command results and runtime/manual proof against the pinned contract and candidate revision.
+
+Once code exists, dispatch `slice-verifier` with `mode=candidate` and the independent reviewer pair against that exact candidate identity and complete included diff. Intent review cannot substitute for candidate review. Refactor or fixes change the revision and require the affected checks and reviews again.
+
+Present the observable outcome, evidence, findings, and exact revision for user acceptance. Checks passing is not acceptance. Accept only the reviewed revision, and invalidate acceptance if its content or contract changes.
+
+For another slice, re-ground on the accepted predecessor, elaborate its contract just in time, and repeat the approval and review gates. Pin the predecessor commit or frozen predecessor snapshot plus its underlying `base_commit` using **Candidate Identity**, not the original target base or a moving HEAD. If that predecessor cannot yet be pinned, pause chaining rather than implicitly committing or transferring changes.
+
+Stop at the authorized bound. Integration is a separate decision: apply **Integration** only with explicit merge consent, validate the current target and full combined diff, and rerun invalidated proof after target drift or conflict resolution. Never commit, push, or merge automatically.
+
+## 6. Finalize And Report
+
+1. Check canonical references, review/evidence identity, and executable/unresolved counts. Keep candidate acceptance and integration records separate from document readiness.
+2. Read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/decision-ledger.md` for opt-in promotion of decisions tagged `scope: standing`, `key`, and `rule`, within authorized scope. Shared TDD requirements and feature-local decisions are not automatic promotions.
+3. Run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <brief-path> --finalizing --stamp`; fix reported faults and rerun. Retain the stamped `content_hash`; re-pin and re-review if finalization changes reviewed intent.
+4. Flip `status: in-review` to `status: ready` only when required intent gates and finalization lint pass. `ready` does not authorize source writes, mark a candidate accepted, or imply integration.
+5. Report the brief path, current authority, exact candidate/evidence pointers when present, unresolved gates, and Deferred Work. Completing the active slices is not whole-feature completion while deferred scope remains.
+
+## Follow-Ups
+
+Verify claimed upstream staleness against hashes and source before requesting new research. Reopen only affected commitments with the user, update their authoritative owner, invalidate dependent reviews/acceptance, and repeat the relevant gates. Update `last_updated`, `last_updated_by`, and `last_updated_note`; never change an oracle merely to excuse a failing candidate.
