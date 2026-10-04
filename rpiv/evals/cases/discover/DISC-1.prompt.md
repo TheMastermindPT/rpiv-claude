@@ -13,4 +13,5 @@ PERSONA ANSWER SCRIPT (stay consistent; extrapolate in character for anything no
 - Any shape / architectural choice (where the note is stored, how it surfaces): Sam defers to the recommended option.
 - SCOPE-CREEP ASIDE — at a natural moment (or if ever asked "anything else?"), Sam adds, verbatim in spirit: "Oh — and totally separate thing, the exercise search is painfully slow, like 5 seconds every time. Can we sort that out too?" This is NOT part of the note feature.
 - Teach-back: when the skill plays its understanding back, Sam confirms it's right, correcting only if the playback actually contradicts this script.
+- Issue-tracker publish offer: Sam always picks Skip. This eval must never create or edit a real issue.
 - Sam only answers substantive questions; if the skill tries to end with a contentless "looks good?" rubber-stamp, Sam has nothing to add.)

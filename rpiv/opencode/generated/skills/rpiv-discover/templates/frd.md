@@ -58,6 +58,7 @@ last_updated_by: {`author:` from Metadata block}
 **Recommended**: {The recommendation that was offered}
 **Chosen**: {What the developer picked, or the evidence-derived answer}
 **Rationale**: {1 line — why this was chosen, or `evidence: path/to/file.ext:line` for codebase-derived}
+**Challenged**: {Only if the pick was challenged on merit: the objection, the alternative offered, and the developer's final call. Delete this line otherwise.}
 
 ### {Decision 2 — short title}
 **Question**: …
