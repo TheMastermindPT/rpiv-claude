@@ -13,10 +13,11 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const HOOK = join(ROOT, ".claude", "hooks", "approve-outward-actions.mjs");
-const TEST_TIMEOUT = 60_000;
+// Some behaviors spawn over a hundred hook processes.
+const TEST_TIMEOUT = 120_000;
 
-function runHook(stdin) {
-	const res = spawnSync(process.execPath, [HOOK], {
+function runHook(stdin, nodeArgs = []) {
+	const res = spawnSync(process.execPath, [...nodeArgs, HOOK], {
 		input: stdin,
 		encoding: "utf-8",
 		timeout: 10_000,
@@ -32,8 +33,8 @@ const mcpEvent = (toolName) =>
 	JSON.stringify({ tool_name: toolName, tool_input: {} });
 
 /** Returns a failure description, or null when the hook asked with `prefix`. */
-function askFailure(label, stdin, prefix) {
-	const { status, stdout } = runHook(stdin);
+function askFailure(label, stdin, prefix, nodeArgs = []) {
+	const { status, stdout } = runHook(stdin, nodeArgs);
 	if (status !== 0) return `${label}: exit ${status}`;
 	let parsed;
 	try {
@@ -72,19 +73,22 @@ function silentFailure(label, stdin) {
 	return null;
 }
 
+// Soft assertions: one run reports every failing case group, not only the first.
 function expectAsks(cases, prefix, toEvent = bashEvent) {
 	const failures = cases
 		.map((c) => askFailure(JSON.stringify(c), toEvent(c), prefix))
 		.filter(Boolean);
-	expect(failures).toEqual([]);
+	expect.soft(failures).toEqual([]);
 }
 
 function expectSilent(cases, toEvent = bashEvent) {
 	const failures = cases
 		.map((c) => silentFailure(JSON.stringify(c), toEvent(c)))
 		.filter(Boolean);
-	expect(failures).toEqual([]);
+	expect.soft(failures).toEqual([]);
 }
+
+const rawEvent = (s) => s;
 
 const OUTWARD = "[rpiv-hook] outward action: ";
 const BROKEN = "[rpiv-hook] broken input:";
@@ -166,6 +170,27 @@ describe("approve-outward-actions hook", () => {
 				"git branch --merged main",
 				"git worktree list",
 			]);
+			// Revision 1: a redirection target is not a branch name; one pin per
+			// query option, and a creation next to them.
+			expectSilent([
+				"git branch >out",
+				"git branch --all",
+				"git branch --remotes",
+				"git branch --verbose",
+				"git branch --no-contains HEAD",
+				"git branch --no-merged main",
+				"git branch --points-at HEAD",
+				"git branch --format='%(refname)'",
+				"git branch --sort=-committerdate",
+				"git branch --column",
+				"git branch --no-column",
+				"git branch --delete x",
+				"git branch --unset-upstream",
+				"git branch --edit-description",
+				"git branch -r",
+				"git branch -l",
+			]);
+			expectAsks(["git branch --force x main"], `${OUTWARD}branch creation`);
 		},
 		TEST_TIMEOUT,
 	);
@@ -215,6 +240,52 @@ describe("approve-outward-actions hook", () => {
 				"gh --version",
 				"gh api repos/o/r/pulls",
 				"gh api -X GET repos/o/r/pulls",
+			]);
+			// Revision 1: joined field flags, own-property lookups, case-insensitive
+			// subcommands; a write next to each read group and one pin per read.
+			expectAsks(
+				[
+					"gh api -ftitle=x repos/o/r/issues",
+					"gh api -Fn=1 repos/o/r/issues",
+					"gh constructor",
+					"gh secret set X",
+					"gh variable set X",
+					"gh release delete v1",
+					"gh run cancel 1",
+					"gh run rerun 1",
+					"gh workflow enable ci.yml",
+					"gh gist create f",
+					"gh label delete bug",
+					"gh cache delete 1",
+					"gh auth login",
+					"gh PR create -t t -b b",
+				],
+				`${OUTWARD}gh`,
+			);
+			expectSilent([
+				"gh PR view 5",
+				"gh issue status",
+				"gh repo list",
+				"gh run view 1",
+				"gh run list",
+				"gh run watch 1",
+				"gh workflow view ci.yml",
+				"gh workflow list",
+				"gh release view v1",
+				"gh release list",
+				"gh gist view abc",
+				"gh gist list",
+				"gh label list",
+				"gh cache list",
+				"gh secret list",
+				"gh variable list",
+				"gh variable get X",
+				"gh search issues bug",
+				"gh status",
+				"gh help",
+				"gh version",
+				"gh completion -s bash",
+				"gh pr",
 			]);
 		},
 		TEST_TIMEOUT,
@@ -327,6 +398,27 @@ describe("approve-outward-actions hook", () => {
 				"npm test",
 			]);
 			expectSilent(["Write-Host 'git push'"], psEvent);
+			// Revision 1 pins: mid-word `#`, options consuming the next word,
+			// substitutions inside double quotes, here-strings and block comments.
+			expectAsks(
+				[
+					"echo a#b; git push",
+					"git --git-dir .git push",
+					"git --exec-path /x push",
+					'echo "`git push`"',
+				],
+				OUTWARD,
+			);
+			expectAsks(
+				['Write-Host "$(git push)"', "<# x #> git push"],
+				OUTWARD,
+				psEvent,
+			);
+			expectSilent(
+				["Write-Host @'\ndon't push\n'@", "<# don't #> git status"],
+				psEvent,
+			);
+			expectAsks(["git --attr-source HEAD push"], `${OUTWARD}git push`);
 		},
 		TEST_TIMEOUT,
 	);
@@ -361,6 +453,9 @@ describe("approve-outward-actions hook", () => {
 			);
 			expectSilent(['"git" status']);
 			expectSilent(["Git status"], psEvent);
+			// Revision 1 pins: subcommands compare case-insensitively.
+			expectAsks(["git PUSH"], `${OUTWARD}git push`);
+			expectAsks(["git PUSH"], `${OUTWARD}git push`, psEvent);
 		},
 		TEST_TIMEOUT,
 	);
@@ -393,6 +488,22 @@ describe("approve-outward-actions hook", () => {
 			);
 			expectAsks(["& $git push"], BROKEN, psEvent);
 			expectSilent([""]);
+			// Revision 1: only Bash, PowerShell and GitHub MCP tool names count, by
+			// own property (an inherited `constructor` is not a shell).
+			expectSilent(
+				[
+					JSON.stringify({
+						tool_name: "constructor",
+						tool_input: { command: "git push" },
+					}),
+					JSON.stringify({
+						tool_name: "BashOutput",
+						tool_input: { command: "git push" },
+					}),
+					JSON.stringify({ tool_name: "Edit", tool_input: {} }),
+				],
+				rawEvent,
+			);
 		},
 		TEST_TIMEOUT,
 	);
@@ -432,6 +543,28 @@ describe("approve-outward-actions hook", () => {
 			expectAsks(["iex $cmd", "powershell -File x.ps1"], BROKEN, psEvent);
 			expectSilent(['bash -c "npm test"', 'eval "echo hi"']);
 			expectSilent(['Invoke-Expression "Get-ChildItem"'], psEvent);
+			// Revision 1: a positional pwsh argument is a script file; `-Command -`
+			// reads stdin.
+			expectAsks(
+				[
+					"pwsh script.ps1",
+					"echo 'git push' | pwsh -Command -",
+					"pwsh -e Zm9v",
+					"pwsh -ec Zm9v",
+				],
+				BROKEN,
+			);
+			expectAsks(["'git push' | pwsh -Command -"], BROKEN, psEvent);
+			expectAsks(
+				['bash -c "git push" --version', 'powershell "git push"'],
+				`${OUTWARD}git push`,
+			);
+			expectSilent(["powershell Get-Date"]);
+			expectAsks(
+				['powershell -Version 5.1 -Command "git push"'],
+				`${OUTWARD}git push`,
+				psEvent,
+			);
 		},
 		TEST_TIMEOUT,
 	);
@@ -439,6 +572,7 @@ describe("approve-outward-actions hook", () => {
 	it(
 		"fails closed on pathological input within the timeout",
 		() => {
+			// [command, ask prefix, or null for no opinion]
 			const pathological = [
 				[`echo ${"a".repeat(70_000 - 5)}`, BROKEN],
 				["$(".repeat(10_000), BROKEN],
@@ -446,20 +580,43 @@ describe("approve-outward-actions hook", () => {
 				// `eval … git push` really pushes, so either ask reason is correct.
 				[`${"eval ".repeat(12_000)}git push`, "[rpiv-hook] "],
 				[`${"eval ".repeat(12_000)}echo hi`, BROKEN],
+				// Revision 1: analysis cost stays linear in the command length.
+				[`${"A= ".repeat(21_800)}git push`, `${OUTWARD}git push`],
+				["A=1 ".repeat(16_000), null],
+				[`${"cmd ".repeat(16_000)}& git push`, `${OUTWARD}git push`],
+				[`${"git ".repeat(16_000)}push`, `${OUTWARD}git push`],
+				["gh api x ".repeat(7_000), null],
+				["echo $A push ".repeat(4_500), BROKEN],
 			];
 			const failures = pathological
 				.map(([command, prefix]) => {
+					const label = `${command.slice(0, 12)}…${command.slice(-8)} (${command.length} chars)`;
+					const event = bashEvent(command);
 					const started = Date.now();
-					const failure = askFailure(
-						`${command.slice(0, 12)}…${command.slice(-8)} (${command.length} chars)`,
-						bashEvent(command),
-						prefix,
-					);
+					const failure =
+						prefix === null
+							? silentFailure(label, event)
+							: askFailure(label, event, prefix);
 					const elapsed = Date.now() - started;
-					return failure ?? (elapsed > 2_000 ? `took ${elapsed} ms` : null);
+					return (
+						failure ?? (elapsed > 2_000 ? `${label}: took ${elapsed} ms` : null)
+					);
 				})
 				.filter(Boolean);
-			expect(failures).toEqual([]);
+			expect.soft(failures).toEqual([]);
+
+			// Internal-error path (pin): a stack too small for the analysis must
+			// still end in a fail-closed ask. If a refactor changes frame depth,
+			// retune the stack size and nesting, but keep asserting the reason.
+			const nested = `${"$(".repeat(20)}${")".repeat(20)}`;
+			expect(
+				askFailure(
+					"stack overflow",
+					bashEvent(nested),
+					`${BROKEN} internal error`,
+					["--stack-size=60"],
+				),
+			).toBeNull();
 		},
 		TEST_TIMEOUT,
 	);
@@ -566,6 +723,236 @@ describe("approve-outward-actions hook", () => {
 					}).stdout,
 			);
 			expect(approvals).toEqual(["", "", ""]);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"fails closed when words that decide a git or gh action are computed or not plain",
+		() => {
+			expectAsks(
+				[
+					"git $SUB origin main",
+					"git $(echo push)",
+					"git ${X:-push}",
+					'git "$@"',
+					"git $OPT push",
+					"git {push,} origin main",
+					"git -c alias.p=$X p",
+					"git checkout $BRANCH",
+					"sudo $GIT push",
+					"env $GIT push",
+					"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=push git p",
+					"git --config-env=alias.p=V p",
+					"alias g=git",
+					"alias g='git push'",
+					"gh $SUB create",
+					"gh pr $ACTION 5",
+					"gh api $ENDPOINT $ARGS",
+					// round 2
+					"git -c $KV p",
+					"git switch $F x",
+					"git branch $N",
+					"git stash $S x",
+					"git worktree $A ../wt",
+					"git lfs $P origin main",
+					"git subtree $P --prefix d origin main",
+					"gh api repos/o/r/issues $ARGS",
+					'gh api "$EP"',
+					"alias p='sudo git push'",
+					"alias g=/usr/bin/git",
+					"alias g=gh",
+					"export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=push; git p",
+					"git -c include.path=x.cfg p",
+					"{git,} push",
+					"/usr/bin/gi? push",
+					// round 3
+					"git --frobnicate push",
+					"echo push | xargs git",
+					"echo create | xargs gh pr",
+					"echo 'pr create -t t -b b' | xargs gh",
+					"echo push | xargs -Ix git x",
+					"echo 'git push' | xargs -I{} sh -c '{}'",
+					"find . -exec git {} \\;",
+					"parallel git ::: push",
+					"GIT_CONFIG_GLOBAL=x.cfg git p",
+					"GIT_CONFIG_SYSTEM=x.cfg git p",
+					`GIT_CONFIG_PARAMETERS="'alias.p=push'" git p`,
+					"git -c includeIf.onbranch:main.path=x.cfg p",
+					"sudo $GH pr create -t t -b b",
+					"env $GH api -X POST repos/o/r/labels",
+					"echo 'git push' | xargs -I{} bash -c {}",
+				],
+				BROKEN,
+			);
+			expectAsks(
+				[
+					"git $sub",
+					'Start-Process git -ArgumentList "push origin main"',
+					"Start-Process git -ArgumentList push,origin",
+					"Start-Process git -ArgumentList 'push','origin'",
+					"Start-Process git -ArgumentList @('push')",
+					'& ("git") push',
+					"& (Get-Command git) push",
+					"Set-Alias g git",
+					// round 2
+					"New-Alias g git",
+					"sal g git",
+					"nal g git",
+					"Set-Alias -Name g -Value git",
+					"$env:GIT_CONFIG_COUNT=1; $env:GIT_CONFIG_KEY_0='alias.p'; $env:GIT_CONFIG_VALUE_0='push'; git p",
+					'& "`u{67}it" push',
+				],
+				BROKEN,
+				psEvent,
+			);
+			expectAsks(
+				[
+					"git push origin $BRANCH",
+					"find . -name x -exec git push \\;",
+					"git -c alias.p='!git push' p",
+				],
+				`${OUTWARD}git push`,
+			);
+			expectSilent([
+				'git commit -m "$MSG"',
+				'git log --format="$FMT"',
+				"git status $DIR",
+				"git diff $BASE..HEAD",
+				"gh pr view $N",
+				"echo $HOME",
+				"cd $DIR && git status",
+				"alias ll='ls -l'",
+				// round 2
+				'git -C "$DIR" status',
+				"GIT_CONFIG_NOSYSTEM=1 git status",
+				'git stash push -m "$MSG"',
+				'git worktree remove "$WT"',
+				'git checkout -- "$FILE"',
+				'gh api "repos/$O/$R/pulls"',
+				"cp $SRC dest",
+				'git log --format="$FMT" -n 5',
+				"[[ -f x ]] && git status",
+				// round 3
+				"echo $X status",
+				"GIT_DIR=$D git status",
+				'GIT_SSH_COMMAND="$C" git fetch',
+				"echo f | xargs rg x",
+				"find . -name '*.js' -exec rg x {} \\;",
+				"cp $SRC release",
+			]);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"decodes ANSI-C quoting, redirections and expanding bodies before matching",
+		() => {
+			expectAsks(
+				[
+					"git $'push'",
+					"$'git' push",
+					'$"git" push',
+					"git push>/dev/null",
+					"git push 2>&1",
+					"git push</dev/null",
+					"git>log push",
+					"git push &>/dev/null",
+					"echo ${X:-$(git push)}",
+					'echo "${X:-$(git push)}"',
+					"cat <<EOF\n$(git push)\nEOF",
+					// round 2
+					"$'\\x67it' push",
+					"git $'\\160ush'",
+					'echo $"$(git push)"',
+					"git push > /dev/null",
+					// round 3
+					"$'\\u0067it' push",
+					"$'\\U00000067it' push",
+					"echo hi > $(git push)",
+					"echo hi > >(git push)",
+				],
+				`${OUTWARD}git push`,
+			);
+			expectAsks(
+				['Write-Output @"\n$(git push)\n"@'],
+				`${OUTWARD}git push`,
+				psEvent,
+			);
+			expectSilent([
+				"git commit -m $'don\\'t push'",
+				"git branch >out",
+				"git status 2>&1",
+				"cat <<'EOF'\n$(git push)\nEOF",
+				"echo {a,b}",
+				"git log --format='%(refname)'",
+				// round 2
+				"git branch > out",
+				"git branch 2>/dev/null",
+				"cat <<EOF\ndoesn't push\nEOF",
+				"git checkout @{-1}",
+				"gh api repos/{owner}/{repo}/pulls",
+			]);
+			expectSilent(
+				[
+					"Write-Output @'\n$(git push)\n'@",
+					"git branch 2>$null",
+					'Write-Output @"\ndon\'t push\n"@',
+				],
+				psEvent,
+			);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"asks for stdin-fed shells only and lets shell reads through",
+		() => {
+			expectAsks(
+				[
+					'bash <<< "git push"',
+					"sudo bash <<EOF\ngit push\nEOF",
+					"bash < script.sh",
+					"echo 'git push' | sudo bash",
+					'timeout 60 bash <<< "git push"',
+					"echo 'git push' | (bash)",
+					"echo 'git push' | { bash; }",
+					"echo 'git push' | sudo -u root bash",
+					"echo 'git push' | env bash",
+					"bash <(echo 'git push')",
+					"echo 'git push' | bash -",
+					"echo 'git push' | sh -s",
+					// round 3
+					"echo 'git push' | bash /dev/stdin",
+					"echo 'git push' | bash /dev/fd/0",
+					"echo 'git push' | doas bash",
+					"echo 'git push' | command bash",
+					"echo 'git push' | exec bash",
+					"echo 'git push' | nohup bash",
+					"echo 'git push' | time bash",
+					"echo 'git push' | nice -n 5 bash",
+					"echo 'git push' | stdbuf -o L bash",
+					"echo 'git push' | setsid bash",
+					"echo 'git push' | bash -help",
+					"echo f | xargs bash",
+				],
+				BROKEN,
+			);
+			expectAsks(['bash -help -c "git push"'], `${OUTWARD}git push`);
+			expectSilent([
+				"bash --version",
+				"sh --help",
+				"pwsh --version",
+				"pwsh -version",
+				"pwsh -help",
+				"pwsh -?",
+				"cmd",
+				"bash",
+				"ls | grep bash",
+				"ps aux | grep sh",
+				"which bash",
+				"bash script.sh",
+			]);
 		},
 		TEST_TIMEOUT,
 	);
