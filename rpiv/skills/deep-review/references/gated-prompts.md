@@ -102,3 +102,36 @@
 
   Evidence only. Citation contract applies.
   ```
+
+## Spec Conformance (Wave-1 — gate: linked issue resolved AND `gh` works; agent: `diff-analyst`)
+
+Optional intent check against the **external issue** the change claims to implement. It is a separate, unranked `## Spec Conformance` section: its rows never enter the severity map, never get Q/S/I/G IDs, never count toward `blockers_count`, and are never pasted into a Wave-2 prompt. Conformance against approved rpiv briefs/designs/slices is `/rpiv:validate`'s job — do not duplicate it here; when the branch also has an rpiv brief, add the line `rpiv contract conformance: run /rpiv:validate <brief>`.
+
+**Resolve the issue** (orchestrator, before Wave-1 dispatch; stop at the first source that yields refs; cap 3 issues):
+1. PR: `gh pr view --json number,body,closingIssuesReferences` for the reviewed branch — `closingIssuesReferences`, then `#N` / issue URLs in the body.
+2. Branch name: a number segment such as `123-foo`, `issue-123`, `gh-123`, `feat/123-foo`.
+3. Commits in scope: `Closes|Fixes|Resolves|Refs|Part of #N`, `Issue: #N` trailers, `owner/repo#N`, issue URLs.
+When the target repo's agent instructions name an issue-tracker convention (a doc describing reference format or tracker), follow it. Then `gh issue view <N> --json number,title,body,url,state`.
+
+**Status line — always emitted, one of** (never silently omit the section):
+- `no linked issue found (searched: PR body, branch name, commit messages)`
+- `gh unavailable ({not installed | not authenticated})` — refs, if any, listed unresolved
+- `gh failed for #N: {first stderr line}` — per ref; a non-GitHub tracker lands here, it is not "no issue"
+- `issue #N has no checkable requirements (empty or discussion-only body)`
+- `checked #N "{title}" — {M} met · {P} partial · {X} missing · {C} contradicted · {E} extra`
+
+When the gate fires, dispatch ONE `diff-analyst` in Wave-1 with the issue text and the patch paths only (no Discovery Map):
+  ```
+  Spec conformance against an external issue. Patches: {every ReviewPatch path}
+  Issue #{N} — {title}:
+  {issue body verbatim, trimmed to requirement-bearing text; acceptance criteria and checklists kept whole}
+
+  Split the issue into atomic requirements (acceptance criteria and checklist items first, then imperative sentences). For each, decide from the patches whether the change implements it. Then list behaviour the change adds that no requirement asks for.
+
+  Emit ONE review-scope table, heading `### Spec Conformance`, columns: `SC<n> | requirement (verbatim issue quote) | status | evidence`.
+  status ∈ {Met, Partial, Missing, Contradicted, Extra}. Met/Partial/Contradicted/Extra evidence is `file:line — <verbatim line>`; Missing evidence is `<absent>` plus where you looked. Extra rows quote `(not in issue)` as the requirement.
+
+  Evidence only. No severity. Do not judge code quality. Citation contract applies to every evidence cell.
+  ```
+
+Render the status line plus the table (omit the table when no agent ran) as the `## Spec Conformance` section in `review.sections`, placed before `## Recommendation`.

@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -43,8 +44,61 @@ export function parseToolProbe(output) {
 	return { ecosystem, local, reports };
 }
 
+/** Agent-instruction files a target repository uses to declare its own rules. */
+const INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md", ".claude/CLAUDE.md"];
+
+/** MCP capability keys are spelled differently in prose; local tools match by name. */
+const PROSE_NAMES = {
+	codescene: "code ?scene",
+	sonarqube: "sonar(?:qube|cloud)?",
+};
+
+const escapeName = (name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Find tools a project's agent instructions explicitly declare unused, e.g.
+ * "SonarQube is not used" or "opengrep: not used". Returns `{ tool: "file:line" }`
+ * for the first declaring line per tool — evidence the orchestrator confirms,
+ * not a verdict.
+ */
+export function findDeclaredUnused(files, toolNames) {
+	const declared = {};
+	for (const tool of toolNames) {
+		const name = PROSE_NAMES[tool] ?? escapeName(tool);
+		const pattern = new RegExp(
+			`\\b${name}\\b(?:[^.;\\n]{0,40}?\\b(?:is|are|was)\\s+(?:not|no longer|never)\\s+(?:used|in use)\\b|\\s*[:—–-]\\s*(?:not used|unused|disabled)\\b)`,
+			"i",
+		);
+		for (const file of files) {
+			if (declared[tool] || typeof file.text !== "string") continue;
+			const index = file.text
+				.split(/\r?\n/)
+				.findIndex((line) => pattern.test(line));
+			if (index >= 0) declared[tool] = `${file.path}:${index + 1}`;
+		}
+	}
+	return declared;
+}
+
+/** Read the instruction files under root; a read failure is reported, never dropped. */
+export function readInstructionFiles(root) {
+	return INSTRUCTION_FILES.filter((path) => existsSync(join(root, path))).map(
+		(path) => {
+			try {
+				return { path, text: readFileSync(join(root, path), "utf8") };
+			} catch (error) {
+				return { path, error: error.code ?? error.message };
+			}
+		},
+	);
+}
+
 /** Merge local detection with the OpenCode runtime snapshot. */
-export function buildPreflight({ probeOutput, runtimeJson }) {
+export function buildPreflight({
+	probeOutput,
+	runtimeJson,
+	instructionFiles = [],
+}) {
 	let runtime = {};
 	try {
 		runtime = JSON.parse(runtimeJson || "{}");
@@ -71,6 +125,14 @@ export function buildPreflight({ probeOutput, runtimeJson }) {
 			nodeHook: runtime.processes?.nodeHook ?? "unknown",
 			sonarHook: runtime.processes?.sonarHook ?? "unknown",
 		},
+		declaredUnused: findDeclaredUnused(instructionFiles, [
+			...Object.keys(parsed.local),
+			"codescene",
+			"sonarqube",
+		]),
+		instructionErrors: instructionFiles
+			.filter((file) => file.error)
+			.map(({ path, error }) => ({ path, error })),
 	};
 }
 
@@ -91,7 +153,10 @@ if (isMain(import.meta.url)) {
 	} catch {
 		probeOutput = "";
 	}
-	process.stdout.write(
-		`${JSON.stringify(buildPreflight({ probeOutput, runtimeJson: process.env.RPIV_CAPABILITIES }), null, 2)}\n`,
-	);
+	const preflight = buildPreflight({
+		probeOutput,
+		runtimeJson: process.env.RPIV_CAPABILITIES,
+		instructionFiles: readInstructionFiles(process.argv[2] ?? "."),
+	});
+	process.stdout.write(`${JSON.stringify(preflight, null, 2)}\n`);
 }

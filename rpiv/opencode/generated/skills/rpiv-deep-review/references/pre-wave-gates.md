@@ -6,6 +6,8 @@ Use the preflight JSON as the capability source of truth. A local tool with `sta
 
 Tool failures are operational, not clean results. Non-zero output containing structured diagnostics is a successful gate with findings. Empty, malformed, or launch-failure output marks that gate unavailable.
 
+**Declared unused.** The preflight `declaredUnused` map names tools the target repository's agent instructions (AGENTS.md / AGENTS.md) explicitly declare not used, each with its `file:line`. Open that line first: when it really opts the tool out (not a scoped caveat such as one rule or one directory), skip the gate even if the capability is configured and record `{tool}: skipped: declared unused ({file:line})` once in the Discovery Map. This is distinct from `unavailable`: the lens fallback is the same, but the reason is the project's decision, not a missing or broken tool. Any `instructionErrors` entry means an instruction file exists but could not be read — record `instruction files: unreadable ({path} — {error})`, run every gate normally, and never treat it as "nothing declared".
+
 ## Compiler And Repository Contracts
 
 - **Typecheck**: when the repository defines a typecheck script or compiler config, run its own command. Compiler diagnostics in changed files are critical; fold outside-diff diagnostics into one important row. A successful compiler run owns dangling-import detection.
@@ -28,7 +30,7 @@ Tool failures are operational, not clean results. Non-zero output containing str
 
 ## MCP Quality Signals
 
-- **CodeScene**: when configured, collect per-file Code Health for changed files with delta at least five, plus one scope-aware change-set or working-tree safeguard. Digest scores and verdicts, never raw output. Tool/auth failure leaves Quality as fallback.
-- **SonarQube**: when configured, analyze changed files and digest `file:line`, rule, and severity. Quality and Security do not duplicate confirmed Sonar rows. Tool/auth failure leaves both lenses active.
+- **CodeScene**: when configured, collect per-file Code Health for changed files with delta at least five, plus one scope-aware change-set or working-tree safeguard. Digest scores and verdicts, never raw output. A failed quality gate, a `degraded` verdict, or a score drop on an in-scope file is a finding (important; critical when the project declares a Code Health threshold the file now breaches — see `severity-model.md`). Per-file scores alone stay prioritisation context. Tool/auth failure leaves Quality as fallback.
+- **SonarQube**: when configured and not declared unused, analyze changed files and digest `file:line`, rule, and severity. Quality and Security do not duplicate confirmed Sonar rows. Tool/auth failure leaves both lenses active.
 
 Every successful gate contributes authoritative rows to the Discovery Map. Candidates remain candidates until a judgment lens confirms reachability or behavior. Never paste raw gate output into a lens prompt.

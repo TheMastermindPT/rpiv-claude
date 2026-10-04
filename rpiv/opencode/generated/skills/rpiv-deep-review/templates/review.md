@@ -143,6 +143,16 @@ Annotate    [precedent-weighted]   [cascade: <kind>]   [subsumed-by <ID>]
 
 ---
 
+## Spec Conformance
+
+{status line — always present; e.g. `no linked issue found (searched: PR body, branch name, commit messages)`}
+
+| #   | Requirement (issue quote) | Status                                   | Evidence                     |
+| --- | ------------------------- | ---------------------------------------- | ---------------------------- |
+| SC1 | {verbatim requirement}    | {Met/Partial/Missing/Contradicted/Extra} | `{file:line}` — `{verbatim}` |
+
+---
+
 ## Recommendation
 
 > (advisor prose pasted verbatim here as a blockquote when advisor ran; omit the blockquote otherwise)

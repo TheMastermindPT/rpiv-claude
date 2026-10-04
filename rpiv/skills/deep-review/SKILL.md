@@ -130,12 +130,15 @@ Spawn ALL of the following in parallel at T=0 in a **single message with multipl
 
 **Agent — Peer-Mirror** (only when `len(PeerPairs) > 0`): `subagent_type: rpiv:peer-comparator`. Input: the `PeerPairs` list verbatim, nothing else — no Discovery Map (it isn't built yet and the agent doesn't need it), no patch path (the work is peer-vs-new entity comparison, not diff analysis). Prompt: Read §Peer-Mirror in `references/gated-prompts.md` and use its fenced block byte-for-byte, substituting only the `{list of (new_file, peer_file) tuples}` placeholder.
 
+**Agent — Spec conformance** (optional — only when the branch/PR links an external issue and `gh` resolves it): Read §Spec Conformance in `references/gated-prompts.md` before dispatch — it owns issue resolution, the always-emitted status line (no issue / `gh` unavailable / `gh` failed are distinct), and the prompt. Its output is a separate, unranked artifact section; it never enters the Discovery Map, Wave-2, or the severity map.
+
 **Agent — Sink-candidate sweep** (only when preflight reports opengrep unavailable): dispatch one `rpiv:diff-auditor` per ReviewPatch whose shard category is `mixed`, `source`, `migration`, `config`, `manifest`, or `other`. Each receives only its patch path. Read §Sink-candidate sweep in `references/gated-prompts.md`, substitute that path, and digest all returned rows into one `Grep sink candidates` map row. When opengrep is available, skip these agents.
 
 While these agents run, the orchestrator produces the rest of the Discovery Map inline from Step 1's data:
 - `ChangedFiles`, `ManifestChanged`, `LockstepSelfReview`, `ReviewType`
 - **Semantic file map** (per file: `path (+A -B)` + role tag + top-level symbol names touched; see format and rules below)
 - Commit-message context (if applicable)
+- **Project standards** — the target repo's prose rules (agent instructions, standing decisions/ADRs, domain vocabulary) extracted per §Project standards in `references/discovery-map.md`, minus rules configured tooling already enforces
 
 **Wait for `integration-scanner`, the peer-mirror agent, and every sink-candidate shard sweep (when dispatched)** before Wave-2. Digest their results into the Discovery Map. Precedents / Dependencies / CVE continue in the background; **Precedents MUST be awaited before Step 5 begins**. Dependencies / CVE also merge at Step 5 but may arrive later.
 
@@ -154,7 +157,7 @@ While these agents run, the orchestrator produces the rest of the Discovery Map 
 
 **Synthesize the Discovery Map** — a compact block that Wave-2 agents receive verbatim as `Known Context`. Each file line carries a *role tag* and a *symbols-touched hint*; files are clustered by shared directory prefix so agents orient without re-reading the patch.
 
-Read `references/discovery-map.md` NOW — it holds the exact map template, the clustering / role-tag / symbols-touched-hint rules, and the tool-gated structural-enrichment digest rules (opengrep sinks, ast-grep dispatch shapes, rg risk keywords, CodeScene Code Health, SonarQube issues, dependency-cruiser boundary violations). Build the map exactly per that file before dispatching Wave-2.
+Read `references/discovery-map.md` NOW — it holds the exact map template, the clustering / role-tag / symbols-touched-hint rules, and the tool-gated structural-enrichment digest rules (opengrep sinks, ast-grep dispatch shapes, rg risk keywords, CodeScene Code Health and its regression findings, SonarQube issues, dependency-cruiser boundary violations) plus the Project standards extraction. Build the map exactly per that file before dispatching Wave-2.
 
 ### Step 3: Dispatch Wave-2 — Quality + Security Lenses
 
@@ -173,9 +176,9 @@ Dispatch all shard lenses in one parallel wave. Spawn one Quality `diff-analyst`
 
 **Self-check before dispatching Wave-2**: read your outgoing Agent prompt. If it contains any content from Wave-1 agent RESULTS beyond the Discovery Map you synthesised, strip it. The Discovery Map is the contract; raw outputs are reconciliation-only.
 
-**Quality lens** (`diff-analyst`) — **file-oriented**. Before dispatching: Read `references/quality-surfaces.md`, strip its leading `<!-- -->` comment, and substitute the remainder for the `{{QUALITY_SURFACES}}` line below — the dispatched prompt must carry the full 13-surface block verbatim, never the placeholder:
+**Quality lens** (`diff-analyst`) — **file-oriented**. Before dispatching: Read `references/quality-surfaces.md`, strip its leading `<!-- -->` comment, and substitute the remainder for the `{{QUALITY_SURFACES}}` line below — the dispatched prompt must carry the full 14-surface block verbatim, never the placeholder:
   ```
-  Analyse changes file by file. For each file in this shard patch, read its diff region (the patch has `-U30`, or `-U10` only when size-bounded), form a mental model of the file and its change, then apply the 13 surfaces below. Cite `file:line` with verbatim line text for every finding. Omit findings not traceable to a diff-touched change. No severity.
+  Analyse changes file by file. For each file in this shard patch, read its diff region (the patch has `-U30`, or `-U10` only when size-bounded), form a mental model of the file and its change, then apply the 14 surfaces below. Cite `file:line` with verbatim line text for every finding. Omit findings not traceable to a diff-touched change. No severity.
 
   **File order strategy**: prioritise by role tag — `[boundary]` files first (security-sensitive), then `[persistence]` (durable-state surfaces), then `[hub]` (blast-radius amplifiers), then `[code]`, then `[config]`, then `[test]` last. Within the same tag, prioritise files with the largest diffs.
 
@@ -412,6 +415,7 @@ Carry every verifier result into Step 7. Verified and Weakened findings remain a
 - `## Pattern Analysis` — no peer-mirror pair existed for this diff.
 - `## Impact` — integration-scanner returned no inbound refs to changed files.
 - `## Precedents` — precedent-locator returned no precedents.
+- `## Spec Conformance` is NEVER omitted: it always carries its status line (§Spec Conformance in `references/gated-prompts.md`), and its rows are unranked — they never become findings.
 
 **What is NOT emitted to the artifact**: verification outcomes in prose (frontmatter `verification` string is the only channel), advisor availability / dispatch path / tool failures (skill trace, not review content), `last_updated` / `last_updated_by` (git mtime + git author carry this for a write-once artifact).
 
@@ -429,6 +433,7 @@ Severity:     {C} critical · {I} important · {S} suggestions
 Lenses:       {Q} quality · {Se} security · {D} dependencies
 Verification: {V} verified · {W} weakened · {F} falsified (dropped)
 Advisor:      {adjudicated | inline}
+Spec:         {Spec Conformance status line}
 Review:       complete · Merge: {blocked | clear} · {B} blockers (🔴 + 🟡)
 
 Top items:
@@ -479,6 +484,7 @@ Ask follow-ups, or chain forward.
   - `codebase-analyzer` ×1 (Wave-1, `ManifestChanged`) — dependencies parse.
   - `web-search-researcher` (Wave-1, `ManifestChanged`) — CVE/advisory lookups with LINKS.
   - `peer-comparator` ×1 (Wave-1, gated on `len(PeerPairs) > 0`) — peer-mirror check; tags Mirrored/Missing/Diverged/Intentionally-absent.
+  - `diff-analyst` ×1 (Wave-1, gated on a resolved linked issue) — spec conformance vs the external issue (unranked section, never findings).
   - `diff-auditor` × eligible shard (Wave-1, gated on opengrep absent) — mechanical sink-candidate sweep; rows digest into the Discovery Map.
   - `diff-analyst` × review shards (Wave-2) — one Quality per shard plus Security for security-relevant shard categories.
   - `diff-analyst` ×1 (Step 4a, gated) — predicate-trace (review-scope table).

@@ -10,7 +10,7 @@ Scope: {scope argument}
 Commit/range: {git ref}
 Manifest changed: {yes|no}
 Lockstep self-review: {yes|no}
-Capabilities: {preflight summary — local tools + MCP configured/unavailable}
+Capabilities: {preflight summary — local tools + MCP configured/unavailable; `{tool}: skipped: declared unused ({file:line})` per opted-out tool; `instruction files: unreadable ({path})` when preflight reports instructionErrors}
 Review shards: {N patches; id — category — file count — context — bytes}
 Prior same-branch review: {path | none}
 
@@ -25,6 +25,7 @@ Inbound refs (files with ≥3 consumers): {integration-scanner}
 Outbound deps: {integration-scanner}
 Wiring/config: {integration-scanner}
 Peer mirrors: {peer-mirror agent output verbatim — Missing/Diverged rows only; Mirrored and Intentionally-absent rows are summarised as counts}
+Project standards: {R<n> — rule, one line — `source-file:line` — hard|preference; per §Project standards below} | none declared | sources unreadable ({path})
 **Deterministic gates (Pre-Wave-1, authoritative):**
 Typecheck gate: {N errors citing ChangedFiles (🔴, file:line) + M outside-diff (🟡 count)} | unavailable — lens fallback active
 Lint gate ({biome|eslint}): {N errors (M warnings) on changed files — file:line — rule} | unavailable — lens fallback active
@@ -40,7 +41,7 @@ Static-analysis sinks (opengrep, when present): {check_id  severity  file:line �
 Grep sink candidates (diff-auditor, when opengrep absent): {file:line — pattern-id — matched idiom — CANDIDATE sinks; Wave-1 mechanical sweep, digested — NOT findings}
 Dispatch/registration shapes (ast-grep, when present): {file:line — fire*/emit*/publish*/dispatch*/raise*/notify* calls + switch/match/when registration tables; orchestrator-run, digested}
 Risk keywords (rg): {file:line — keyword — TODO|FIXME|HACK|XXX|debugger|console.log|...} | omitted when no hits
-Code Health (CodeScene, when present): {per-file scores — `file`: score (smell); scope-aware dispatch: analyze_change_set (branch) | pre_commit_code_health_safeguard (working-tree) | per-file review (fallback); orchestrator-run, digested — NOT findings}
+Code Health (CodeScene, when present): {per-file scores — `file`: score (smell) — prioritisation context, NOT findings; scope-aware dispatch: analyze_change_set (branch) | pre_commit_code_health_safeguard (working-tree) | per-file review (fallback); regressions — `file — failed gate | degraded | score old→new` — FINDINGS per §CodeScene regressions; declared threshold: {value — `source-file:line`} | none declared}
 Boundary/cycle violations (dependency-cruiser, when configured): {file — rule-name (forbidden boundary | circular) intersecting ChangedFiles; orchestrator-run, digested — NOT findings}
 ```
 
@@ -66,7 +67,17 @@ Boundary/cycle violations (dependency-cruiser, when configured): {file — rule-
     - **Branch/PR review** (scope resolves a base ref): run `analyze_change_set` once (`base_ref` = review base, `git_repository_path` = repo root). Digest to `file — improved | degraded | stable` + any failed `quality_gates`.
     - **Working-tree review** (`staged` / `working` / `modified`): run `pre_commit_code_health_safeguard` on the repo root. Catches files `git diff HEAD` may miss. Digest to `file — improved | degraded | stable` + failed `quality_gates`.
     - **Fallback** (MCP tools absent or scope is bare `commit` hash): run `code_health_review` on each changed file with delta ≥ 5. Slower but works anywhere.
-  - If NO CodeScene tool is available, omit the row entirely — the Quality lens (diff-analyst) is the fallback.
-- SonarQube -> `Sonar issues`: when `sonarqube_*` tools are available (SonarQube MCP connected) or the repo carries a `sonar-project.properties` with `sonarqube-cli` installed, pull the open issues intersecting ChangedFiles (MCP per-file analysis, or CLI issue search filtered to the changed paths). Digest to `file:line — rule — severity` rows in the Discovery Map as ground truth — the Quality and Security lenses MUST NOT re-report these; they focus on what Sonar's rules do not cover. When neither surface exists, omit the row entirely.
+  - **CodeScene regressions** (findings, not context): for each in-scope file the dispatch reports with a failed `quality_gates` entry, a `degraded` verdict, or a score below its base-ref score, the orchestrator emits ONE Quality finding citing the worst changed function's line (from `code_health_review`) with its verbatim text and the smell + `score old→new` in the note. Severity per `references/severity-model.md` §Quality. **Declared threshold**: read it from the target repo's agent instructions or the Project standards row (e.g. "Code Health must be 10", "keep score ≥ 9"), or from a CodeScene quality-gate config in the repo; cite its `file:line`. Never invent a threshold — no declaration means `none declared`. A file improved or stable stays context only.
+  - If NO CodeScene tool is available, omit the row entirely — the Quality lens (diff-analyst) is the fallback. When CodeScene is declared unused, the row reads `skipped: declared unused ({file:line})` instead.
+- SonarQube -> `Sonar issues`: skip when preflight `declaredUnused.sonarqube` is confirmed (row reads `skipped: declared unused ({file:line})`). Otherwise, when `sonarqube_*` tools are available (SonarQube MCP connected) or the repo carries a `sonar-project.properties` with `sonarqube-cli` installed, pull the open issues intersecting ChangedFiles (MCP per-file analysis, or CLI issue search filtered to the changed paths). Digest to `file:line — rule — severity` rows in the Discovery Map as ground truth — the Quality and Security lenses MUST NOT re-report these; they focus on what Sonar's rules do not cover. When neither surface exists, omit the row entirely.
 - dependency-cruiser -> `Boundary/cycle violations`: when the `dependency-cruiser` row from the probe is `configured` (the repo has a `.dependency-cruiser.*` config), run it ONCE root-scoped — the repo's own deps script if present (e.g. `npm run deps`), else `npx depcruise <root-scope> --config <config> --output-type json` — then keep ONLY violations whose `from`/`to` module intersects ChangedFiles. Surfaces a PR that introduces a cycle or crosses a forbidden architectural boundary (the boundary-erosion signal diff-analyst can't see from the diff alone). Digest to `file — rule-name` rows. Run from the repo ROOT (a scoped scan under-counts cross-boundary imports). If depcruise is `absent`/`installed-unconfigured`, or the change set is docs/trivial-only, OMIT the row — CI's own `deps` gate + the Quality lens are the fallback.
 Digested rows ONLY — NEVER paste raw tool output into a Wave-2 prompt (the Wave-2 isolation rule below: raw dumps cause silent quality collapse). Both are read-only; never pass a mutate flag.
+
+## Project standards
+
+Extract the target repository's own prose rules ONCE, orchestrator-side, while Wave-1 runs, and fold them into the `Project standards` row as a compact numbered list (`R1..Rn`, cap ~25; most diff-relevant first). Sources, in order — each only when present:
+1. task instructions: root `AGENTS.md` / `AGENTS.md` (plus files they import, e.g. `@AGENTS.md`), and the nearest `AGENTS.md` / `AGENTS.md` / `.rpiv/guidance/**/architecture.md` above each changed directory.
+2. Standing decisions / ADRs: `.rpiv/decisions/*.md` and `docs/adr/*.md` (or the directory the instructions name) — the decision's rule sentence, not its rationale; include only decisions whose subject the diff touches.
+3. Domain vocabulary: `CONTEXT.md` (or the glossary the instructions name) — canonical terms and their forbidden aliases, as one rule per term the diff names.
+
+**Keep** only rules a diff can violate in code, tests, names, or file placement. **Drop** process and communication rules (tone, git workflow, which agent to call), and **drop every rule already enforced by a configured tool** — a lint/compiler/depcruise/knip setting or a gate that ran successfully above owns it (e.g. "no default exports" when the linter config bans them); note `R<n> enforced by {tool}` only if the drop is non-obvious. Mark each kept rule `hard` (must / never / always / a standing decision) or `preference` (prefer / avoid / should). Every rule carries the `source-file:line` of its sentence — a rule without a citable line is not a rule. When no source exists, write `none declared`; when a source exists but cannot be read, write `sources unreadable ({path})` — never collapse the two.
