@@ -406,5 +406,6 @@ Ingested verbatim from the repo's own tooling — the findings above intentional
 - **jscpd** ({command}): {N clones, M% duplicated lines (Rust v5) | clean | absent — D ran on metrics dup}.
   {- `fileA` <-> `fileB` (N lines) (capped)}
 - **coverage** ({command}): overall {stmt% / branch% / fn%}; {N} files with branch-gaps fed to the T lens.
+- **standing decisions** (`.rpiv/decisions/`): {N accepted; M suppressed — candidate id → key, ... | none | unreadable: {path — diagnostic}}.
 - **mutation** ({command}): overall {killed}/{survived} = {score%}; {N} files with low mutation score (<40%) fed to the T lens | unavailable: {reason}.
 - **ts-morph / semantic.mjs** ({command}): {N type-resolved write-sites (writers>=2: …), N feature-envy candidates (behavioral split), dead-exports: N | "delegated to knip", type-fragmentation: N drift + N same-shape | unavailable: {reason}}.

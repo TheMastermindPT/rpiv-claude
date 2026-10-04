@@ -22,4 +22,5 @@ Tool ground-truth: depcruise {violations summary; per-folder instability Ca/Ce/I
 Arch-lint (ast-grep): {AS- findings — file:line — rule-id — severity} | omitted when pack absent
 Arch-lint (opengrep): {OG- taint findings — source→sink — rule-id — severity} | omitted when pack absent
 CodeScene (CS-): {file — score — smell} | omitted when MCP unavailable
+Standing decisions: {key — scope — rule, one per accepted `.rpiv/decisions/` entry from Step 2.4 — do NOT raise what a rule rules out for its scope} | omitted when none accepted
 ```

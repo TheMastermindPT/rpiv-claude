@@ -133,6 +133,15 @@ branch name. Preserve the chain so final validation can inspect the whole change
    evidence. Keep reviewers read-only. Triage findings per the shared dispatch.
    Refactor only in this separate gate; rerun checks and obtain fresh candidate
    reviews after any source, test, contract, or relevant configuration change.
+   Refactor in measured steps. When CodeScene or another Code Health tool is
+   available, record a baseline score for each touched file first. Then make one
+   small behavior-preserving change at a time; rerun the relevant tests and
+   re-measure after each. Revert a step that breaks tests or lowers the score.
+   Stop when the repository's declared threshold is met or, when none is
+   declared, when no touched file regresses from its baseline. If small steps
+   cannot reach the threshold, report the gap instead of rewriting. With no such
+   tool, record the measurement as `unavailable`, or as `broken` with its
+   diagnostic when the tool fails; never claim an unmeasured improvement.
 5. Run the slice's required automated and manual verification, preserving exact
    command, working directory, result, and inspected revision. Missing manual
    proof remains pending. Apply the availability-based checks below as well as

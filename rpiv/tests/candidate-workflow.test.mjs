@@ -15,6 +15,15 @@ describe("candidate workflow authority", () => {
 		["complete identity", /base_commit/, /untracked/, /contract.*hash/i],
 		["observed TDD", /Expected red/, /independent review\/refactor/i],
 		[
+			"measured refactor",
+			/record a baseline score for each touched file/,
+			/one\s+small behavior-preserving change at a time/,
+			/re-measure after each/,
+			/declared threshold is met/,
+			/no touched file regresses from its baseline/,
+			/measurement as `unavailable`, or as `broken`/,
+		],
+		[
 			"honest gates",
 			/unavailable/,
 			/broken/,

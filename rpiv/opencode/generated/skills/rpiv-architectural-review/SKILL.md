@@ -60,7 +60,7 @@ C. Synthesize
 
 The final artifact is blueprint-consumable per phase.
 
-**References (progressive disclosure — read each file at the step its pointer names, never earlier; resolve paths against this skill's directory, i.e. `$RPIV_PLUGIN_ROOT/skills/architectural-review/`):** `references/metrics-blocks.md` (Step 2.1, after metrics.mjs) · `references/tool-ingestion.md` (Step 2.2, before any external tool runs) · `references/likec4-model.md` (Steps 4.5 & 11, only when a System Model exists) · `references/slop-map.md` (Step 5a, map assembly) · `references/wave2-lenses.md` (Step 5d, only when Wave 2 dispatches) · `references/dimension-sweep.md` (Step 7.2, first layer) · `references/drift-fingerprints.md` (Step 8, only when a prior review exists).
+**References (progressive disclosure — read each file at the step its pointer names, never earlier; resolve paths against this skill's directory, i.e. `$RPIV_PLUGIN_ROOT/skills/architectural-review/`):** `references/metrics-blocks.md` (Step 2.1, after metrics.mjs) · `references/tool-ingestion.md` (Step 2.2, before any external tool runs) · `references/standing-decisions.md` (Step 2.4; applied at Steps 6 and 7.4) · `references/likec4-model.md` (Steps 4.5 & 11, only when a System Model exists) · `references/slop-map.md` (Step 5a, map assembly) · `references/wave2-lenses.md` (Step 5d, only when Wave 2 dispatches) · `references/dimension-sweep.md` (Step 7.2, first layer) · `references/drift-fingerprints.md` (Step 8, only when a prior review exists).
 
 ## Steps
 
@@ -106,6 +106,8 @@ The final artifact is blueprint-consumable per phase.
    **task — artifacts-locator:** "Find the most recent prior review in `.rpiv/artifacts/architecture-reviews/` whose frontmatter `target:` equals or contains `{target}`. Return its path, date, and the list of its finding IDs with their `file:line` evidence and severity. If none exists, say so."
 
    Hold the result: it is the drift baseline (Step 8). None -> this run is a baseline review.
+
+4. **Load standing decisions.** Read `references/standing-decisions.md` NOW and load the accepted `.rpiv/decisions/` entries per its Load section. Hold them: they feed the Slop Map row, the Step 6 suppression, and the Step 7.4 record offer.
 
 ### Step 2.7: Build the System Model (top-down)
 
@@ -317,7 +319,7 @@ Return ONE row per finding: `FINDING <id> | <Verified|Weakened|Falsified> | <one
 Citation contract applies. No new findings.
 ```
 
-Apply: **Falsified -> drop** (ID retired, counted in frontmatter `verification.falsified`). **Weakened -> demote one severity tier**, rewrite the evidence to the narrower claim. **Verified -> carry**. Record `verified`/`weakened`/`falsified` counts in frontmatter. **Ownership claims**: a Falsified `owner: NONE` is corrected in the `## System Model` section via Edit (the entity gets its real owner) and MUST NOT seed an ownerless-entity theme (Step 10) or a Risk-Rollup promotion (Step 11) — the S lens already dispatched on the stale gate, so its findings answer for themselves at this same gate. The surviving, verified slop findings now enter the Interaction Sweep and the per-layer loop alongside the dimension sweep.
+Apply: **Falsified -> drop** (ID retired, counted in frontmatter `verification.falsified`). **Weakened -> demote one severity tier**, rewrite the evidence to the narrower claim. **Verified -> carry**. Record `verified`/`weakened`/`falsified` counts in frontmatter. **Ownership claims**: a Falsified `owner: NONE` is corrected in the `## System Model` section via Edit (the entity gets its real owner) and MUST NOT seed an ownerless-entity theme (Step 10) or a Risk-Rollup promotion (Step 11) — the S lens already dispatched on the stale gate, so its findings answer for themselves at this same gate. Then apply standing-decision suppression per the Suppress section of `references/standing-decisions.md` — every suppressed candidate is recorded, never silently dropped. The surviving, verified slop findings now enter the Interaction Sweep and the per-layer loop alongside the dimension sweep (whose candidates get the same suppression check at 7.3).
 
 ### Step 6.5: Full Interaction Sweep (re-join ALL waves)
 
@@ -351,17 +353,18 @@ Collect the returned `IX-<n>` compounds. Each carries: Kind, Constituent finding
 Walk all ten across every file in the layer; hold candidates in memory (do NOT triage yet). These catch layer-local issues the slop lenses, which are file-targeted, do not. Read `references/dimension-sweep.md` at the FIRST layer (it applies to every layer) — it defines the ten dimensions and the exact candidate-list format (`L<layer>-<seq>`, lens `10dim`, Evidence, Quantified anchor, What/Why, provisional Severity / Effort / Blast radius / Class).
 
 #### 7.3 Merge Verified Slop Findings (+ single-layer interactions)
-Pull in the Step 6 verified slop findings whose files belong to this layer. They already carry lens tag, quantified anchor, and Verify status. De-duplicate against 7.2 candidates (a DRY dimension hit and a D-lens hit on the same code are ONE finding — keep the richer one, note both signals). Also pull in any Step 6.5 `IX` compound whose constituents ALL fall in this layer — triage it here as a finding (lens `IX`, carrying its Root cause). Cross-layer `IX` compounds stay deferred to Step 10, where they seed the themes.
+Pull in the Step 6 verified slop findings whose files belong to this layer. They already carry lens tag, quantified anchor, and Verify status. De-duplicate against 7.2 candidates (a DRY dimension hit and a D-lens hit on the same code are ONE finding — keep the richer one, note both signals). Also pull in any Step 6.5 `IX` compound whose constituents ALL fall in this layer — triage it here as a finding (lens `IX`, carrying its Root cause). Cross-layer `IX` compounds stay deferred to Step 10, where they seed the themes. Apply the standing-decision Suppress check to the 7.2 candidates too.
 
 #### 7.4 Triage Each Candidate
 Present each via `question`: "L{X}-{YY} ({lens}) — {headline}. Evidence: `file:line` (`{quote}`). Anchor: {metric}. Why slop: {one sentence}. Pick an outcome.". Header: "L{X}-{YY}". Options: concrete action A; concrete action B; "Defer".
 - Batch 2-4 INDEPENDENT candidates per call; sequential when answers depend on each other or blast-radius is `public-API`/`cross-module`.
-- **Deletion/dead-abstraction candidates with zero consumers:** ALWAYS include a "Keep as composition primitive / type-narrowing idiom" option — the developer judges abstraction value, not the skill.
+- **Deletion/dead-abstraction candidates with zero consumers, and shallow (deletion-test) candidates:** ALWAYS include a "Keep as composition primitive / type-narrowing idiom" option — the developer judges abstraction value, not the skill.
+- **Durable rejection:** when the developer rejects a finding for a reason that should bind future reviews, offer to record it as a standing decision per the Record section of `references/standing-decisions.md` — never record without that choice.
 - **Multi-state return candidates:** include "Convert to {target language's discriminated form}".
 - **God-file candidates:** include "Split into `<dir>/` with the proposed decomposition" using the G-lens's named extractable units.
 
 #### 7.5 Persist Each Triaged Finding
-Persist through the findings store the instant an outcome is chosen — never hand-Edit inside the sentinel regions. Build ONE JSON object per finding mapping the template's Finding shape 1:1: `id`, `layer` (the layer number), `lens`, `title`, `evidence` (array of `{path, startLine, endLine, quoted}` — repo-relative paths, verbatim quoted lines per the citation contract), `symbol` (or null), `anchor`, `what`, `why`, `remediation` (`{steps, acceptance, testStrategy, tradeoff}` — use integration-scanner's consumer list for blast radius and (when Wave 2 ran) precedent-locator for the sequence, or `git log --grep` for the target when Wave 2 was skipped), `severity`, `effort`, `blastRadius`, `class`, `entityStage` (the System Model coordinate, or null), `verify`, `status` (verbatim from the chosen option: `accepted` / `rejected` / `deferred` / `withdrawn`), `statusNote` (the chosen option summary), `dependsOn`, `crossCutTag`. Field shapes that bounce when guessed wrong: `evidence[].quoted` is an ARRAY of verbatim lines (one string per source line, never one joined block), `remediation.acceptance` is a string ARRAY, `blastRadius` is an array, `dependsOn` must be present (may be `[]`). Complete example:
+Persist through the findings store the instant an outcome is chosen — never hand-Edit inside the sentinel regions. Build ONE JSON object per finding mapping the template's Finding shape 1:1: `id`, `layer` (the layer number), `lens`, `title`, `evidence` (array of `{path, startLine, endLine, quoted}` — repo-relative paths, verbatim quoted lines per the citation contract), `symbol` (or null), `anchor`, `what`, `why`, `remediation` (`{steps, acceptance, testStrategy, tradeoff}` — use integration-scanner's consumer list for blast radius and (when Wave 2 ran) precedent-locator for the sequence, or `git log --grep` for the target when Wave 2 was skipped), `severity`, `effort`, `blastRadius`, `class`, `entityStage` (the System Model coordinate, or null), `verify`, `status` (verbatim from the chosen option: `accepted` / `rejected` / `deferred` / `withdrawn`), `statusNote` (the chosen option summary), `dependsOn`, `crossCutTag`. Field shapes that bounce when guessed wrong: `evidence[].quoted` is an ARRAY of verbatim lines (one string per source line, never one joined block), `remediation.acceptance` is a string ARRAY, `blastRadius` is an array, `dependsOn` must be present (may be `[]`). **Seam rule for `remediation.steps` and `testStrategy`:** test through the module's existing public interface; one adapter is a hypothetical seam, two adapters make a real one — do not propose a new port/interface for a single implementation unless a named test needs it to substitute that dependency. Complete example:
 
    ```json
    {
@@ -427,7 +430,7 @@ node "$RPIV_PLUGIN_ROOT/skills/_shared/store.mjs" diff --artifact <artifact path
 
 ### Step 9: Capture Emergent Methodology Principles
 
-A principle surfaces when the developer reverses a finding with a generalizable reason, picks the same option type across independent triages, or articulates a future-review rule. Ask via `question`: "Across {F} findings, did a methodology principle emerge worth naming?". Header: "Methodology". Options: "No new principle (Recommended if none articulated)"; "Capture one"; "Capture multiple". Format captured principles into the Methodology Principles section (M{N} — name / Origin / Rule / Apply-to keep / Apply-to drop).
+A principle surfaces when the developer reverses a finding with a generalizable reason, picks the same option type across independent triages, or articulates a future-review rule. Ask via `question`: "Across {F} findings, did a methodology principle emerge worth naming?". Header: "Methodology". Options: "No new principle (Recommended if none articulated)"; "Capture one"; "Capture multiple". Format captured principles into the Methodology Principles section (M{N} — name / Origin / Rule / Apply-to keep / Apply-to drop). A principle that should also bind FUTURE reviews goes through the same record offer as a durable rejection (`references/standing-decisions.md`, Record).
 
 ### Step 9.5: Cluster Discovery (set-arithmetic over the finding graph)
 

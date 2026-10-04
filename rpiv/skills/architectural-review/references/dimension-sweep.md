@@ -5,7 +5,7 @@
 - **Boundary** — what the layer owns; leaks up or down.
 - **Public surface** — exported names/types/ergonomics; siblings reaching past the facade; per-symbol consumer counts (from integration-scanner).
 - **Coherence / SRP** — each file and function does one thing.
-- **Granularity** — functions/methods too big/small; god-parameter lists.
+- **Granularity** — functions/methods too big/small; god-parameter lists; shallow modules by the **deletion test** — if deleting a module or wrapper would move its complexity to its callers unchanged (interface as complex as implementation), it is shallow. Raise one only with the verbatim signature, the forwarding body line, and >= 1 caller cite; skip real seams (>= 2 implementations or a test substitute), I/O/framework adapters, declared public entry points, and wrappers that validate, narrow types, or translate errors.
 - **Programming by intention** — reads top-down as a story; named operations over inline blocks.
 - **DRY** — duplicated patterns within the layer or across siblings (hand any cross-file duplication to the D-lens evidence).
 - **DDD / ubiquitous language** — domain vocabulary consistent; no lingering legacy names.

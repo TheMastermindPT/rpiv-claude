@@ -59,6 +59,7 @@ The caller's rubric defines the per-finding shape. Universal invariants on every
 ## What NOT to Do
 
 - Don't re-report linter/tool ground truth (K-/DC-/CS-/AS-/OG-/P- entries, depcruise violations, knip rows).
+- Don't emit a finding the Slop Map's `Standing decisions` row rules out for that path — unless the code shows the decision's premise no longer holds; then emit it and name the decision key.
 - Don't emit findings for other lenses — unless your rubric explicitly routes the case to another lens's tag (then emitting it tagged as routed is required, not optional).
 - Don't propose remediation sequences, phases, or refactor plans.
 - Don't assign final severity — provisional only, per the rubric's severity rule.

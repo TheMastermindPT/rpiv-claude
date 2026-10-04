@@ -2,6 +2,9 @@
 
 Shared by `discover`, `design`, and `blueprint`. Run this at finalization, after the artifact's
 `## Decisions` section is settled and before flipping `status` to its terminal value.
+`architectural-review` reuses Steps 2-3 when the developer records a rejected finding as a
+standing decision (`skills/architectural-review/references/standing-decisions.md`); Step 1's
+tag scan does not apply there.
 
 A **standing decision** outlives the feature that produced it and constrains future work (e.g. a
 testing standard, a boundary rule, a technology choice). Feature-local decisions stay in the
