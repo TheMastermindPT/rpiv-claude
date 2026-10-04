@@ -1,5 +1,5 @@
 {
-  "description": "rpiv lifecycle hooks: session bootstrap/restore, read-only enforcement and auto-approval for rpiv agents, artifact validation and fence-duplication detection on Write, agent model/output checks, compaction state preservation.",
+  "description": "rpiv lifecycle hooks: session bootstrap/restore, read-only enforcement and auto-approval for rpiv agents, approval prompts before outward actions (git push, branch/worktree creation, GitHub writes), artifact validation and fence-duplication detection on Write, agent model/output checks, compaction state preservation.",
   "hooks": {
     "SessionStart": [
       {
@@ -31,6 +31,16 @@
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/.claude/hooks/enforce-readonly-agent.mjs\"",
             "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell|mcp__.*[Gg][Ii][Tt][Hh][Uu][Bb].*__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/.claude/hooks/approve-outward-actions.mjs\"",
+            "timeout": 10
           }
         ]
       }
