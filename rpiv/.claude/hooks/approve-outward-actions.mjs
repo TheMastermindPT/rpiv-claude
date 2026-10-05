@@ -41,22 +41,20 @@ function tokenize(src, mode) {
 	return p.segments;
 }
 
-function parseList(p, terminator) {
+function parseList(p, terminator, options = {}) {
 	if (++p.depth > MAX_NESTING)
 		throw new Unparseable("substitutions nested too deeply");
-	const seg = newSegmentBuilder(p);
-	// Unquoted `(` opened in this list; a `)` closing one of them is grouping,
-	// not the end of a `$(...)` substitution.
-	let parens = 0;
+	const seg = newSegmentBuilder(p, options);
 	while (p.i < p.src.length) {
 		const ch = p.src[p.i];
-		if (ch === terminator && parens === 0) {
+		// A `)` closing a `(` group opened in this list is grouping, not the end
+		// of a `$(...)` substitution.
+		if (ch === terminator && seg.openParens === 0) {
 			p.i++;
 			seg.endSegment();
 			p.depth--;
 			return;
 		}
-		parens += parenDelta(ch, parens);
 		step(p, seg, ch);
 	}
 	if (terminator !== null) throw new Unparseable("unterminated substitution");
@@ -70,8 +68,9 @@ function parenDelta(ch, open) {
 
 // A word records its decoded `value` and, in `raw`, which characters were
 // unquoted (quoted ones become "\0"), so redirection prefixes and expansions can
-// be told apart from quoted text.
-function newSegmentBuilder(p) {
+// be told apart from quoted text. `options.fed`: every segment of this list is
+// stdin-fed (an output process substitution).
+function newSegmentBuilder(p, options = {}) {
 	let words = [];
 	let word = null;
 	let piped = false;
@@ -83,6 +82,7 @@ function newSegmentBuilder(p) {
 	// feeds every segment inside it (`echo x | (bash)`, `{ bash; } < f`).
 	const groups = [];
 	let closedGroup = null;
+	let openParens = 0;
 	const empty = () => words.length === 0 && word === null;
 	return {
 		get inWord() {
@@ -151,7 +151,8 @@ function newSegmentBuilder(p) {
 					piped,
 					called,
 					stdinRedirect,
-					groups: [...groups],
+					inheritedFed: options.fed === true,
+					group: groups.at(-1) ?? null,
 				});
 			words = [];
 			piped = nextPiped;
@@ -160,14 +161,29 @@ function newSegmentBuilder(p) {
 			targetPending = false;
 			closedGroup = null;
 		},
-		openGroup() {
+		/** `(` groups open in this list. */
+		get openParens() {
+			return openParens;
+		},
+		/** The segment already has a command word (PowerShell `(` is then an
+		    argument expression, not a group). */
+		get hasWords() {
+			return !empty();
+		},
+		/** Records the segments parsed inside an argument expression `( … )`. */
+		noteExpression(segments) {
+			word.expression = segments;
+		},
+		openGroup(paren) {
 			const fed = piped && empty();
 			this.endSegment();
-			groups.push({ fed });
+			groups.push({ fed, paren, parent: groups.at(-1) ?? null });
+			if (paren) openParens++;
 		},
 		closeGroup() {
 			this.endSegment();
 			closedGroup = groups.pop() ?? null;
+			if (closedGroup?.paren) openParens--;
 		},
 	};
 }
@@ -176,7 +192,26 @@ function newSegmentBuilder(p) {
 const isStdinFed = (segment) =>
 	segment.piped ||
 	segment.stdinRedirect ||
-	(segment.groups ?? []).some((g) => g.fed);
+	segment.inheritedFed ||
+	groupIsFed(segment.group);
+
+/** Is `group`, or a group around it, fed? Segments share their enclosing groups
+    as a parent chain instead of copying the open-group stack (D13 rev. 2); the
+    answer is cached per group once tokenizing is complete. */
+function groupIsFed(group) {
+	const pending = [];
+	let node = group;
+	while (node && node.anyFed === undefined) {
+		pending.push(node);
+		node = node.parent;
+	}
+	let fed = node?.anyFed ?? false;
+	for (let k = pending.length - 1; k >= 0; k--) {
+		fed ||= pending[k].fed;
+		pending[k].anyFed = fed;
+	}
+	return group?.anyFed ?? false;
+}
 
 const BLANKS = new Set([" ", "\t", "\r"]);
 const GROUPING = new Set(["(", ")", "{", "}", ";"]);
@@ -366,12 +401,15 @@ function stepAngleParen(p, seg) {
 	p.i++;
 }
 
-/** Bash `<(…)` / `>(…)`: parsed like `$(…)`, standing as one computed word. */
+/** Bash `<(…)` / `>(…)`: parsed like `$(…)`, standing as one computed word. The
+    commands inside `>(…)` read the output written to it: they are stdin-fed
+    (D12 rev. 2). */
 function readProcessSubstitution(p, seg) {
+	const output = p.src[p.i] === ">";
 	seg.endWord();
 	p.i += 2;
 	seg.markProcessSubstitution();
-	parseList(p, ")");
+	parseList(p, ")", { fed: output });
 }
 
 /** PowerShell has no `<` redirection; `<#` opens a block comment. */
@@ -399,8 +437,9 @@ function readRedirection(p, seg, ch) {
 function stepSeparator(p, seg, ch, next) {
 	if (ch === "&") stepAmpersand(p, seg, next);
 	else if (ch === "|") {
+		// `||` is a list operator; `|` and Bash `|&` pipe into the next segment.
 		seg.endSegment({ nextPiped: next !== "|" });
-		p.i += next === "|" ? 2 : 1;
+		p.i += next === "|" || next === "&" ? 2 : 1;
 	} else if (ch === ";") {
 		seg.endSegment();
 		p.i++;
@@ -417,9 +456,22 @@ function stepGrouping(p, seg, ch) {
 			words: [],
 			broken: broken("PowerShell call operator applied to an expression"),
 		});
-	if (ch === "(" || ch === "{") seg.openGroup();
+	else if (ch === "(" && p.mode === "ps" && seg.hasWords)
+		return readArgumentExpression(p, seg);
+	if (ch === "(" || ch === "{") seg.openGroup(ch === "(");
 	else seg.closeGroup();
 	p.i++;
+}
+
+/** PowerShell `(` after a word of the same command: an expression whose value is
+    passed as an argument. It is one computed word; the commands inside it are
+    still parsed as segments, and kept on the word (D5 rev. 2). */
+function readArgumentExpression(p, seg) {
+	p.i++;
+	const before = p.segments.length;
+	seg.markDynamic();
+	parseList(p, ")");
+	seg.noteExpression(p.segments.slice(before));
 }
 
 const callsExpression = (p, seg, ch) =>
@@ -453,24 +505,84 @@ const VARIABLE_START = { bash: /[A-Za-z0-9_@*#?$!{-]/, ps: /[A-Za-z_{?:^$]/ };
 /** `$` at p.i: a substitution or variable marks the word dynamic. Returns false
     for a literal `$`. */
 function readExpansion(p, seg, next, inDouble = false) {
-	if (next === "(") {
-		p.i += 2;
-		seg.markDynamic();
-		parseList(p, ")");
-		return true;
-	}
+	if (next === "(") return readSubstitution(p, seg);
 	if (next === undefined || !VARIABLE_START[p.mode].test(next)) return false;
 	seg.markDynamic();
-	if (next === "{") {
-		p.i += 2;
-		if (p.mode === "bash") skipParameterBody(p, inDouble);
-		else skipPast(p, "}", "unterminated ${...}");
-		return true;
-	}
+	if (next === "{") readBracedVariable(p, seg, inDouble);
+	else readVariableName(p, seg);
+	return true;
+}
+
+const startsArithmetic = (p) => p.mode === "bash" && p.src[p.i + 2] === "(";
+
+/** `$(` at p.i: Bash arithmetic `$((…))`, else a command substitution. */
+function readSubstitution(p, seg) {
+	if (startsArithmetic(p) && readArithmetic(p, seg)) return true;
+	p.i += 2;
+	seg.markDynamic();
+	parseList(p, ")");
+	return true;
+}
+
+/** `${…}` at p.i: a Bash parameter body, or PowerShell `${env:NAME}`, which
+    names its variable between the braces. */
+function readBracedVariable(p, seg, inDouble) {
+	p.i += 2;
+	if (p.mode === "bash") return skipParameterBody(p, inDouble);
+	const nameStart = p.i;
+	skipPast(p, "}", "unterminated ${...}");
+	seg.noteVariable(p.src.slice(nameStart, p.i - 1));
+}
+
+function readVariableName(p, seg) {
 	const nameStart = p.i + 1;
 	p.i += 2;
 	while (p.i < p.src.length && /[A-Za-z0-9_:]/.test(p.src[p.i])) p.i++;
 	seg.noteVariable(p.src.slice(nameStart, p.i));
+}
+
+/** Bash `$(( … ))` at p.i: one computed word whose `$( … )` and backtick
+    substitutions are still parsed. Returns false, with p unchanged, when the
+    `$((` does not close with `))`: POSIX then reads it as a command substitution
+    starting with a subshell (D5 rev. 2). */
+function readArithmetic(p, seg) {
+	const saved = { i: p.i, depth: p.depth, segments: p.segments.length };
+	p.i += 3;
+	try {
+		if (scanArithmetic(p)) {
+			seg.markDynamic();
+			return true;
+		}
+	} catch (err) {
+		if (!(err instanceof Unparseable)) throw err;
+	}
+	p.i = saved.i;
+	p.depth = saved.depth;
+	p.segments.length = saved.segments;
+	return false;
+}
+
+/** Scans an arithmetic body after `$((`; true once its closing `))` is read. */
+function scanArithmetic(p) {
+	const sink = newSegmentBuilder(p);
+	let depth = 0;
+	while (p.i < p.src.length) {
+		const ch = p.src[p.i];
+		if (ch === ")" && depth === 0) {
+			if (p.src[p.i + 1] !== ")") return false;
+			p.i += 2;
+			return true;
+		}
+		depth += parenDelta(ch, depth);
+		if (!stepArithmetic(p, sink, ch)) p.i++;
+	}
+	return false;
+}
+
+function stepArithmetic(p, sink, ch) {
+	if (ch === "\\") p.i += 2;
+	else if (ch === "`") readBacktick(p, sink);
+	else return ch === "$" && readExpansion(p, sink, p.src[p.i + 1], true);
 	return true;
 }
 
@@ -737,6 +849,43 @@ function suffixTable(words, key, step, init) {
 	return table;
 }
 
+const walkCaches = new WeakMap();
+
+/** Cached forward walk over `words` from `start`: `step(k)` returns
+    `{ done: result }` or `{ next }` and must depend only on k. Every index
+    visited shares the result, so a walk restarted from a later word (every
+    `git`, `gh` or computed word re-walks the options after it) costs nothing:
+    analysis stays linear in the command length (D13 rev. 2). */
+function memoWalk(words, key, start, step) {
+	let caches = walkCaches.get(words);
+	if (caches === undefined) {
+		caches = new Map();
+		walkCaches.set(words, caches);
+	}
+	let cache = caches.get(key);
+	if (cache === undefined) {
+		cache = new Map();
+		caches.set(key, cache);
+	}
+	const visited = [];
+	let result;
+	for (let k = start; ; ) {
+		if (cache.has(k)) {
+			result = cache.get(k);
+			break;
+		}
+		visited.push(k);
+		const r = step(k);
+		if ("done" in r) {
+			result = r.done;
+			break;
+		}
+		k = r.next;
+	}
+	for (const k of visited) cache.set(k, result);
+	return result;
+}
+
 /** Boolean suffix table: table[k] = step(words[k], table[k+1]). */
 const suffixAny = (words, key, step) =>
 	suffixTable(words, key, (ws, k, rest) => step(ws[k], rest), false);
@@ -753,6 +902,83 @@ const anyBeforeDashDash = (words, from, key, test) =>
 		(w, rest) => w.value !== "--" && (test(w) || rest),
 	)[from] ?? false;
 
+// ---- option tables -----------------------------------------------------------------
+//
+// Runners, wrappers and launchers read their options from a table: "flag" takes
+// no value, "value" takes the next word unless joined (`-n1`, `--opt=v`),
+// "optional" takes a value only joined, and "string" is the option whose value
+// is a command string. An option missing from the table is "unknown": it may
+// take the next word, so what follows cannot be known (D5/D12 rev. 2).
+
+let optionSpecCount = 0;
+
+/** Builds a table from space-separated names per kind (`a` short, `--x` long). */
+function optionSpec(kinds) {
+	const spec = { id: optionSpecCount++, short: new Map(), long: new Map() };
+	for (const [kind, names] of Object.entries(kinds))
+		for (const name of names.split(/\s+/).filter(Boolean))
+			(name.startsWith("--") ? spec.long : spec.short).set(name, kind);
+	return spec;
+}
+
+/** The value joined to an option word from position `at` (raw and value align). */
+const joinedValue = (word, at) => ({
+	value: word.value.slice(at),
+	raw: word.raw.slice(at),
+	dynamic: word.dynamic,
+	firstLiteral: true,
+});
+
+function readLongOption(words, k, spec) {
+	const v = words[k].value;
+	const eq = v.indexOf("=");
+	const kind = spec.long.get(eq === -1 ? v : v.slice(0, eq));
+	if (kind === undefined) return { unknown: true };
+	if (kind !== "value" && kind !== "string") return { width: 1, kind };
+	if (eq !== -1)
+		return { width: 1, kind, value: joinedValue(words[k], eq + 1) };
+	return { width: 2, kind, value: words[k + 1] };
+}
+
+function readShortCluster(words, k, spec) {
+	const v = words[k].value;
+	for (let j = 1; j < v.length; j++) {
+		const kind = spec.short.get(v[j]);
+		if (kind === undefined) return { unknown: true };
+		if (kind === "optional") return { width: 1, kind };
+		if (kind !== "value" && kind !== "string") continue;
+		if (j + 1 < v.length)
+			return { width: 1, kind, value: joinedValue(words[k], j + 1) };
+		return { width: 2, kind, value: words[k + 1] };
+	}
+	return { width: 1, kind: "flag" };
+}
+
+/** The option word at `k`: `{ width, kind, value }` or `{ unknown: true }`. */
+function readOption(words, k, spec) {
+	if (words[k].value === "--") return { width: 1, kind: "end" };
+	if (words[k].value.startsWith("--")) return readLongOption(words, k, spec);
+	return readShortCluster(words, k, spec);
+}
+
+const isOptionWord = (word) => /^-./.test(word.value);
+
+/** Reads options from `from`: `{ next }` (first word after them), with
+    `unknown` (index of an unknown option) or `string` (the command-string
+    option's value word, or null when it has none). */
+function readOptions(words, from, spec) {
+	return memoWalk(words, `options/${spec.id}`, from, (k) => {
+		if (k >= words.length || !isOptionWord(words[k]))
+			return { done: { next: k } };
+		const opt = readOption(words, k, spec);
+		if (opt.unknown) return { done: { next: k, unknown: k } };
+		if (opt.kind === "end") return { done: { next: k + 1 } };
+		if (opt.kind === "string")
+			return { done: { next: k + opt.width, string: opt.value ?? null } };
+		return { next: k + opt.width };
+	});
+}
+
 // ---- git -------------------------------------------------------------------------
 
 const BRANCH = "branch creation";
@@ -768,26 +994,31 @@ const SWITCH_CREATE = ["--create", "--force-create", "--orphan", "--track"];
 const CHECKOUT_CREATE = ["--orphan", "--track"];
 const BRANCH_RENAME_COPY = ["--copy", "--move"];
 // Modes in which `git branch` lists, deletes or edits upstream instead of creating.
+// Display options (`-v`, `--verbose`, `--format`, `--sort`, `--column`) are not
+// modes: with a new name, git still creates the branch (D4 rev. 2).
 const BRANCH_QUERY = [
 	"--list",
 	"--all",
 	"--remotes",
-	"--verbose",
 	"--show-current",
 	"--contains",
 	"--no-contains",
 	"--merged",
 	"--no-merged",
 	"--points-at",
-	"--format",
-	"--sort",
-	"--column",
-	"--no-column",
 	"--delete",
 	"--set-upstream-to",
 	"--unset-upstream",
 	"--edit-description",
 ];
+// Display options that take the next word as their value when written without `=`.
+const BRANCH_DISPLAY_WITH_VALUE = new Set(["--format", "--sort"]);
+
+/** A `git branch` argument that names a branch: not an option, and not the
+    separate value of `--format`/`--sort`. */
+const isBranchName = (words, k) =>
+	!words[k].value.startsWith("-") &&
+	!BRANCH_DISPLAY_WITH_VALUE.has(words[k - 1]?.value);
 
 const switchCreates = (words, from) =>
 	anyBeforeDashDash(
@@ -812,14 +1043,15 @@ function branchCreates(words, from) {
 		clusterHas(value, "cCmM") || hasLongOption(value, BRANCH_RENAME_COPY);
 	if (anyBeforeDashDash(words, from, "branch-copy", copies)) return true;
 	const queries = ({ value }) =>
-		clusterHas(value, "dDalrvu") || hasLongOption(value, BRANCH_QUERY);
+		clusterHas(value, "dDalru") || hasLongOption(value, BRANCH_QUERY);
 	if (anyBeforeDashDash(words, from, "branch-query", queries)) return false;
-	return anyFrom(
+	const names = suffixTable(
 		words,
-		from,
-		"non-option",
-		({ value }) => !value.startsWith("-"),
+		"branch-name",
+		(ws, k, later) => later || isBranchName(ws, k),
+		false,
 	);
+	return names[from] ?? false;
 }
 
 const pushesVia = (words, from) =>
@@ -922,20 +1154,24 @@ const PS_ARGUMENT_LIST =
 	/^-(args|a(r(g(u(m(e(n(t(l(i(s(t)?)?)?)?)?)?)?)?)?)?)?)$/i;
 const RUNTIME_CONFIG = "git configuration is supplied at run time";
 
+/** A `-c` setting's `[lower-case key, value]`. */
+function configSetting(word) {
+	const [, rawKey, value] = /^([^=]*)=?(.*)$/s.exec(word.value);
+	return [rawKey.toLowerCase(), value];
+}
+
 /** `-c <name>=<value>`: returns the option's width, or a broken reason. */
-function readGitConfigOption(valueWord, aliases) {
+function readGitConfigOption(valueWord) {
 	if (valueWord === undefined) return 1;
 	if (isComputed(valueWord)) return broken("git -c setting is computed");
-	const [, rawKey, value] = /^([^=]*)=?(.*)$/s.exec(valueWord.value);
-	const key = rawKey.toLowerCase();
+	const [key] = configSetting(valueWord);
 	if (key === "include.path" || key.startsWith("includeif."))
 		return broken(RUNTIME_CONFIG);
-	if (key.startsWith("alias.")) aliases.set(key.slice("alias.".length), value);
 	return 2;
 }
 
 /** Width (1 or 2 words) of the git option at `j`, or a broken reason. */
-function gitOptionWidth(words, j, aliases) {
+function gitOptionWidth(words, j) {
 	const word = words[j];
 	const [name] = word.value.split("=", 1);
 	const joined = word.value.includes("=");
@@ -947,48 +1183,119 @@ function gitOptionWidth(words, j, aliases) {
 	// Only a path option's joined value may be computed (`--git-dir=$D`).
 	const pathValue = joined && GIT_PATH_OPTIONS.has(name);
 	if (isComputed(word) && !pathValue) return broken("a git option is computed");
-	if (name === "-c") return readGitConfigOption(words[j + 1], aliases);
+	if (name === "-c") return readGitConfigOption(words[j + 1]);
 	return GIT_PATH_OPTIONS.has(name) && !joined ? 2 : 1;
 }
 
 /** Skips git's own options from `start`: `{ sub, aliases }` with the index of the
-    subcommand, or `{ reason }` when a deciding word fails closed. */
+    subcommand and its inline aliases, or `{ reason }` when a deciding word fails
+    closed. The walk is cached (D13 rev. 2). */
 function readGitOptions(words, start, mode) {
-	const aliases = new Map();
-	let j = start;
-	while (j < words.length && /^-./.test(words[j].value)) {
-		if (mode === "ps" && PS_ARGUMENT_LIST.test(words[j].value)) {
-			j++;
-			continue;
-		}
-		const width = gitOptionWidth(words, j, aliases);
-		if (typeof width === "string") return { reason: width };
-		j += width;
-	}
-	return { sub: j, aliases };
+	const end = memoWalk(words, `git/${mode}`, start, (j) => {
+		if (j >= words.length || !/^-./.test(words[j].value))
+			return { done: { sub: j } };
+		if (mode === "ps" && PS_ARGUMENT_LIST.test(words[j].value))
+			return { next: j + 1 };
+		const width = gitOptionWidth(words, j);
+		if (typeof width === "string") return { done: { reason: width } };
+		return { next: j + width };
+	});
+	if (end.reason) return end;
+	return { sub: end.sub, aliases: aliasesBetween(words, start, end.sub) };
 }
 
-/** The git invocation whose words start at `start` (just after `git`). */
-function gitInvocationReason(words, start, mode) {
+const aliasDefinitionCache = new WeakMap();
+
+/** `-c alias.<name>=<value>` settings of a word list, in order, cached. */
+function aliasDefinitions(words) {
+	let definitions = aliasDefinitionCache.get(words);
+	if (definitions !== undefined) return definitions;
+	definitions = [];
+	for (let k = 0; k + 1 < words.length; k++) {
+		if (words[k].value !== "-c" || isComputed(words[k + 1])) continue;
+		const [key, value] = configSetting(words[k + 1]);
+		if (key.startsWith("alias."))
+			definitions.push({ at: k, name: key.slice("alias.".length), value });
+	}
+	aliasDefinitionCache.set(words, definitions);
+	return definitions;
+}
+
+/** Inline aliases set between `start` and `end`; a later one wins, as in git. */
+function aliasesBetween(words, start, end) {
+	const aliases = new Map();
+	const definitions = aliasDefinitions(words);
+	if (definitions.length === 0) return aliases;
+	let lo = 0;
+	let hi = definitions.length;
+	while (lo < hi) {
+		const mid = (lo + hi) >> 1;
+		if (definitions[mid].at < start) lo = mid + 1;
+		else hi = mid;
+	}
+	for (let i = lo; i < definitions.length && definitions[i].at < end; i++)
+		aliases.set(definitions[i].name, definitions[i].value);
+	return aliases;
+}
+
+/** The git invocation whose words start at `start` (just after `git`). `chain`
+    carries inline aliases and the alias names already expanded, so aliases
+    resolve through each other (D5 rev. 2). */
+function gitInvocationReason(words, start, mode, chain = null) {
 	const read = readGitOptions(words, start, mode);
 	if (read.reason) return read.reason;
 	const subWord = words[read.sub];
 	if (subWord === undefined) return null;
+	const problem = gitSubcommandProblem(subWord);
+	if (problem) return problem;
+	const sub = subWord.value.toLowerCase();
+	const aliases = chain
+		? new Map([...chain.aliases, ...read.aliases])
+		: read.aliases;
+	if (!aliases.has(sub)) return gitSubcommandReason(sub, words, read.sub + 1);
+	const rest = words.slice(read.sub + 1);
+	return expandGitAlias(sub, rest, mode, { aliases, seen: chain?.seen });
+}
+
+function gitSubcommandProblem(subWord) {
 	if (isComputed(subWord)) return broken("the git subcommand is computed");
 	if (!PLAIN_WORD.test(subWord.value))
 		return broken(
 			`git subcommand ${JSON.stringify(subWord.value)} is not a plain word`,
 		);
-	const sub = subWord.value.toLowerCase();
-	const alias = read.aliases.get(sub);
-	if (alias === undefined) return gitSubcommandReason(sub, words, read.sub + 1);
+	return null;
+}
+
+/** Expands inline alias `sub` in front of its arguments `rest`; a `!` alias is
+    a shell command. */
+function expandGitAlias(sub, rest, mode, { aliases, seen = new Set() }) {
+	const problem = aliasChainProblem(sub, seen);
+	if (problem) return problem;
+	const alias = aliases.get(sub);
 	if (alias.startsWith("!")) return analyzeCommand(alias.slice(1), "bash");
 	const expanded = tokenize(alias, "bash")[0]?.words ?? [];
-	return gitInvocationReason(
-		[...expanded, ...words.slice(read.sub + 1)],
-		0,
-		mode,
-	);
+	return gitInvocationReason([...expanded, ...rest], 0, mode, {
+		aliases,
+		seen: new Set([...seen, sub]),
+	});
+}
+
+/** An alias that expands to itself, or a chain deeper than the nesting bound,
+    asks broken with its own reason (degrade-distinguishes-broken). */
+function aliasChainProblem(sub, seen) {
+	if (seen.has(sub))
+		return broken(`git alias ${JSON.stringify(sub)} expands to itself`);
+	if (seen.size >= MAX_NESTING)
+		return broken(`git alias chain is deeper than ${MAX_NESTING}`);
+	return null;
+}
+
+/** A `git-<name>` program (`git-lfs`, `/usr/lib/git-core/git-push`) is the
+    `git <name>` command; its arguments start at `from` (D4 rev. 2). */
+function gitDashReason(name, words, from) {
+	const sub = name.slice("git-".length);
+	if (!PLAIN_WORD.test(sub)) return null;
+	return gitSubcommandReason(sub, words, from);
 }
 
 // ---- gh ------------------------------------------------------------------------
@@ -1069,16 +1376,48 @@ const GH_API_OPTIONS_WITH_ARG = new Set([
 	"--hostname",
 ]);
 
-/** Indexes of the first two positional words from `start`, skipping options and
-    `-R <repo>`. */
-function ghPositionalIndexes(words, start) {
-	const out = [];
-	for (let k = start; k < words.length && out.length < 2; k++) {
-		if (GH_REPO_FLAGS.has(words[k].value)) k++;
-		else if (!words[k].value.startsWith("-") || isComputed(words[k]))
-			out.push(k);
-	}
-	return out;
+// Options gh reads at the root and group level without a value; `-R`/`--repo`
+// take one. Any other option there may take the next word (D3 rev. 2).
+const GH_ROOT_OPTIONS = new Set(["--help", "-h", "--version"]);
+// Top-level commands with no subcommand level: their own options follow freely.
+const GH_LEAF_COMMANDS = new Set([
+	"api",
+	"search",
+	"status",
+	"help",
+	"version",
+	"completion",
+	"browse",
+]);
+const GH_UNKNOWN_OPTION =
+	"gh option before the subcommand may take the next word";
+const isGhRepoJoined = (v) => v.startsWith("--repo=") || /^-R./.test(v);
+const isGhPositional = (word) =>
+	!word.value.startsWith("-") || isComputed(word);
+
+/** The next positional word from `start`, past `-R <repo>`, `--help` and
+    `--version`: `{ at }`, or `{ unknown }` for any other option. Cached. */
+function ghNextPositional(words, start) {
+	return memoWalk(words, "gh-positional", start, (k) => {
+		if (k >= words.length) return { done: {} };
+		const v = words[k].value;
+		if (isGhPositional(words[k])) return { done: { at: k } };
+		if (GH_REPO_FLAGS.has(v)) return { next: k + 2 };
+		if (GH_ROOT_OPTIONS.has(v) || isGhRepoJoined(v)) return { next: k + 1 };
+		return { done: { unknown: k } };
+	});
+}
+
+/** The first two positional words of a gh invocation from `start` (`second`
+    only for command groups), or `unknown`: the index of an option gh may read
+    as taking the next word, before the subcommand. */
+function ghPositionals(words, start) {
+	const first = ghNextPositional(words, start);
+	if (first.at === undefined) return { unknown: first.unknown };
+	if (GH_LEAF_COMMANDS.has(words[first.at].value.toLowerCase()))
+		return { first: first.at };
+	const second = ghNextPositional(words, first.at + 1);
+	return { first: first.at, second: second.at, unknown: second.unknown };
 }
 
 function ghWordProblem(word) {
@@ -1130,15 +1469,14 @@ const isOptionSafeOrLiteral = (word) => !isComputed(word) || isOptionSafe(word);
 /** The options before the endpoint: `{ end }` (the endpoint's index), or
     `{ reason }` when an option or its value is computed. */
 function ghApiOptions(words, from) {
-	let k = from;
-	while (k < words.length && words[k].value.startsWith("-")) {
+	return memoWalk(words, "gh-api-options", from, (k) => {
+		if (k >= words.length || !words[k].value.startsWith("-"))
+			return { done: { end: k } };
 		const width = GH_API_OPTIONS_WITH_ARG.has(words[k].value) ? 2 : 1;
-		const optionWords = words.slice(k, k + width);
-		if (optionWords.some(isComputed))
-			return { reason: broken("a gh api option is computed") };
-		k += width;
-	}
-	return { end: k };
+		if (words.slice(k, k + width).some(isComputed))
+			return { done: { reason: broken("a gh api option is computed") } };
+		return { next: k + width };
+	});
 }
 
 function ghIsRead(top, second) {
@@ -1150,7 +1488,11 @@ function ghIsRead(top, second) {
 
 /** The gh invocation whose words start at `start` (just after `gh`). */
 function ghInvocationReason(words, start) {
-	const [first, second] = ghPositionalIndexes(words, start);
+	const { first, second, unknown } = ghPositionals(words, start);
+	if (unknown !== undefined)
+		return broken(
+			`${GH_UNKNOWN_OPTION}: ${JSON.stringify(words[unknown].value)}`,
+		);
 	if (first === undefined) return null;
 	const problem = ghWordProblem(words[first]);
 	if (problem) return problem;
@@ -1162,13 +1504,14 @@ function ghInvocationReason(words, start) {
 	return outward(`gh ${top}${sub ? ` ${sub.value}` : ""}`);
 }
 
-/** Would words from `start` form an outward gh invocation of a write-capable
-    top-level command? */
+/** Would words from `start` form a gh invocation of a write-capable top-level
+    command that is outward, or that has an unknown option before its
+    subcommand (D3 rev. 2: `sudo $GH pr --title view create …`)? */
 function ghWouldWrite(words, start) {
-	const [first] = ghPositionalIndexes(words, start);
+	const { first, unknown } = ghPositionals(words, start);
 	if (first === undefined) return false;
 	if (!GH_WRITE_CAPABLE.has(words[first].value.toLowerCase())) return false;
-	return isOutward(ghInvocationReason(words, start));
+	return unknown !== undefined || isOutward(ghInvocationReason(words, start));
 }
 
 // ---- GitHub MCP ----------------------------------------------------------------
@@ -1226,11 +1569,27 @@ function commandWordIndex({ words, called }, mode) {
 const POSIX_SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh"]);
 const POWERSHELLS = new Set(["pwsh", "powershell"]);
 const INVOKE_EXPRESSION = new Set(["invoke-expression", "iex"]);
-const POSIX_SHELL_OPTIONS_WITH_ARG = new Set([
+// Shell options whose value is the next word, before or after `-c` (D12 rev. 2).
+const POSIX_VALUE_OPTIONS = new Set([
 	"-o",
 	"+o",
+	"-O",
+	"+O",
 	"--rcfile",
 	"--init-file",
+]);
+const POSIX_LONG_FLAGS = new Set([
+	"--login",
+	"--noprofile",
+	"--norc",
+	"--posix",
+	"--restricted",
+	"--verbose",
+	"--noediting",
+	"--debugger",
+	"--dump-strings",
+	"--dump-po-strings",
+	"--pretty-print",
 ]);
 const PWSH_OPTIONS_WITH_ARG = new Set([
 	"executionpolicy",
@@ -1250,12 +1609,13 @@ const PWSH_OPTIONS_WITH_ARG = new Set([
 	"settingsfile",
 ]);
 
-/** A literal inner command is analysed like any other; a computed one asks. */
-function innerReason(words, mode) {
+/** A literal inner command is analysed like any other; a computed one asks.
+    `fed`: the wrapper's segment is stdin-fed, so the inner command is too. */
+function innerReason(words, mode, fed = false) {
 	if (words.length === 0) return broken("wrapper has no command string");
 	if (words.some((w) => w.dynamic))
 		return broken("wrapped command is computed at run time");
-	return analyzeCommand(words.map((w) => w.value).join(" "), mode);
+	return analyzeCommand(words.map((w) => w.value).join(" "), mode, fed);
 }
 
 const STDIN_FED = "shell reads its commands from stdin";
@@ -1264,10 +1624,10 @@ const STDIN_FED = "shell reads its commands from stdin";
 // inner analysis already inspected, so the segment scan skips them. Without the
 // skip, `eval eval ... x` re-analyses every suffix and the hook can time out.
 const verdict = (reason, covered = 0) => ({ reason, covered });
-const inner = (words, mode, covered) =>
-	verdict(innerReason(words, mode), covered);
+const inner = (words, mode, covered, fed) =>
+	verdict(innerReason(words, mode, fed), covered);
 
-// ---- which word a segment runs (D12 rev. 1) -----------------------------------------
+// ---- which word a segment runs (D12 rev. 1, rev. 2) ---------------------------------
 
 const SHELL_KEYWORDS = new Set([
 	"if",
@@ -1279,61 +1639,125 @@ const SHELL_KEYWORDS = new Set([
 	"until",
 	"!",
 ]);
-// Launchers that run their operand, with the options that take a value.
+// Launchers that run their operand, with their option tables (D12 rev. 2).
 const LAUNCHERS = {
-	sudo: ["-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-U", "-T", "-R"],
-	doas: ["-u", "-C"],
-	env: ["-u", "-C", "-S", "--unset", "--chdir", "--split-string"],
-	command: [],
-	exec: ["-a"],
-	nohup: [],
-	time: ["-f", "-o", "--format", "--output"],
-	nice: ["-n", "--adjustment"],
-	timeout: ["-s", "-k", "--signal", "--kill-after"],
-	stdbuf: ["-i", "-o", "-e", "--input", "--output", "--error"],
-	setsid: [],
+	sudo: optionSpec({
+		flag: "A b E e H i K k l n P S s V v B N --askpass --background --edit --set-home --login --remove-timestamp --reset-timestamp --list --non-interactive --preserve-groups --stdin --shell --version --validate --bell --help --nonewline",
+		value:
+			"u g h p C D r t U T R --user --group --host --prompt --close-from --chdir --role --type --other-user --command-timeout --chroot",
+		optional: "--preserve-env",
+	}),
+	doas: optionSpec({ flag: "n s L", value: "u C" }),
+	env: optionSpec({
+		flag: "i 0 v --ignore-environment --null --debug --help --version",
+		value: "u C --unset --chdir",
+		string: "S --split-string",
+	}),
+	command: optionSpec({ flag: "p v V" }),
+	exec: optionSpec({ flag: "c l", value: "a" }),
+	nohup: optionSpec({ flag: "--help --version" }),
+	time: optionSpec({
+		flag: "p v q a --portability --verbose --quiet --append --help --version",
+		value: "f o --format --output",
+	}),
+	nice: optionSpec({ flag: "--help --version", value: "n --adjustment" }),
+	timeout: optionSpec({
+		flag: "v --foreground --preserve-status --verbose --help --version",
+		value: "s k --signal --kill-after",
+	}),
+	stdbuf: optionSpec({
+		flag: "--help --version",
+		value: "i o e --input --output --error",
+	}),
+	setsid: optionSpec({
+		flag: "c f w --ctty --fork --wait --help --version",
+	}),
 };
-const LAUNCHER_NUMBER = /^\d+(\.\d+)?[smhd]?$/;
+// PowerShell `Start-Process` (`start`, `saps`): its `-FilePath` or first
+// positional is the command being run.
+const PS_LAUNCHERS = new Set(["start-process", "start", "saps"]);
+const PS_LAUNCHER_VALUES = [
+	"argumentlist",
+	"args",
+	"workingdirectory",
+	"credential",
+	"redirectstandardinput",
+	"redirectstandardoutput",
+	"redirectstandarderror",
+	"windowstyle",
+	"verb",
+	"environment",
+];
+const LAUNCHER_NUMBER = /^-?\d+(\.\d+)?[smhd]?$/;
 
-/** Index past a launcher's options, option values, numbers and assignments. */
-function skipLauncherArgs(words, k, takesValue) {
-	while (k < words.length) {
-		const v = words[k].value;
-		if (ASSIGNMENT.test(v) || LAUNCHER_NUMBER.test(v)) k++;
-		else if (v.startsWith("-")) k += takesValue.includes(v) ? 2 : 1;
-		else break;
+/** Past a launcher's options, option values, numbers and assignments: `{ next }`,
+    with `unknown` when an option is not in its table. */
+function skipLauncherArgs(words, k, spec) {
+	for (let step = { next: k }; ; ) {
+		if (step.done) return step.done;
+		step = launcherStep(words, step.next, spec);
 	}
-	return k;
 }
 
-/** Index of the word the segment runs: the first non-assignment word, or the
-    operand of the launchers above. Computed once per segment. */
-function runIndex(segment) {
-	if (segment.runIndex !== undefined) return segment.runIndex;
+/** One launcher word at `k`: `{ next }` to go on, or `{ done }`. */
+function launcherStep(words, k, spec) {
+	if (k >= words.length) return { done: { next: k } };
+	const v = words[k].value;
+	if (ASSIGNMENT.test(v) || LAUNCHER_NUMBER.test(v)) return { next: k + 1 };
+	if (!isOptionWord(words[k])) return { done: { next: k } };
+	const opt = readOption(words, k, spec);
+	if (opt.unknown) return { done: { next: k + 1, unknown: k } };
+	if (opt.kind === "end") return { done: { next: k + 1 } };
+	return { next: k + opt.width };
+}
+
+/** Past `Start-Process` parameters: `{ next }` (the command being run). */
+function skipPsLauncherArgs(words, k) {
+	while (k < words.length && /^-./.test(words[k].value)) {
+		const param = words[k].value.slice(1).toLowerCase();
+		if (abbreviates(param, "filepath")) return { next: k + 1 };
+		const takesValue = PS_LAUNCHER_VALUES.some((n) => abbreviates(param, n));
+		k += takesValue ? 2 : 1;
+	}
+	return { next: k };
+}
+
+function launcherSkip(words, k, mode) {
+	const name = commandName(words[k]?.value ?? "");
+	if (mode === "ps" && PS_LAUNCHERS.has(name))
+		return skipPsLauncherArgs(words, k + 1);
+	if (Object.hasOwn(LAUNCHERS, name))
+		return skipLauncherArgs(words, k + 1, LAUNCHERS[name]);
+	return null;
+}
+
+/** Where a segment's command word is: `{ index, after }`. `index` is the first
+    non-assignment word or a launcher's operand; after an option a launcher does
+    not know, any later word counts as run (`after`). Computed once per segment. */
+function runPosition(segment, mode) {
+	if (segment.run !== undefined) return segment.run;
 	const { words } = segment;
 	let k = 0;
+	let after;
 	while (isLeadingWord(words[k])) k++;
-	for (
-		let launcher = launcherOf(words[k]);
-		launcher;
-		launcher = launcherOf(words[k])
-	)
-		k = skipLauncherArgs(words, k + 1, launcher);
-	segment.runIndex = k;
-	return k;
+	for (let skip = launcherSkip(words, k, mode); skip; ) {
+		after ??= skip.unknown;
+		k = skip.next;
+		skip = launcherSkip(words, k, mode);
+	}
+	segment.run = { index: k, after };
+	return segment.run;
 }
+
+const isRunWord = (segment, i, mode) => {
+	const run = runPosition(segment, mode);
+	return i === run.index || (run.after !== undefined && i > run.after);
+};
 
 /** An assignment or shell keyword before the command word. */
 const isLeadingWord = (word) =>
 	word !== undefined &&
 	(ASSIGNMENT.test(word.value) || SHELL_KEYWORDS.has(word.value));
-
-/** The launcher's value-taking options, or undefined when `word` is none. */
-function launcherOf(word) {
-	if (word === undefined) return undefined;
-	const name = commandName(word.value);
-	return Object.hasOwn(LAUNCHERS, name) ? LAUNCHERS[name] : undefined;
-}
 
 // Shell reads that never run commands, valid only before a command string or
 // operand (`bash -c "git push" --version` still pushes).
@@ -1344,8 +1768,8 @@ const TERMINAL_READS = {
 };
 const STDIN_OPERANDS = new Set(["-", "/dev/stdin", "/dev/fd/0"]);
 
-/** A POSIX shell operand: stdin (`-`, `/dev/stdin`, `<(…)`) asks when the shell
-    is run; a file operand is D11 residual risk. */
+/** A POSIX shell or `source` operand: stdin (`-`, `/dev/stdin`, `<(…)`) asks
+    when the shell is run; a file operand is D11 residual risk. */
 function posixOperandReason(word, isRun) {
 	const readsStdin = STDIN_OPERANDS.has(word.value) || word.processSubstitution;
 	return verdict(readsStdin && isRun ? broken(STDIN_FED) : null);
@@ -1355,27 +1779,73 @@ function posixOperandReason(word, isRun) {
 // word) in place, without copying them: every shell word in a long segment would
 // otherwise copy the rest of it (D13: cost stays linear).
 
-function posixShellReason(words, from, fedByStdin, isRun) {
-	for (let j = from; j < words.length; j++) {
-		const decided = posixWordVerdict(words, j, from, isRun);
-		if (decided) return decided;
-		if (POSIX_SHELL_OPTIONS_WITH_ARG.has(words[j].value)) j++;
-	}
-	return verdict(fedByStdin && isRun ? broken(STDIN_FED) : null);
+/** A short-option cluster of a POSIX shell (`-x`, `-lc`, `+e`). */
+const isShellCluster = (word) =>
+	/^[-+][A-Za-z]+$/.test(word.value) && !word.processSubstitution;
+
+/** Where a POSIX shell's options end: `{ terminal }`, `{ unknown }` (an unknown
+    long option between `-c` and its string), `{ string }` (index of the `-c`
+    string) or `{ operand }`; `stdin` when `-s` was given. */
+function readPosixShellOptions(words, from, afterC = false, stdin = false) {
+	// The walk's state only turns on, so it is part of the cache key and a
+	// change continues as a new walk (D13 rev. 2).
+	return memoWalk(words, `posix/${afterC}/${stdin}`, from, (j) =>
+		posixShellStep(words, j, afterC, stdin),
+	);
 }
 
-/** A verdict when words[j] decides what the shell runs, else null. */
-function posixWordVerdict(words, j, from, isRun) {
+function posixShellStep(words, j, afterC, stdin) {
+	const ended = (at) => ({
+		done: afterC ? { string: at } : { operand: at, stdin },
+	});
+	if (j >= words.length) return ended(j);
 	const v = words[j].value;
-	if (TERMINAL_READS.posix.has(v)) return verdict(null);
-	if (clusterHas(v, "c"))
-		return inner(words.slice(j + 1, j + 2), "bash", j + 2 - from);
-	// `-s`: read commands from stdin.
-	if (clusterHas(v, "s")) return verdict(isRun ? broken(STDIN_FED) : null);
-	if (POSIX_SHELL_OPTIONS_WITH_ARG.has(v)) return null;
-	if (words[j].processSubstitution || !/^[-+]./.test(v))
-		return posixOperandReason(words[j], isRun);
-	return null;
+	if (!afterC && TERMINAL_READS.posix.has(v))
+		return { done: { terminal: true } };
+	if (POSIX_VALUE_OPTIONS.has(v)) return { next: j + 2 };
+	if (v === "--") return ended(j + 1);
+	if (isShellCluster(words[j]))
+		return posixClusterStep(words, j, afterC, stdin);
+	return v.startsWith("--") ? posixLongStep(j, v, afterC) : ended(j);
+}
+
+/** A long shell option: an unknown one between `-c` and its string asks. */
+function posixLongStep(j, v, afterC) {
+	if (afterC && !POSIX_LONG_FLAGS.has(v)) return { done: { unknown: j } };
+	return { next: j + 1 };
+}
+
+/** `-c` / `-s` inside a short-option cluster turn the walk's state on. */
+const clusterTurnsOn = (v, letter) => v[0] === "-" && v.includes(letter);
+
+function posixClusterStep(words, j, afterC, stdin) {
+	const v = words[j].value;
+	const c = afterC || clusterTurnsOn(v, "c");
+	const s = stdin || clusterTurnsOn(v, "s");
+	if (c === afterC && s === stdin) return { next: j + 1 };
+	return { done: readPosixShellOptions(words, j + 1, c, s) };
+}
+
+function posixShellReason(words, from, ctx) {
+	const end = readPosixShellOptions(words, from);
+	if (end.terminal) return verdict(null);
+	if (end.unknown !== undefined)
+		return verdict(
+			broken(
+				`shell option ${JSON.stringify(words[end.unknown].value)} before the -c string`,
+			),
+		);
+	if (end.string !== undefined)
+		return inner(
+			words.slice(end.string, end.string + 1),
+			"bash",
+			end.string + 1 - from,
+			ctx.fed,
+		);
+	if (end.stdin) return verdict(ctx.isRun ? broken(STDIN_FED) : null);
+	const operand = words[end.operand];
+	if (operand) return posixOperandReason(operand, ctx.isRun);
+	return verdict(ctx.fed && ctx.isRun ? broken(STDIN_FED) : null);
 }
 
 // PowerShell accepts any unambiguous prefix of a parameter name.
@@ -1394,51 +1864,77 @@ function powershellOption(opt, name) {
 
 const PWSH_SCRIPT_FILE = "PowerShell script file cannot be inspected";
 
-// `shell`: { words, from, name, isRun, fedByStdin } — the wrapper's words from
-// `from`, its normalised name, whether it is the command being run, and stdin.
+// `shell`: { words, from, name, isRun, fed } — the wrapper's words from `from`,
+// its normalised name, whether it is the command being run, and stdin.
 
 // A positional argument is a script file for `pwsh` (where it is the command
-// being run) and an inline command for Windows `powershell`.
+// being run) and an inline command for Windows `powershell`; a computed one is
+// analysed only when `powershell` is run (D12 rev. 2).
 function powershellPositional(shell, j) {
-	const covered = shell.words.length - shell.from;
-	if (shell.name === "powershell")
-		return inner(shell.words.slice(j), "ps", covered);
-	return verdict(shell.isRun ? broken(PWSH_SCRIPT_FILE) : null, covered);
+	const { words, from, isRun } = shell;
+	const covered = words.length - from;
+	if (shell.name !== "powershell")
+		return verdict(isRun ? broken(PWSH_SCRIPT_FILE) : null, covered);
+	const rest = words.slice(j);
+	if (!isRun && rest.some(isComputed)) return verdict(null, covered);
+	return inner(rest, "ps", covered, shell.fed);
 }
 
-function powershellCommand({ words, from }, j) {
+function powershellCommand({ words, from, fed }, j) {
 	const covered = words.length - from;
 	if (words[j + 1]?.value === "-") return verdict(broken(STDIN_FED), covered);
-	return inner(words.slice(j + 1), "ps", covered);
+	return inner(words.slice(j + 1), "ps", covered, fed);
 }
 
 const PWSH_UNINSPECTABLE = {
 	encoded: "PowerShell encoded command cannot be inspected",
 	file: PWSH_SCRIPT_FILE,
 };
+// An option word: dashes or a slash, then letters (or `?`).
+const PLAIN_PWSH_OPTION = /^(--|-|\/)[A-Za-z?]+$/;
 
-function powershellReason(shell) {
-	const { words, name } = shell;
-	for (let j = shell.from; j < words.length; j++) {
+/** Where pwsh/powershell options end: `{ kind, at }` with kind "terminal",
+    "positional", "not-plain", "command", "encoded", "file" or "end". Cached. */
+function readPowershellOptions(words, from, name) {
+	return memoWalk(words, `pwsh/${name}`, from, (j) => {
+		if (j >= words.length) return { done: { kind: "end", at: j } };
 		const v = words[j].value;
-		if (TERMINAL_READS[name].has(v.toLowerCase())) return verdict(null);
-		if (!/^[-/]/.test(v)) return powershellPositional(shell, j);
+		if (TERMINAL_READS[name].has(v.toLowerCase()))
+			return { done: { kind: "terminal", at: j } };
+		if (!/^[-/]/.test(v)) return { done: { kind: "positional", at: j } };
+		if (!PLAIN_PWSH_OPTION.test(v))
+			return { done: { kind: "not-plain", at: j } };
 		const kind = powershellOption(
 			v.replace(/^(--|-|\/)/, "").toLowerCase(),
 			name,
 		);
-		if (kind === "takes-arg") j++;
-		else if (kind === "command") return powershellCommand(shell, j);
-		else if (Object.hasOwn(PWSH_UNINSPECTABLE, kind))
-			return verdict(broken(PWSH_UNINSPECTABLE[kind]));
-	}
-	return verdict(shell.fedByStdin && shell.isRun ? broken(STDIN_FED) : null);
+		if (kind === "takes-arg") return { next: j + 2 };
+		if (kind === "switch") return { next: j + 1 };
+		return { done: { kind, at: j } };
+	});
+}
+
+function powershellReason(shell) {
+	const { words } = shell;
+	const end = readPowershellOptions(words, shell.from, shell.name);
+	if (end.kind === "terminal") return verdict(null);
+	if (end.kind === "positional") return powershellPositional(shell, end.at);
+	if (end.kind === "command") return powershellCommand(shell, end.at);
+	if (end.kind === "not-plain")
+		return verdict(
+			broken(
+				`PowerShell option ${JSON.stringify(words[end.at].value)} is not plain`,
+			),
+		);
+	if (Object.hasOwn(PWSH_UNINSPECTABLE, end.kind))
+		return verdict(broken(PWSH_UNINSPECTABLE[end.kind]));
+	return verdict(shell.fed && shell.isRun ? broken(STDIN_FED) : null);
 }
 
 const isCmdRunFlag = (word) => /^\/\/?[ck]$/i.test(word.value);
 
 // cmd's quoting is closest to PowerShell's (backslash is literal); `%VAR%` is computed.
-function cmdReason(words, from, fedByStdin, isRun) {
+function cmdReason(words, from, ctx) {
 	// Index of the first `/c` or `/k` at or after each word, cached per segment.
 	const flag = suffixTable(
 		words,
@@ -1447,40 +1943,253 @@ function cmdReason(words, from, fedByStdin, isRun) {
 		-1,
 	)[from];
 	if (flag === -1)
-		return verdict(fedByStdin && isRun ? broken(STDIN_FED) : null);
+		return verdict(ctx.fed && ctx.isRun ? broken(STDIN_FED) : null);
 	const command = words.slice(flag + 1);
 	const covered = words.length - from;
 	if (command.some((w) => /%[^%\s]+%/.test(w.value)))
 		return verdict(broken("wrapped command is computed at run time"), covered);
-	return inner(command, "ps", covered);
+	return inner(command, "ps", covered, ctx.fed);
 }
 
-function invokeExpressionReason(words, from, piped) {
+const NO_COMMAND_STRING = "wrapper has no command string";
+
+// `eval`, `iex` and `[scriptblock]::Create` with no literal string ask broken,
+// piped or not (D12 rev. 2).
+function invokeExpressionReason(words, from, piped, ctx) {
 	const command = words
 		.slice(from)
 		.filter((w) => !/^-c(o(m(m(a(n(d)?)?)?)?)?)?$/i.test(w.value));
-	if (command.length === 0) return verdict(piped ? broken(STDIN_FED) : null);
-	return inner(command, "ps", words.length - from);
+	if (command.length === 0)
+		return verdict(broken(piped ? STDIN_FED : NO_COMMAND_STRING));
+	return inner(command, "ps", words.length - from, ctx.fed);
 }
 
-function evalReason(words, from) {
-	if (from >= words.length) return verdict(null);
-	return inner(words.slice(from), "bash", words.length - from);
+function evalReason(words, from, ctx) {
+	if (from >= words.length) return verdict(broken(NO_COMMAND_STRING));
+	return inner(words.slice(from), "bash", words.length - from, ctx.fed);
 }
 
-function wrapperReason(segment, i, name) {
-	const { words } = segment;
-	const fedByStdin = isStdinFed(segment);
-	const isRun = i === runIndex(segment);
-	if (POSIX_SHELLS.has(name))
-		return posixShellReason(words, i + 1, fedByStdin, isRun);
-	if (POWERSHELLS.has(name))
-		return powershellReason({ words, from: i + 1, name, isRun, fedByStdin });
-	if (name === "cmd") return cmdReason(words, i + 1, fedByStdin, isRun);
-	if (name === "eval") return evalReason(words, i + 1);
-	if (INVOKE_EXPRESSION.has(name))
-		return invokeExpressionReason(words, i + 1, segment.piped);
-	return verdict(null);
+/** PowerShell `[scriptblock]::Create(<string>)`: a literal string is analysed, a
+    computed one asks broken (D12 rev. 2; decides over the argument-expression
+    rule). */
+function scriptblockReason(word, fed) {
+	const segments = word.expression ?? [];
+	const only = segments.length === 1 ? segments[0].words : [];
+	if (only.length !== 1)
+		return broken("scriptblock is built from a computed string");
+	return innerReason(only, "ps", fed);
+}
+
+const isScriptblockCreate = (word, mode) =>
+	mode === "ps" && /^\[scriptblock\]::create$/i.test(word.value);
+
+// Wrappers that run an option's value as a command string (D12 rev. 2).
+// `onPositional` says what a positional word is: "skip" (a user, file or lock),
+// "second" (sg: the group, then the string), "rest" (watch: the command words),
+// "first" (trap: the action) or "stop" (env: the command; env's other options
+// are a launcher's, so an unknown one is not this rule's).
+const STRING_WRAPPERS = {
+	su: {
+		onPositional: "skip",
+		spec: optionSpec({
+			flag: "l m p f P h V --login --preserve-environment --pty --fast --help --version",
+			value: "s g G w --shell --group --supp-group --whitelist-environment",
+			string: "c --command --session-command",
+		}),
+	},
+	runuser: {
+		onPositional: "skip",
+		spec: optionSpec({
+			flag: "l m p f P h V --login --preserve-environment --pty --fast --help --version",
+			value:
+				"u s g G w --user --shell --group --supp-group --whitelist-environment",
+			string: "c --command --session-command",
+		}),
+	},
+	script: {
+		onPositional: "skip",
+		spec: optionSpec({
+			flag: "a e f q r --append --return --flush --quiet --force --help --version",
+			value:
+				"E I O B T o m --echo --log-in --log-out --log-io --log-timing --logging-format --output-limit",
+			optional: "t --timing",
+			string: "c --command",
+		}),
+	},
+	flock: {
+		onPositional: "skip",
+		spec: optionSpec({
+			flag: "s x u n o F --shared --exclusive --unlock --nonblock --nb --close --no-fork --verbose --help --version",
+			value: "w E --timeout --wait --conflict-exit-code",
+			string: "c --command",
+		}),
+	},
+	sg: { onPositional: "second", spec: optionSpec({ string: "c" }) },
+	watch: {
+		onPositional: "rest",
+		spec: optionSpec({
+			flag: "b e g c t x p w r --beep --errexit --chgexit --color --no-color --no-title --exec --precise --no-wrap --no-rerun --help --version",
+			value: "n q --interval --equexit",
+			optional: "d --differences",
+		}),
+	},
+	trap: { onPositional: "first", spec: optionSpec({ flag: "p l" }) },
+	env: { onPositional: "stop", unknownOk: true, spec: LAUNCHERS.env },
+};
+
+/** Where a string wrapper's options end: `{ string }` (the command-string word,
+    or null when it has none), `{ unknown }`, `{ positional }` (the first
+    positional that decides; "skip" wrappers walk past theirs) or `{}`. Cached. */
+function readWrapperOptions(words, from, name) {
+	const wrapper = STRING_WRAPPERS[name];
+	return memoWalk(words, `wrapper/${name}`, from, (k) => {
+		if (k >= words.length) return { done: {} };
+		if (!isOptionWord(words[k]))
+			return wrapper.onPositional === "skip"
+				? { next: k + 1 }
+				: { done: { positional: k } };
+		const opt = readOption(words, k, wrapper.spec);
+		if (opt.unknown) return { done: { unknown: k } };
+		if (opt.kind === "string") return { done: { string: opt.value ?? null } };
+		return { next: k + opt.width };
+	});
+}
+
+/** trap: a literal `-` or empty action resets the signal; a computed one asks. */
+const isTrapReset = (word) => !word.dynamic && /^-?$/.test(word.value);
+
+/** What a deciding positional word of a string wrapper runs. */
+function wrapperPositional(words, k, wrapper, fed) {
+	if (wrapper.onPositional === "stop") return verdict(null);
+	if (wrapper.onPositional === "rest")
+		return inner(words.slice(k), "bash", words.length, fed);
+	if (wrapper.onPositional === "first" && isTrapReset(words[k]))
+		return verdict(null);
+	return inner([words[k]], "bash", 0, fed);
+}
+
+function stringWrapperReason(words, from, name, ctx) {
+	const wrapper = STRING_WRAPPERS[name];
+	let end = readWrapperOptions(words, from, name);
+	// sg: the first positional is the group, the second the command string.
+	if (wrapper.onPositional === "second" && end.positional !== undefined)
+		end = readWrapperOptions(words, end.positional + 1, name);
+	if (end.unknown !== undefined)
+		return verdict(
+			wrapper.unknownOk
+				? null
+				: broken(
+						`${name} option ${JSON.stringify(words[end.unknown].value)} may take the next word`,
+					),
+		);
+	if (end.string !== undefined)
+		return inner(end.string ? [end.string] : [], "bash", 0, ctx.fed);
+	if (end.positional === undefined) return verdict(null);
+	return wrapperPositional(words, end.positional, wrapper, ctx.fed);
+}
+
+// tmux runs strings from these commands, and stores strings that run later in
+// the last three (D12 rev. 2).
+const TMUX_STRING_COMMANDS = new Set([
+	"new-session",
+	"new",
+	"new-window",
+	"neww",
+	"split-window",
+	"splitw",
+	"send-keys",
+	"send",
+	"run-shell",
+	"run",
+	"respawn-pane",
+	"respawnp",
+	"respawn-window",
+	"respawnw",
+	"if-shell",
+	"if",
+	"pipe-pane",
+	"pipep",
+	"display-popup",
+	"popup",
+	"bind-key",
+	"bind",
+	"set-hook",
+	"command-prompt",
+]);
+const TMUX_GLOBAL = optionSpec({
+	flag: "2 C D l N u U v V",
+	value: "f L S T",
+	string: "c",
+});
+const TMUX_RUNS_STRING = "tmux runs a command string";
+
+/** Does any word from `k` on not start with `-`? Cached per segment. */
+const nonOptionFrom = (words, k) =>
+	suffixTable(
+		words,
+		"non-option",
+		(ws, j, later) => later || !isOptionWord(ws[j]),
+		false,
+	)[k] ?? false;
+
+/** tmux asks when, after its global options and across `\;` chains, any word is
+    a string-running command followed by a non-option word, or tmux is given
+    `-c <string>`. */
+function tmuxReason(words, from) {
+	const globals = readOptions(words, from, TMUX_GLOBAL);
+	if (globals.unknown !== undefined)
+		return broken(
+			`tmux option ${JSON.stringify(words[globals.unknown].value)} may take the next word`,
+		);
+	if (globals.string !== undefined) return broken(TMUX_RUNS_STRING);
+	const runs = suffixTable(
+		words,
+		"tmux-runs",
+		(ws, k, later) =>
+			later ||
+			(TMUX_STRING_COMMANDS.has(ws[k].value) && nonOptionFrom(ws, k + 1)),
+		false,
+	);
+	return runs[globals.next] ? broken(TMUX_RUNS_STRING) : null;
+}
+
+/** `source`/`.` follow the shell stdin-operand rule (D12 rev. 2). */
+function sourceReason(words, from, ctx) {
+	const operand = words[from];
+	return operand ? posixOperandReason(operand, ctx.isRun) : verdict(null);
+}
+
+// Wrapper word -> its check, given `w`: { words, from, name, ctx, segment }.
+const WRAPPER_CHECKS = new Map([
+	...[...POSIX_SHELLS].map((n) => [
+		n,
+		(w) => posixShellReason(w.words, w.from, w.ctx),
+	]),
+	...[...POWERSHELLS].map((n) => [
+		n,
+		(w) =>
+			powershellReason({ words: w.words, from: w.from, name: n, ...w.ctx }),
+	]),
+	["cmd", (w) => cmdReason(w.words, w.from, w.ctx)],
+	["eval", (w) => evalReason(w.words, w.from, w.ctx)],
+	...[...INVOKE_EXPRESSION].map((n) => [
+		n,
+		(w) => invokeExpressionReason(w.words, w.from, w.segment.piped, w.ctx),
+	]),
+	...Object.keys(STRING_WRAPPERS).map((n) => [
+		n,
+		(w) => stringWrapperReason(w.words, w.from, n, w.ctx),
+	]),
+	["tmux", (w) => verdict(tmuxReason(w.words, w.from))],
+	["source", (w) => sourceReason(w.words, w.from, w.ctx)],
+	[".", (w) => sourceReason(w.words, w.from, w.ctx)],
+]);
+
+function wrapperReason(segment, i, name, mode) {
+	const check = WRAPPER_CHECKS.get(name);
+	if (check === undefined) return verdict(null);
+	const ctx = { fed: isStdinFed(segment), isRun: isRunWord(segment, i, mode) };
+	return check({ words: segment.words, from: i + 1, name, ctx, segment });
 }
 
 // ---- run-time arguments, aliases and computed words (D5 rev. 1) ---------------------
@@ -1488,49 +2197,48 @@ function wrapperReason(segment, i, name) {
 const SHELLS = new Set([...POSIX_SHELLS, ...POWERSHELLS, "cmd"]);
 const RUN_TARGETS = new Set(["git", "gh", ...SHELLS]);
 const RUNNERS = new Set(["xargs", "parallel"]);
-const RUNNER_OPTIONS_WITH_ARG = new Set([
-	"-a",
-	"-d",
-	"-E",
-	"-I",
-	"-L",
-	"-n",
-	"-N",
-	"-P",
-	"-s",
-	"-j",
-	"-S",
-	"--arg-file",
-	"--delimiter",
-	"--eof",
-	"--replace",
-	"--max-lines",
-	"--max-args",
-	"--max-procs",
-	"--max-chars",
-	"--jobs",
-	"--process-slot-var",
-]);
+// Runner option tables (D5 rev. 2): "value" takes the next word unless joined,
+// "optional" takes a value only joined (GNU `-e`, `-i`, `-l`, `--eof`, …).
+const RUNNER_SPECS = {
+	xargs: optionSpec({
+		flag: "0 o p r t x --null --interactive --open-tty --no-run-if-empty --show-limits --verbose --exit --help --version",
+		value:
+			"a d E I L n P s --arg-file --delimiter --max-args --max-procs --process-slot-var --max-chars",
+		optional: "e i l --eof --replace --max-lines",
+	}),
+	parallel: optionSpec({
+		flag: "0 k m q r t u v X x --null --keep-order --dry-run --tag --bar --eta --progress --line-buffer --linebuffer --group --ungroup --pipe --quote --verbose --shuf --will-cite --no-notice --xargs --nonall --onall --files --round-robin --help --version",
+		value:
+			"a C d E I j L N n P S s --jobs --joblog --arg-file --delimiter --max-args --max-replace-args --max-procs --sshlogin --sshloginfile --colsep --results --timeout --delay --retries --halt --block --env --workdir --tmpdir --tagstring --memfree --load --basefile --return --transfer-file --header",
+		optional: "e i l --eof --replace --max-lines",
+	}),
+};
 const FIND_ACTIONS = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
 const ALIAS_DEFINERS = {
 	bash: new Set(["alias"]),
 	ps: new Set(["set-alias", "new-alias", "sal", "nal"]),
 };
 
-/** git, gh or a shell run by xargs, parallel or find gets its arguments at run
-    time; an outward reason found elsewhere still outranks this. */
-function runTargetReason(word, runner) {
+/** The command a runner (xargs, parallel, find -exec) starts. git, gh or a shell
+    gets its arguments at run time; a computed command is unknown; a multi-word
+    command word is a command string (D5 rev. 2). An outward reason found
+    elsewhere still outranks these. */
+function runCommandReason(word, runner) {
 	if (word === undefined) return null;
+	if (isComputed(word)) return broken(`${runner} runs a computed command`);
+	if (/\s/.test(word.value)) return analyzeCommand(word.value, "bash");
 	const name = commandName(word.value);
 	if (!RUN_TARGETS.has(name)) return null;
 	return broken(`${runner} supplies the arguments of ${name} at run time`);
 }
 
 function runnerReason(words, from, runner) {
-	let k = from;
-	while (k < words.length && words[k].value.startsWith("-"))
-		k += RUNNER_OPTIONS_WITH_ARG.has(words[k].value) ? 2 : 1;
-	return runTargetReason(words[k], runner);
+	const end = readOptions(words, from, RUNNER_SPECS[runner]);
+	if (end.unknown !== undefined)
+		return broken(
+			`${runner} option ${JSON.stringify(words[end.unknown].value)} may take the next word`,
+		);
+	return runCommandReason(words[end.next], runner);
 }
 
 const GIT_OR_GH = new Set(["git", "gh"]);
@@ -1572,19 +2280,41 @@ function followReason(words, from, mode) {
 	return null;
 }
 
+/** A `[scriptblock]::Create(…)` or computed word's reason, or undefined. A
+    computed word's name is not known, even when its decoded part reads as `git`
+    (`$'\u'git push`, D5 rev. 2). */
+function specialWordReason(segment, i, mode) {
+	const word = segment.words[i];
+	if (isScriptblockCreate(word, mode))
+		return scriptblockReason(word, isStdinFed(segment));
+	if (isComputed(word)) return followReason(segment.words, i + 1, mode);
+	return undefined;
+}
+
+/** The check for a git, gh, runner or alias-defining word, or undefined. */
+function commandCheck(name, mode) {
+	if (name === "git")
+		return (words, i) => gitInvocationReason(words, i + 1, mode);
+	if (name.startsWith("git-"))
+		return (words, i) => gitDashReason(name, words, i + 1);
+	if (name === "gh") return (words, i) => ghInvocationReason(words, i + 1);
+	if (RUNNERS.has(name)) return (words, i) => runnerReason(words, i + 1, name);
+	if (ALIAS_DEFINERS[mode].has(name))
+		return (words, i) => aliasDefinitionReason(words, i + 1, mode);
+	return undefined;
+}
+
 function wordReason(segment, i, mode, seen) {
-	const words = segment.words;
+	const { words } = segment;
+	const special = specialWordReason(segment, i, mode);
+	if (special !== undefined) return verdict(special);
 	const name = commandName(words[i].value);
-	if (name === "git") return verdict(gitInvocationReason(words, i + 1, mode));
-	if (name === "gh") return verdict(ghInvocationReason(words, i + 1));
-	if (isComputed(words[i])) return verdict(followReason(words, i + 1, mode));
-	if (RUNNERS.has(name)) return verdict(runnerReason(words, i + 1, name));
+	const check = commandCheck(name, mode);
+	if (check) return verdict(check(words, i));
 	if (name === "find") seen.find = true;
 	if (seen.find && FIND_ACTIONS.has(words[i].value))
-		return verdict(runTargetReason(words[i + 1], "find"));
-	if (ALIAS_DEFINERS[mode].has(name))
-		return verdict(aliasDefinitionReason(words, i + 1, mode));
-	return wrapperReason(segment, i, name);
+		return verdict(runCommandReason(words[i + 1], "find"));
+	return wrapperReason(segment, i, name, mode);
 }
 
 /** Position-independent: any `git`/`gh`/wrapper word in a segment is checked (D5). */
@@ -1609,11 +2339,15 @@ function segmentReason(segment, mode) {
 // Wrapper and alias re-parsing depth; bounds work on inputs like `eval eval ... x`.
 let analysisDepth = 0;
 
-function analyzeCommand(command, mode) {
+/** `fed`: the command runs inside a stdin-fed wrapper, so every segment of it
+    is stdin-fed too (D12 rev. 2). */
+function analyzeCommand(command, mode, fed = false) {
 	if (analysisDepth >= MAX_NESTING) return broken("wrappers nested too deeply");
 	analysisDepth++;
 	try {
-		return analyzeSegments(tokenize(command, mode), mode);
+		const segments = tokenize(command, mode);
+		if (fed) for (const segment of segments) segment.inheritedFed = true;
+		return analyzeSegments(segments, mode);
 	} catch (err) {
 		if (err instanceof Unparseable) return broken(err.message);
 		throw err;
@@ -1629,7 +2363,7 @@ function analyzeSegments(segments, mode) {
 		if (isOutward(reason)) return reason;
 		firstBroken ??= reason;
 	}
-	return firstBroken ?? runtimeConfigReason(segments);
+	return firstBroken ?? runtimeConfigReason(segments, mode);
 }
 
 // Env-supplied git configuration (it can define aliases or includes); other
@@ -1638,18 +2372,52 @@ const CONFIG_VARIABLE =
 	"GIT_CONFIG_(COUNT|KEY_\\d+|VALUE_\\d+|PARAMETERS|GLOBAL|SYSTEM)";
 const CONFIG_ASSIGNMENT = new RegExp(`^${CONFIG_VARIABLE}=`);
 const CONFIG_ENV_VARIABLE = new RegExp(`^env:${CONFIG_VARIABLE}$`, "i");
+const CONFIG_NAME = new RegExp(`^${CONFIG_VARIABLE}$`, "i");
+// `git config` keys that define aliases or include other configuration; git
+// matches section names case-insensitively (D5 rev. 2).
+const CONFIG_KEY = /^(alias\.|include\.path|includeif\.)/i;
 
+/** PowerShell `[Environment]::SetEnvironmentVariable('GIT_CONFIG_…', …)`. */
+function setsEnvironmentVariable(word) {
+	if (!/::setenvironmentvariable$/i.test(word.value)) return false;
+	const first = word.expression?.[0]?.words[0]?.value ?? "";
+	return CONFIG_NAME.test(first.split(",")[0]);
+}
+
+// Bash assignments and `export`; PowerShell `$env:`/`${env:}`, `Set-Item` or
+// `New-Item` on `env:…`, and `SetEnvironmentVariable`.
 const setsGitConfig = (word) =>
 	CONFIG_ASSIGNMENT.test(word.value) ||
-	(word.vars ?? []).some((v) => CONFIG_ENV_VARIABLE.test(v));
+	CONFIG_ENV_VARIABLE.test(word.value) ||
+	(word.vars ?? []).some((v) => CONFIG_ENV_VARIABLE.test(v)) ||
+	setsEnvironmentVariable(word);
+
+/** Does the git word at `i` run `git config` naming an alias/include key? */
+function writesGitConfigKey(words, i, mode) {
+	const read = readGitOptions(words, i + 1, mode);
+	if (read.reason || words[read.sub]?.value.toLowerCase() !== "config")
+		return false;
+	return anyFrom(words, read.sub + 1, "config-key", (w) =>
+		CONFIG_KEY.test(w.value),
+	);
+}
 
 /** Git configuration supplied at run time anywhere in a command that also
-    contains a git word. */
-function runtimeConfigReason(segments) {
-	const words = segments.flatMap((s) => s.words);
-	if (!words.some(setsGitConfig)) return null;
-	if (!words.some((w) => commandName(w.value) === "git")) return null;
-	return broken(RUNTIME_CONFIG);
+    contains a git word; a `git config` alias/include write needs another git
+    word to act on. */
+function runtimeConfigReason(segments, mode) {
+	let gitWords = 0;
+	let configWrite = false;
+	let configSet = false;
+	for (const { words } of segments)
+		words.forEach((word, i) => {
+			configSet ||= setsGitConfig(word);
+			if (commandName(word.value) !== "git") return;
+			gitWords++;
+			configWrite ||= writesGitConfigKey(words, i, mode);
+		});
+	const supplied = (configSet && gitWords > 0) || (configWrite && gitWords > 1);
+	return supplied ? broken(RUNTIME_CONFIG) : null;
 }
 
 const SHELL_MODES = { Bash: "bash", PowerShell: "ps" };

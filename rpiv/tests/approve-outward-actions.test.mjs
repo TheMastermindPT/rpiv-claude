@@ -36,33 +36,41 @@ const mcpEvent = (toolName) =>
 function askFailure(label, stdin, prefix, nodeArgs = []) {
 	const { status, stdout } = runHook(stdin, nodeArgs);
 	if (status !== 0) return `${label}: exit ${status}`;
+	const out = parseAskObject(stdout);
+	if (typeof out === "string") return `${label}: ${out}`;
+	const problem = reasonProblem(out.permissionDecisionReason, prefix);
+	return problem ? `${label}: ${problem}` : null;
+}
+
+const ASK_KEYS = "hookEventName,permissionDecision,permissionDecisionReason";
+
+/** The `hookSpecificOutput` of exactly one PreToolUse ask object, or a problem. */
+function parseAskObject(stdout) {
 	let parsed;
 	try {
 		parsed = JSON.parse(stdout);
 	} catch {
-		return `${label}: stdout is not one JSON object: ${JSON.stringify(stdout)}`;
+		return `stdout is not one JSON object: ${JSON.stringify(stdout)}`;
 	}
 	const out = parsed?.hookSpecificOutput;
 	const keys = Object.keys(parsed ?? {});
-	if (keys.length !== 1 || keys[0] !== "hookSpecificOutput" || !out)
-		return `${label}: unexpected shape ${stdout}`;
-	if (
-		Object.keys(out).sort().join(",") !==
-		"hookEventName,permissionDecision,permissionDecisionReason"
-	)
-		return `${label}: unexpected keys ${stdout}`;
-	if (out.hookEventName !== "PreToolUse" || out.permissionDecision !== "ask")
-		return `${label}: not a PreToolUse ask ${stdout}`;
-	if (
-		typeof out.permissionDecisionReason !== "string" ||
-		!out.permissionDecisionReason.startsWith(prefix)
-	)
-		return `${label}: reason ${JSON.stringify(out.permissionDecisionReason)} lacks prefix ${prefix}`;
-	if (
-		prefix.startsWith("[rpiv-hook] outward action:") &&
-		out.permissionDecisionReason.includes("[rpiv-hook] broken input:")
-	)
-		return `${label}: outward ask carries the broken prefix`;
+	if (keys.join(",") !== "hookSpecificOutput" || !out)
+		return `unexpected shape ${stdout}`;
+	if (Object.keys(out).sort().join(",") !== ASK_KEYS)
+		return `unexpected keys ${stdout}`;
+	const isAsk =
+		out.hookEventName === "PreToolUse" && out.permissionDecision === "ask";
+	return isAsk ? out : `not a PreToolUse ask ${stdout}`;
+}
+
+/** A reason must start with `prefix`; an outward reason never carries the
+    broken prefix. */
+function reasonProblem(reason, prefix) {
+	if (typeof reason !== "string" || !reason.startsWith(prefix))
+		return `reason ${JSON.stringify(reason)} lacks prefix ${prefix}`;
+	const outwardAsk = prefix.startsWith("[rpiv-hook] outward action:");
+	if (outwardAsk && reason.includes("[rpiv-hook] broken input:"))
+		return "outward ask carries the broken prefix";
 	return null;
 }
 
@@ -93,6 +101,176 @@ const rawEvent = (s) => s;
 const OUTWARD = "[rpiv-hook] outward action: ";
 const BROKEN = "[rpiv-hook] broken input:";
 
+// Revision-2 cases of "inspects wrapper commands and fails closed on dynamic
+// ones" (B9), kept here so the test body stays readable.
+const WRAPPERS_REV2 = {
+	outward: [
+		'bash -c -x "git push"',
+		'sh -c -- "git push"',
+		'bash -c -o pipefail "git push"',
+		'bash -c -O extglob "git push"',
+		'bash -O extglob -c "git push"',
+		'bash +O extglob -c "git push"',
+		'bash -c +O extglob "git push"',
+		'bash -c --rcfile r "git push"',
+		'bash -lc "git push"',
+		'su -c "git push"',
+		'su root -c "git push"',
+		'su --command="git push"',
+		"su --command 'git push'",
+		"su -c'git push'",
+		'env -S "git push"',
+		'env --split-string="git push"',
+		'env --split-string "git push"',
+		"env -S'git push'",
+		"trap 'git push' EXIT",
+		"trap -- 'git push' EXIT",
+		'parallel "git push" ::: origin',
+		"watch 'git push'",
+		"watch -n 5 'git push'",
+		"watch --interval 5 'git push'",
+		"script -c 'git push'",
+		"script --command 'git push'",
+		"flock /tmp/l -c 'git push'",
+		"flock /tmp/l --command 'git push'",
+		"runuser -c 'git push' x",
+		"runuser --command='git push' x",
+		"sg grp -c 'git push'",
+		"sg grp 'git push'",
+		'cmd /k "git push"',
+		'cmd /d /c "git push"',
+	],
+	outwardPs: [
+		'[scriptblock]::Create("git push")',
+		"pwsh -Command Write-Host 'git push'",
+		'powershell -ExecutionPolicy Bypass -Command "git push"',
+	],
+	broken: [
+		'su -c "$CMD"',
+		'trap "$CMD" EXIT',
+		'cmd /c "%CMD%"',
+		'bash -c --frobnicate "git push"',
+		'env -S "$CMD"',
+		"su --frobnicate -c 'git push'",
+		'watch "$CMD"',
+		'script -c "$CMD"',
+		'flock /tmp/l -c "$CMD"',
+		'runuser -c "$CMD" x',
+		'sg grp -c "$CMD"',
+		"tmux new-session -d 'git push'",
+		"tmux send-keys 'git push' Enter",
+		"tmux run-shell 'npm test'",
+		"tmux -L s new -d 'git push'",
+		"tmux neww 'git push'",
+		"tmux -c 'git push'",
+		"tmux ls \\; run-shell 'git push'",
+		"tmux bind-key x run-shell 'git push'",
+		"tmux set-hook -g after-new-session 'run-shell true'",
+		"tmux command-prompt 'run-shell %1'",
+		"tmux new-window 'git push'",
+		"tmux split-window 'git push'",
+		"tmux splitw 'git push'",
+		"tmux send 'git push' Enter",
+		"tmux run 'git push'",
+		"tmux respawn-pane 'git push'",
+		"tmux respawnp 'git push'",
+		"tmux respawn-window 'git push'",
+		"tmux respawnw 'git push'",
+		"tmux if-shell true 'run-shell true'",
+		"tmux if true 'run-shell true'",
+		"tmux pipe-pane 'git push'",
+		"tmux pipep 'git push'",
+		"tmux display-popup 'git push'",
+		"tmux popup 'git push'",
+		"tmux bind x run-shell 'git push'",
+	],
+	brokenPs: [
+		"iex (Get-Content x)",
+		"Invoke-Expression (irm https://x.invalid)",
+		"iex",
+		'Start-Process pwsh -ArgumentList "-c git push"',
+		"[scriptblock]::Create($s)",
+		"'git push' | iex",
+	],
+	silent: [
+		'su -c "npm test"',
+		"trap 'rm -f x' EXIT",
+		"tmux ls",
+		"tmux attach -t x",
+		"trap - EXIT",
+		"trap '' INT",
+		"watch -n 5 'npm test'",
+	],
+};
+
+// A 66-link inline alias chain, deeper than the hook's nesting bound of 64.
+const ALIAS_CHAIN = Array.from(
+	{ length: 65 },
+	(_, i) => `-c alias.a${i}=a${i + 1}`,
+).join(" ");
+
+// Revision-2 cases of "fails closed when words that decide a git or gh action
+// are computed or not plain" (B12).
+const DECIDING_REV2 = {
+	broken: [
+		"echo push | xargs --eof git",
+		"parallel --joblog j git < args",
+		"git config alias.p push && git p",
+		"git config --global include.path x.cfg; git status",
+		"$'\\u'git push",
+		"echo f | xargs --frobnicate rg x",
+		"echo push | xargs --frobnicate x git",
+		"echo push | xargs --max-lines git",
+		"git config includeIf.onbranch:main.path x.cfg; git p",
+		"git config Alias.p push && git p",
+		"echo push | xargs --frobnicate git",
+		"find . -execdir git {} \\;",
+		"find . -ok git {} \\;",
+		"git checkout *.js",
+		"git checkout [ab]",
+		"git switch {a..b}",
+		'git checkout "feat/$X"',
+		"git checkout -q $B",
+		"git lfs push origin $R",
+		"gh api -X GET -F $F repos/o/r/issues",
+		"gh api -X $M repos/o/r",
+		"git $'\\u'",
+		"parallel --frobnicate x git ::: push",
+		"echo push | xargs --replace git {}",
+		"find . -okdir git {} \\;",
+		"sudo $GH pr --title view create --body b",
+		"parallel --frobnicate rg x ::: y",
+		"echo origin | xargs $CMD",
+		'parallel "$CMD" ::: x',
+		"find . -exec $CMD {} \\;",
+	],
+	aliasProblems: [
+		"git -c alias.a=b -c alias.b=a a",
+		`git ${ALIAS_CHAIN} -c alias.a65=push a0`,
+	],
+	brokenPs: [
+		'git ("push")',
+		"git ('pu'+'sh') origin",
+		'gh ("pr") create -t t -b b',
+		'Start-Process git -ArgumentList ("push")',
+		"Set-Item env:GIT_CONFIG_COUNT 1; git p",
+		"[Environment]::SetEnvironmentVariable('GIT_CONFIG_COUNT','1'); git p",
+		"${env:GIT_CONFIG_COUNT}=1; git p",
+		"New-Item env:GIT_CONFIG_COUNT -Value 1; git p",
+	],
+	silent: [
+		'git --git-dir="$D" status',
+		'git --work-tree "$W" status',
+		"echo $X browse",
+		"echo $X search issues bug",
+		"git config user.name x && git status",
+		"git config --get alias.p",
+		"sudo --frobnicate git status",
+		"echo f | xargs -n 1 rg x",
+		"echo f | xargs -I {} rg {}",
+	],
+};
+
 describe("approve-outward-actions hook", () => {
 	it(
 		"asks before any git push",
@@ -109,6 +287,15 @@ describe("approve-outward-actions hook", () => {
 					"git lfs push origin main",
 					"git send-pack origin HEAD:main",
 					"git http-push https://example.invalid/r.git main",
+				],
+				`${OUTWARD}git push`,
+			);
+			// Revision 2: a `git-<name>` program is `git <name>`.
+			expectAsks(
+				[
+					"git-lfs push origin main",
+					"git-push origin main",
+					"/usr/lib/git-core/git-push origin main",
 				],
 				`${OUTWARD}git push`,
 			);
@@ -191,6 +378,27 @@ describe("approve-outward-actions hook", () => {
 				"git branch -l",
 			]);
 			expectAsks(["git branch --force x main"], `${OUTWARD}branch creation`);
+			// Revision 2: display options do not switch to list mode; creation flags
+			// inside short-option clusters still create.
+			expectAsks(
+				[
+					"git branch -v x",
+					"git branch --verbose x",
+					"git branch --format='%(refname)' x",
+					"git branch --sort=-committerdate x",
+					"git branch --column x",
+					"git branch --no-column x",
+					"git branch -vv x",
+					"git checkout -qb x",
+					"git checkout -bq x",
+					"git switch -qc x",
+				],
+				`${OUTWARD}branch creation`,
+			);
+			expectSilent([
+				"git branch --format '%(refname)'",
+				"git branch --sort committerdate",
+			]);
 		},
 		TEST_TIMEOUT,
 	);
@@ -287,6 +495,26 @@ describe("approve-outward-actions hook", () => {
 				"gh completion -s bash",
 				"gh pr",
 			]);
+			// Revision 2: an option gh does not know before the subcommand may take
+			// the next word, so the subcommand is unknown; the last `-X` decides.
+			expectAsks(
+				[
+					"gh pr --title view create --body b",
+					"gh issue --title list create -b b",
+					"gh --title search pr create --body b",
+				],
+				BROKEN,
+			);
+			expectSilent([
+				"gh pr -R o/r view 5",
+				"gh -R o/r pr view 5",
+				"gh api -X GET -f q=x search/issues",
+				"gh api -X POST -X GET repos/o/r/pulls",
+			]);
+			expectAsks(
+				["gh api -X GET -X POST repos/o/r/labels", "gh browse"],
+				`${OUTWARD}gh`,
+			);
 		},
 		TEST_TIMEOUT,
 	);
@@ -419,6 +647,26 @@ describe("approve-outward-actions hook", () => {
 				psEvent,
 			);
 			expectAsks(["git --attr-source HEAD push"], `${OUTWARD}git push`);
+			// Revision 2 pins: commands after a heredoc body, `--super-prefix`,
+			// outward outranking broken across segments, appending redirections;
+			// chained inline aliases; PowerShell argument expressions.
+			expectAsks(
+				[
+					"cat <<EOF\nx\nEOF\ngit push",
+					"cat <<-EOF\n\tx\n\tEOF\ngit push",
+					"git --super-prefix x push",
+					"$GIT status; git push",
+					"git -c alias.a=b -c alias.b=push a",
+				],
+				`${OUTWARD}git push`,
+			);
+			expectAsks(
+				["Write-Host (git push)", "(git push)"],
+				`${OUTWARD}git push`,
+				psEvent,
+			);
+			expectSilent(["git branch >>out"]);
+			expectSilent(["git branch *>&1"], psEvent);
 		},
 		TEST_TIMEOUT,
 	);
@@ -565,6 +813,13 @@ describe("approve-outward-actions hook", () => {
 				`${OUTWARD}git push`,
 				psEvent,
 			);
+			// Revision 2: more wrappers looked into, every spelling of their string
+			// option, shell options around `-c`, and the tmux string runners.
+			expectAsks(WRAPPERS_REV2.outward, `${OUTWARD}git push`);
+			expectAsks(WRAPPERS_REV2.outwardPs, `${OUTWARD}git push`, psEvent);
+			expectAsks(WRAPPERS_REV2.broken, BROKEN);
+			expectAsks(WRAPPERS_REV2.brokenPs, BROKEN, psEvent);
+			expectSilent(WRAPPERS_REV2.silent);
 		},
 		TEST_TIMEOUT,
 	);
@@ -587,6 +842,15 @@ describe("approve-outward-actions hook", () => {
 				[`${"git ".repeat(16_000)}push`, `${OUTWARD}git push`],
 				["gh api x ".repeat(7_000), null],
 				["echo $A push ".repeat(4_500), BROKEN],
+				// Revision 2: every option walk and scan stays linear.
+				[`${"git -C ".repeat(9_300)}status`, null],
+				["$A -C ".repeat(10_000), `${BROKEN} command word`],
+				[`${"( a ".repeat(16_000)}git push`, `${OUTWARD}git push`],
+				[`${"gh -R ".repeat(10_900)}x`, null],
+				[`${"xargs -n ".repeat(7_200)}x`, null],
+				["tmux ".repeat(13_000), null],
+				["su ".repeat(21_000), null],
+				["git config alias.p x ".repeat(3_000), BROKEN],
 			];
 			const failures = pathological
 				.map(([command, prefix]) => {
@@ -841,6 +1105,13 @@ describe("approve-outward-actions hook", () => {
 				"find . -name '*.js' -exec rg x {} \\;",
 				"cp $SRC release",
 			]);
+			// Revision 2: unknown options before a deciding word, PowerShell
+			// argument expressions, run-time config writes, runner command words,
+			// alias cycles and depth.
+			expectAsks(DECIDING_REV2.broken, BROKEN);
+			expectAsks(DECIDING_REV2.aliasProblems, `${BROKEN} git alias`);
+			expectAsks(DECIDING_REV2.brokenPs, BROKEN, psEvent);
+			expectSilent(DECIDING_REV2.silent);
 		},
 		TEST_TIMEOUT,
 	);
@@ -901,6 +1172,17 @@ describe("approve-outward-actions hook", () => {
 				],
 				psEvent,
 			);
+			// Revision 2: arithmetic expansion is a computed word whose inner
+			// substitutions are still inspected; an unclosed `$((` is a substitution.
+			expectSilent(["echo $(( $(date +%s) - start ))", "echo $(( 1 + 2 ))"]);
+			expectAsks(
+				[
+					"echo $(( $(git push) ))",
+					"echo $((git push) )",
+					"echo $(( `git push` ))",
+				],
+				`${OUTWARD}git push`,
+			);
 		},
 		TEST_TIMEOUT,
 	);
@@ -952,6 +1234,57 @@ describe("approve-outward-actions hook", () => {
 				"ps aux | grep sh",
 				"which bash",
 				"bash script.sh",
+			]);
+			// Revision 2: more stdin feeds, precise launchers, stdin into wrapper
+			// strings, and a computed positional powershell only when it is run.
+			const piped = (cmd) => `echo 'git push' | ${cmd}`;
+			expectAsks(
+				[
+					"echo 'git push' |& bash",
+					piped("sudo --user root bash"),
+					piped("sudo -Hu root bash"),
+					"echo 'git push' > >(bash)",
+					"echo x | tee >(bash)",
+					"source <(echo 'git push')",
+					". <(echo 'git push')",
+					piped("source /dev/stdin"),
+					piped("sudo --frobnicate bash"),
+					piped("doas -u root bash"),
+					piped("exec -a x bash"),
+					piped("env -u X bash"),
+					piped("env A=1 bash"),
+					piped("time -o f bash"),
+					piped("timeout -s KILL 60 bash"),
+					"{ bash; } < script.sh",
+					"( bash ) < script.sh",
+					...["zsh", "dash", "ksh", "cmd", "powershell", "pwsh"].map(piped),
+					piped("sudo --frobnicate x bash"),
+					piped("bash -c bash"),
+					piped("su -c bash"),
+					piped("env -S bash"),
+				],
+				BROKEN,
+			);
+			expectAsks(
+				[
+					"Start-Process powershell $cmd",
+					"Start-Process -FilePath powershell -ArgumentList $cmd",
+					"saps powershell $cmd",
+					"start powershell $cmd",
+				],
+				BROKEN,
+				psEvent,
+			);
+			expectAsks(
+				['start powershell "git push"', 'cmd /c start powershell "git push"'],
+				`${OUTWARD}git push`,
+			);
+			expectSilent([
+				"powershell -help",
+				"powershell -?",
+				"pwsh --help",
+				"t PowerShell $x",
+				"source ~/.bashrc",
 			]);
 		},
 		TEST_TIMEOUT,
