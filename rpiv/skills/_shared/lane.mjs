@@ -14,7 +14,7 @@
 //
 // Importable: DEFAULT_LANE_THRESHOLDS, classifyLane, loadLaneThresholds, mergeLane.
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { lstatSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { isMain } from "./is-main.mjs";
@@ -312,8 +312,11 @@ const rangeFiles = (root, range) =>
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 const BINARY_PROBE_BYTES = 8000; // git's binary rule: a NUL in the first 8000 bytes
 
-/** An untracked file as numstat would count it: all lines added. */
+/** An untracked file as numstat would count it: all lines added. An entry that is
+    not a regular file (a nested repository `<dir>/`, a symbolic link) has no counts
+    (S5 revision 1). */
 const untrackedFile = (root, path) => {
+	if (!lstatSync(join(root, path)).isFile()) return { path };
 	const bytes = readFileSync(join(root, path));
 	if (bytes.subarray(0, BINARY_PROBE_BYTES).includes(0)) return { path };
 	let added = bytes.filter((byte) => byte === 0x0a).length;
@@ -321,13 +324,31 @@ const untrackedFile = (root, path) => {
 	return { path, added, deleted: 0 };
 };
 
+/** True when `ref` does not exist at all: git lists nothing and warns about nothing
+    (a broken ref is listed, or warned about, so it never reads as absent). */
+const isAbsentRef = (root, ref) => {
+	const result = spawnSync("git", ["for-each-ref", "--format=%(refname)", ref], {
+		cwd: root,
+		encoding: "utf-8",
+	});
+	return result.status === 0 && !result.stdout.trim() && !result.stderr.trim();
+};
+
+/** What the working tree is compared against: HEAD, or the empty tree when HEAD
+    names a branch with no commit yet. A HEAD that exists but does not resolve is a
+    broken call, never "unborn" (S5 revision 1, degrade-distinguishes-broken). */
+const headBase = (root) => {
+	const quiet = { allowFailure: true };
+	if (gitIn(root, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], quiet))
+		return "HEAD";
+	const branch = gitIn(root, ["symbolic-ref", "--quiet", "HEAD"], quiet).trim();
+	if (branch && isAbsentRef(root, branch)) return EMPTY_TREE;
+	throw new Error("git rev-parse failed: HEAD does not name a commit");
+};
+
 /** Tracked changes against HEAD (staged and unstaged) plus untracked files. */
 const workingFiles = (root) => {
-	const base = gitIn(root, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], {
-		allowFailure: true,
-	})
-		? "HEAD"
-		: EMPTY_TREE;
+	const base = headBase(root);
 	const untracked = gitIn(root, ["ls-files", "--others", "--exclude-standard", "-z"])
 		.split("\0")
 		.filter(Boolean);

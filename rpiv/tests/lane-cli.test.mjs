@@ -69,6 +69,68 @@ const printed = (...outputLines) => ({
 	stderr: "",
 });
 
+const dep = (resolved, extra = {}) => ({ resolved, ...extra });
+
+/** The valid B39 graphs under `repo/graphs/`. `dc.json` (dependency-cruiser):
+    `src/core.ts` imported by a (twice), b, c; `src/two.ts` by a (twice) and b;
+    `src/self.ts` by a, b and itself; `src/gone.ts` unresolved, `fs` a core
+    module and `node_modules/x/index.js`, each imported by a, b, c. */
+const putGraphs = (repo) => {
+	// dependency-cruiser: each importer lists what it imports.
+	const importer = (source) => ({
+		source,
+		dependencies: [
+			dep("src/core.ts"),
+			dep("src/gone.ts", { couldNotResolve: true }),
+			dep("node_modules/x/index.js"),
+			dep("fs", { coreModule: true }),
+		],
+	});
+	const a = importer("src/a.ts");
+	// `src/two.ts` imported twice by `src/a.ts`: importers are distinct (S5 rev. 1 pin).
+	a.dependencies.push(dep("src/core.ts"), dep("src/two.ts"), dep("src/two.ts"), dep("src/self.ts"));
+	const b = importer("src/b.ts");
+	b.dependencies.push(dep("src/two.ts"), dep("src/self.ts"));
+	const dc = {
+		modules: [
+			a,
+			b,
+			importer("src/c.ts"),
+			{ source: "src/self.ts", dependencies: [dep("src/self.ts")] },
+			{ source: "src/core.ts", dependencies: [] },
+		],
+	};
+	put(repo, "graphs/dc.json", JSON.stringify(dc));
+	put(
+		repo,
+		"graphs/sub.json",
+		JSON.stringify({
+			modules: ["x", "y", "z"].map((name) => ({
+				source: `skills/${name}.mjs`,
+				dependencies: [dep("skills/core.mjs")],
+			})),
+		}),
+	);
+	const madge = {
+		"src/a.ts": ["src/core.ts"],
+		"src/b.ts": ["src/core.ts"],
+		"src/c.ts": ["src/core.ts", "src/core.ts"],
+		"src/core.ts": [],
+	};
+	put(repo, "graphs/madge.json", JSON.stringify(madge));
+	const { "src/c.ts": _c, ...madgeTwo } = madge;
+	put(repo, "graphs/madge-two.json", JSON.stringify(madgeTwo));
+	put(
+		repo,
+		"graphs/madge-spelling.json",
+		JSON.stringify({
+			"./src/a.ts": ["./src/core.ts"],
+			"src\\b.ts": ["src\\core.ts"],
+			"src/c.ts": ["src/core.ts"],
+		}),
+	);
+};
+
 describe("lane CLI (S5)", () => {
 	it(
 		"classifies a planned path list",
@@ -194,17 +256,21 @@ describe("lane CLI (S5)", () => {
 			expect.soft(working(repo), "empty untracked").toEqual(
 				printed("lane: fast", "reason: within fast limits", "diagnostic: hub signal unavailable"),
 			);
+			// S5 rev. 1 pin: an untracked file ending in a newline gets no extra line.
+			put(repo, "src/d.ts", lines(2));
+			expect.soft(working(repo), "untracked with final newline").toEqual(
+				printed("lane: normal", "reason: lines: 2 > 0", "diagnostic: hub signal unavailable"),
+			);
+			rmSync(join(repo, "src/d.ts"));
 			put(repo, "src/a.ts", `${lines(10)}${lines(5, "more")}`);
 			put(repo, "src/b.ts", lines(3));
 			git(repo, "add", "src/b.ts");
 			put(repo, "src/c.ts", "x\ny\nz\nw");
-			// An untracked file ending in a newline gets no extra line (mutation hardening).
-			put(repo, "src/d.ts", lines(2));
 			put(repo, "ignored.txt", lines(50));
-			expect.soft(working(repo), "tracked + untracked").toEqual(
-				printed("lane: normal", "reason: lines: 14 > 0", "diagnostic: hub signal unavailable"),
-			);
-			rmSync(join(repo, "src/d.ts")); // keep the next case at five files
+			const twelve = printed("lane: normal", "reason: lines: 12 > 0", "diagnostic: hub signal unavailable");
+			expect.soft(working(repo), "tracked + untracked").toEqual(twelve);
+			// S5 rev. 1 pin: git runs at the root, also from a sub-directory.
+			expect.soft(working(join(repo, "src")), "from src/").toEqual(twelve);
 			put(repo, "data/x.bin", Buffer.from([1, 0, 2]));
 			expect.soft(working(repo), "untracked binary").toEqual(
 				printed("lane: fast", "reason: within fast limits", "diagnostic: lines unknown", "diagnostic: hub signal unavailable"),
@@ -215,6 +281,33 @@ describe("lane CLI (S5)", () => {
 			expect.soft(working(unborn), "no commit yet").toEqual(
 				printed("lane: normal", "reason: lines: 151 > 150", "diagnostic: hub signal unavailable"),
 			);
+			/** A repo whose only commit holds `a.ts` and the `maxLines: 0` config. */
+			const committed = () => {
+				const r = newRepo();
+				put(r, "a.ts", "a\n");
+				put(r, ".rpiv-lanes.json", '{"fast":{"maxLines":0}}');
+				git(r, "add", "-A");
+				git(r, "commit", "-q", "-m", "c0");
+				return r;
+			};
+			const oneLine = printed("lane: normal", "reason: lines: 1 > 0", "diagnostic: hub signal unavailable");
+			// S5 rev. 1 pin: a NUL after the first 8000 bytes does not make a file binary.
+			const big = committed();
+			put(big, "big.bin", Buffer.concat([Buffer.alloc(8000, 97), Buffer.from([0, 10])]));
+			expect.soft(working(big), "NUL after 8000 bytes").toEqual(oneLine);
+			// S5 rev. 1 pin: a detached HEAD at a healthy commit.
+			const detached = committed();
+			git(detached, "checkout", "-q", "--detach");
+			put(detached, "a.ts", "a\nb\n");
+			expect.soft(working(detached), "detached HEAD").toEqual(oneLine);
+			// S5 rev. 1: an untracked nested repository has no counts (not a broken call).
+			const nested = committed();
+			mkdirSync(join(nested, "sub"));
+			git(join(nested, "sub"), "init", "-q");
+			put(nested, "sub/x.ts", "x\n");
+			expect.soft(working(nested), "untracked nested repository").toEqual(
+				printed("lane: fast", "reason: within fast limits", "diagnostic: lines unknown", "diagnostic: hub signal unavailable"),
+			);
 		},
 		TEST_TIMEOUT,
 	);
@@ -223,50 +316,7 @@ describe("lane CLI (S5)", () => {
 		"reads hubs from an import graph",
 		() => {
 			const repo = newRepo();
-			const dep = (resolved, extra = {}) => ({ resolved, ...extra });
-			// dependency-cruiser: each importer lists what it imports.
-			const importer = (source) => ({
-				source,
-				dependencies: [
-					dep("src/core.ts"),
-					dep("src/gone.ts", { couldNotResolve: true }),
-					dep("node_modules/x/index.js"),
-					dep("fs", { coreModule: true }),
-				],
-			});
-			const a = importer("src/a.ts");
-			a.dependencies.push(dep("src/core.ts"), dep("src/two.ts"), dep("src/self.ts"));
-			const b = importer("src/b.ts");
-			b.dependencies.push(dep("src/two.ts"), dep("src/self.ts"));
-			const dc = {
-				modules: [
-					a,
-					b,
-					importer("src/c.ts"),
-					{ source: "src/self.ts", dependencies: [dep("src/self.ts")] },
-					{ source: "src/core.ts", dependencies: [] },
-				],
-			};
-			put(repo, "graphs/dc.json", JSON.stringify(dc));
-			put(
-				repo,
-				"graphs/sub.json",
-				JSON.stringify({
-					modules: ["x", "y", "z"].map((name) => ({
-						source: `skills/${name}.mjs`,
-						dependencies: [dep("skills/core.mjs")],
-					})),
-				}),
-			);
-			const madge = {
-				"src/a.ts": ["src/core.ts"],
-				"src/b.ts": ["src/core.ts"],
-				"src/c.ts": ["src/core.ts", "src/core.ts"],
-				"src/core.ts": [],
-			};
-			put(repo, "graphs/madge.json", JSON.stringify(madge));
-			const { "src/c.ts": _c, ...madgeTwo } = madge;
-			put(repo, "graphs/madge-two.json", JSON.stringify(madgeTwo));
+			putGraphs(repo);
 			const withGraph = (path, graph) =>
 				runLane(["--paths", path, "--slices", "1", "--graph", graph], { cwd: repo });
 			const hub = (path) => printed("lane: rigorous", `reason: hub: ${path}`, "diagnostic: lines unknown");
@@ -281,9 +331,22 @@ describe("lane CLI (S5)", () => {
 				["src/core.ts", "graphs/madge-two.json", fast],
 				["rpiv/skills/core.mjs", "graphs/sub.json", hub("rpiv/skills/core.mjs")],
 				["rpiv/xskills/core.mjs", "graphs/sub.json", fast],
+				// S5 rev. 1 pins: coreModule does not count; mixed spellings in the graph.
+				["fs", "graphs/dc.json", fast],
+				["src/core.ts", "graphs/madge-spelling.json", hub("src/core.ts")],
 			]) {
 				expect.soft(withGraph(path, graph), `${path} with ${graph}`).toEqual(want);
 			}
+			// S5 rev. 1 pin: the graph path is relative to the current directory.
+			mkdirSync(join(repo, "src"), { recursive: true });
+			expect
+				.soft(
+					runLane(["--paths", "src/core.ts", "--slices", "1", "--graph", "../graphs/dc.json"], {
+						cwd: join(repo, "src"),
+					}),
+					"graph from src/",
+				)
+				.toEqual(hub("src/core.ts"));
 			// A broken graph is not "unavailable": it says so and raises fast one step.
 			put(repo, "graphs/invalid.json", "{not json");
 			put(repo, "graphs/array.json", "[]");
@@ -342,6 +405,15 @@ describe("lane CLI (S5)", () => {
 				.toEqual(["lane: rigorous", "reason: sensitive word: auth (src/auth/x.ts)", "diagnostic: lines unknown"]);
 			expect.soft(out[3]).toMatch(brokenLine("graphs/array.json"));
 			expect.soft(out).toHaveLength(4);
+			// S5 rev. 1 pin: a broken graph leaves a normal change normal (no raise reason).
+			expect.soft(withGraph("package.json", "graphs/array.json"), "normal + broken graph").toEqual(
+				printed(
+					"lane: normal",
+					"reason: manifest: package.json",
+					"diagnostic: lines unknown",
+					"diagnostic: hub signal broken: graphs/array.json: the top level is not an object",
+				),
+			);
 		},
 		TEST_TIMEOUT,
 	);
@@ -389,6 +461,18 @@ describe("lane CLI (S5)", () => {
 				"git rev-parse failed: fatal:",
 				"outside a repository",
 			);
+			// S5 rev. 1: a HEAD that exists but does not resolve is broken, not unborn.
+			for (const [label, ref] of [
+				["corrupt ref", "garbage\n"],
+				["ref to a missing object", "0000000000000000000000000000000000000001\n"],
+			]) {
+				const broken = newRepo();
+				put(broken, "a.ts", "a\n");
+				git(broken, "add", "-A");
+				git(broken, "commit", "-q", "-m", "c0");
+				writeFileSync(join(broken, ".git/refs/heads/main"), ref);
+				isBroken(runLane(["--working", "--slices", "1"], { cwd: broken }), "git ", label);
+			}
 			// Importing the module never runs the CLI (D17: entry point only).
 			const imported = spawnSync(
 				process.execPath,
