@@ -76,7 +76,13 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
-import { extOf, isSource, isTest } from "../../_shared/source-vocab.mjs";
+import {
+	extOf,
+	isManifest,
+	isMigration,
+	isSource,
+	isTest,
+} from "../../_shared/source-vocab.mjs";
 
 const CHANGED_FILES_LINE_CAP = 2000;
 const CHANGED_FILES_BYTE_CAP = 40 * 1024;
@@ -109,18 +115,16 @@ const MEDIA_EXT = new Set([
 ]);
 const GENERATED_PATH_RE =
 	/(^|\/)(\.rpiv\/artifacts|opencode\/generated|coverage|dist|build|node_modules)(\/|$)/i;
-const MANIFEST_BASENAME_RE =
-	/(^|\/)(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|cargo\.(toml|lock)|go\.(mod|sum)|pyproject\.toml|poetry\.lock)$/i;
-
+// Manifests and migrations come from the shared owner (source-vocab.mjs, D15), so
+// the manifest category and `manifest_changed` read the same list.
 const pathCategory = (path) => {
 	if (GENERATED_PATH_RE.test(path)) return "generated-artifact";
 	if (MEDIA_EXT.has(extOf(path))) return "media";
 	if (isTest(path)) return "test";
-	if (/(^|\/)migrations?\//i.test(path) || extOf(path) === "sql")
-		return "migration";
+	if (isMigration(path)) return "migration";
 	if (isSource(path)) return "source";
 	if (extOf(path) === "md" || /(^|\/)docs?\//i.test(path)) return "docs";
-	if (MANIFEST_BASENAME_RE.test(path)) return "manifest";
+	if (isManifest(path)) return "manifest";
 	if (["json", "jsonc", "toml", "yaml", "yml"].includes(extOf(path)))
 		return "config";
 	return "other";
@@ -605,9 +609,7 @@ if (result.strategy === "first-parent") {
 }
 
 // ---- ManifestChanged (DR Step 1.5, absorbed) --------------------------------------
-const MANIFEST_RE =
-	/(^|\/)(package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|deno\.(json|jsonc|lock)|cargo\.(toml|lock)|go\.(mod|sum)|pyproject\.toml|requirements[^/]*\.txt|poetry\.lock|pipfile(\.lock)?|setup\.(py|cfg)|gemfile(\.lock)?|composer\.(json|lock)|pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|mix\.(exs|lock)|[^/]+\.csproj|packages\.config|paket\.(dependencies|lock))$/i;
-const manifestFiles = changedList.filter((f) => MANIFEST_RE.test(f));
+const manifestFiles = changedList.filter(isManifest);
 
 // ---- LockstepSelfReview (DR Step 1.5, absorbed) -----------------------------------
 const lockstep = (() => {
