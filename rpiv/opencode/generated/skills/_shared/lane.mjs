@@ -269,8 +269,11 @@ export const mergeLane = (previous, next) => {
 /** A path as git and the vocabulary read it: `/` separators, no leading `./`. */
 const cleanPath = (p) => p.replace(/^\.\//, "");
 
+/** A `--quiet` git "no": exit status 1 with nothing on stderr. */
+const isQuietNo = (error) => error.status === 1 && !String(error.stderr ?? "").trim();
+
 /** git's stdout, run in `cwd`; a failure throws one line naming git. With
-    `allowFailure`, exit status 1 with no stderr (a `--quiet` "no") returns "". */
+    `allowFailure`, a `--quiet` "no" returns "". */
 const gitIn = (cwd, args, { allowFailure = false } = {}) => {
 	try {
 		return execFileSync("git", args, {
@@ -280,8 +283,7 @@ const gitIn = (cwd, args, { allowFailure = false } = {}) => {
 			maxBuffer: 64 * 1024 * 1024,
 		});
 	} catch (error) {
-		if (allowFailure && error.status === 1 && !String(error.stderr ?? "").trim())
-			return "";
+		if (allowFailure && isQuietNo(error)) return "";
 		const why = String(error.stderr ?? error.message).trim().split("\n")[0];
 		throw new Error(`git ${args[0]} failed: ${why}`);
 	}
@@ -344,20 +346,30 @@ const depcruiseEdges = (modules) => {
 	if (!Array.isArray(modules)) return "modules is not an array";
 	const edges = [];
 	for (const [i, module] of modules.entries()) {
-		if (
-			!isPlainObject(module) ||
-			typeof module.source !== "string" ||
-			!Array.isArray(module.dependencies)
-		)
-			return `modules[${i}] has no string source and dependencies array`;
-		for (const dependency of module.dependencies) {
-			if (!isPlainObject(dependency) || typeof dependency.resolved !== "string")
-				return `modules[${i}] has a dependency without a string resolved`;
-			if (!dependency.coreModule && !dependency.couldNotResolve)
-				edges.push([module.source, dependency.resolved]);
-		}
+		const found = moduleEdges(module);
+		if (typeof found === "string") return `modules[${i}] ${found}`;
+		edges.push(...found);
 	}
 	return edges;
+};
+
+const isModuleShape = (module) =>
+	isPlainObject(module) &&
+	typeof module.source === "string" &&
+	Array.isArray(module.dependencies);
+const isDependencyShape = (dependency) =>
+	isPlainObject(dependency) && typeof dependency.resolved === "string";
+const isCountedDependency = (dependency) =>
+	!dependency.coreModule && !dependency.couldNotResolve;
+
+/** One dependency-cruiser module's counted edges, or its problem. */
+const moduleEdges = (module) => {
+	if (!isModuleShape(module)) return "has no string source and dependencies array";
+	if (!module.dependencies.every(isDependencyShape))
+		return "has a dependency without a string resolved";
+	return module.dependencies
+		.filter(isCountedDependency)
+		.map((dependency) => [module.source, dependency.resolved]);
 };
 
 /** The [importer, imported] edges of a madge object map, or the first problem. */
@@ -433,26 +445,46 @@ const optionValue = (argv, i) => {
 	return value;
 };
 
+/** The words after `argv[i]` up to the next option. */
+const wordsAfter = (argv, i) => {
+	const end = argv.findIndex((word, j) => j > i && word.startsWith("--"));
+	return argv.slice(i + 1, end === -1 ? argv.length : end);
+};
+
+// Each option reads its value(s) into `options` and returns how many words it took.
+const OPTIONS = {
+	"--working": () => 0,
+	"--paths": (argv, i, options) => {
+		const paths = wordsAfter(argv, i);
+		check(paths.length > 0, "--paths needs at least one path");
+		options.paths.push(...paths);
+		return paths.length;
+	},
+	"--range": (argv, i, options) => {
+		options.range = optionValue(argv, i);
+		return 1;
+	},
+	"--graph": (argv, i, options) => {
+		options.graph = optionValue(argv, i);
+		return 1;
+	},
+	"--slices": (argv, i, options) => {
+		options.slices = Number(optionValue(argv, i));
+		check(isPositive(options.slices), "--slices must be a positive integer");
+		return 1;
+	},
+};
+
 /** The CLI options: the one mode and its argument, `--slices` and `--graph`.
     Throws a usage error naming the option, or `mode`. */
 const parseArgs = (argv) => {
 	const options = { paths: [] };
-	const modes = [];
 	for (let i = 0; i < argv.length; i++) {
-		const arg = argv[i];
-		if (MODES.includes(arg)) modes.push(arg);
-		if (arg === "--working") continue;
-		if (arg === "--paths") {
-			while (i + 1 < argv.length && !argv[i + 1].startsWith("--"))
-				options.paths.push(argv[++i]);
-			check(options.paths.length > 0, "--paths needs at least one path");
-		} else if (arg === "--range") options.range = optionValue(argv, i++);
-		else if (arg === "--graph") options.graph = optionValue(argv, i++);
-		else if (arg === "--slices") {
-			options.slices = Number(optionValue(argv, i++));
-			check(isPositive(options.slices), "--slices must be a positive integer");
-		} else check(false, `unknown option ${arg}; ${USAGE}`);
+		const read = OPTIONS[argv[i]];
+		check(Object.hasOwn(OPTIONS, argv[i]), `unknown option ${argv[i]}; ${USAGE}`);
+		i += read(argv, i, options);
 	}
+	const modes = argv.filter((arg) => MODES.includes(arg));
 	check(modes.length === 1, `exactly one mode is needed (got ${modes.length}); ${USAGE}`);
 	options.mode = modes[0].slice(2);
 	return options;
