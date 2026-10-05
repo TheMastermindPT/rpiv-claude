@@ -109,6 +109,12 @@ uncommitted changes unrelated to the slice; never stash, move, or commit them.
 Run the deterministic checks (tests, types, lint, and CodeScene where available)
 before dispatching any review agent.
 
+A fix round is one review of the candidate followed by its fixes, in any lane.
+After 2 fix rounds, stop and ask the developer with `ask_user_question`,
+presenting the open findings and the choices; never start a third round unasked.
+The cap never turns unresolved findings or an incomplete inspection into
+acceptance.
+
 ## Candidate Identity
 
 Each review receives the same packet, containing references rather than copied

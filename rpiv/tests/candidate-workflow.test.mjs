@@ -41,6 +41,10 @@ describe("candidate workflow authority", () => {
 
 // "Joined text": every run of whitespace as one space, so wrapped phrases match.
 const joined = (text) => text.replace(/\s+/g, " ");
+const dispatchPath = new URL(
+	"../skills/_shared/artifact-review-dispatch.md",
+	import.meta.url,
+);
 const workflowTexts = () => {
 	const source = readFileSync(workflow, "utf8");
 	return [source, adaptSupportMarkdown(source)].map(joined);
@@ -68,5 +72,19 @@ describe("lane rules", () => {
 				expect(text).toMatch(rule);
 			}
 		}
+	});
+
+	it("caps fix loops at two rounds, then asks the developer", () => {
+		const [claude, opencode] = workflowTexts();
+		for (const text of [claude, opencode]) {
+			expect(text).toMatch(/After 2 fix rounds, stop and ask the developer/i);
+			expect(text).toMatch(/never start a third round/i);
+		}
+		// The OpenCode adapter renames the ask tool (opencode/adapter.mjs).
+		expect(claude).toMatch(/ask_user_question/);
+		expect(opencode).toMatch(/`question`/);
+		const dispatch = joined(readFileSync(dispatchPath, "utf8"));
+		expect(dispatch).toMatch(/After 2 fix rounds/i);
+		expect(dispatch).not.toMatch(/no fixed retry cap/i);
 	});
 });
