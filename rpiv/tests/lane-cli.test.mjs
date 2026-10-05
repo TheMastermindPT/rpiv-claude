@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -88,6 +88,11 @@ describe("lane CLI (S5)", () => {
 					["lane: rigorous", "reason: sensitive word: auth (src/auth/x.ts)", "diagnostic: lines unknown", "diagnostic: hub signal unavailable"],
 				],
 				[
+					// Only a leading `./` is removed (mutation hardening).
+					["--paths", "auth/./x.ts", "--slices", "1"],
+					["lane: rigorous", "reason: sensitive word: auth (auth/./x.ts)", "diagnostic: lines unknown", "diagnostic: hub signal unavailable"],
+				],
+				[
 					["--paths", "src/a.ts"],
 					["lane: fast", "reason: within fast limits", "diagnostic: slices unknown", "diagnostic: lines unknown", "diagnostic: hub signal unavailable"],
 				],
@@ -165,6 +170,8 @@ describe("lane CLI (S5)", () => {
 			expect.soft(bad.status).toBe(2);
 			expect.soft(bad.stdout).toBe("");
 			expect.soft(bad.stderr).toMatch(/^lane: broken: [^\n]*git[^\n]*\n$/);
+			// git's own reason, not only the failed command line (mutation hardening).
+			expect.soft(bad.stderr).toContain("fatal:");
 		},
 		TEST_TIMEOUT,
 	);
@@ -182,11 +189,15 @@ describe("lane CLI (S5)", () => {
 			expect.soft(working(repo), "clean").toEqual(
 				printed("lane: normal", "reason: no changed files", "diagnostic: no changed files"),
 			);
+			// An empty untracked file counts 0 lines on its own (mutation hardening).
+			put(repo, "src/e.ts", "");
+			expect.soft(working(repo), "empty untracked").toEqual(
+				printed("lane: fast", "reason: within fast limits", "diagnostic: hub signal unavailable"),
+			);
 			put(repo, "src/a.ts", `${lines(10)}${lines(5, "more")}`);
 			put(repo, "src/b.ts", lines(3));
 			git(repo, "add", "src/b.ts");
 			put(repo, "src/c.ts", "x\ny\nz\nw");
-			put(repo, "src/e.ts", "");
 			put(repo, "ignored.txt", lines(50));
 			expect.soft(working(repo), "tracked + untracked").toEqual(
 				printed("lane: normal", "reason: lines: 12 > 0", "diagnostic: hub signal unavailable"),
@@ -275,13 +286,32 @@ describe("lane CLI (S5)", () => {
 			put(repo, "graphs/array.json", "[]");
 			put(repo, "graphs/modules5.json", '{"modules":5}');
 			put(repo, "graphs/madge-string.json", '{"src/a.ts":"src/core.ts"}');
+			// Malformed dependency-cruiser modules (mutation hardening).
+			const badModules = {
+				"graphs/module-number.json": [5],
+				"graphs/module-no-deps.json": [{ source: "a" }],
+				"graphs/module-source-number.json": [{ source: 1, dependencies: [] }],
+				"graphs/dep-number.json": [{ source: "a", dependencies: [5] }],
+				"graphs/dep-no-resolved.json": [{ source: "a", dependencies: [{}] }],
+				"graphs/second-module.json": [{ source: "a", dependencies: [] }, 5],
+			};
+			for (const [graph, modules] of Object.entries(badModules))
+				put(repo, graph, JSON.stringify({ modules }));
 			const brokenLine = (graph) => new RegExp(`^diagnostic: hub signal broken: ${graph}: .+$`);
-			for (const graph of [
-				"graphs/missing.json",
-				"graphs/invalid.json",
-				"graphs/array.json",
-				"graphs/modules5.json",
-				"graphs/madge-string.json",
+			const noShape = "has no string source and dependencies array";
+			const noResolved = "has a dependency without a string resolved";
+			for (const [graph, detail] of [
+				["graphs/missing.json", "cannot read (ENOENT)"],
+				["graphs/invalid.json", /^invalid JSON \(.+\)$/],
+				["graphs/array.json", "the top level is not an object"],
+				["graphs/modules5.json", "modules is not an array"],
+				["graphs/madge-string.json", "src/a.ts does not map to an array of strings"],
+				["graphs/module-number.json", `modules[0] ${noShape}`],
+				["graphs/module-no-deps.json", `modules[0] ${noShape}`],
+				["graphs/module-source-number.json", `modules[0] ${noShape}`],
+				["graphs/dep-number.json", `modules[0] ${noResolved}`],
+				["graphs/dep-no-resolved.json", `modules[0] ${noResolved}`],
+				["graphs/second-module.json", `modules[1] ${noShape}`],
 			]) {
 				const result = withGraph("src/a.ts", graph);
 				const out = result.stdout.trimEnd().split("\n");
@@ -295,7 +325,11 @@ describe("lane CLI (S5)", () => {
 						"reason: hub signal broken: raised to normal",
 						"diagnostic: lines unknown",
 					]);
-				expect.soft(out[4], graph).toMatch(brokenLine(graph));
+				const prefix = `diagnostic: hub signal broken: ${graph}: `;
+				expect.soft(out[4]?.startsWith(prefix), graph).toBe(true);
+				const got = out[4]?.slice(prefix.length);
+				if (typeof detail === "string") expect.soft(got, graph).toBe(detail);
+				else expect.soft(got, graph).toMatch(detail);
 				expect.soft(out, graph).toHaveLength(5);
 			}
 			const sensitive = withGraph("src/auth/x.ts", "graphs/array.json");
@@ -318,37 +352,50 @@ describe("lane CLI (S5)", () => {
 			git(repo, "commit", "-q", "-m", "c0");
 			put(repo, "src/a.ts", lines(3));
 			git(repo, "commit", "-q", "-am", "c1");
-			const isBroken = (result, token, label) => {
+			// The detail starts by naming what broke (the usage text names every option,
+			// so a bare "contains the token" check is not enough — mutation hardening).
+			const isBroken = (result, start, label) => {
 				expect.soft(result.status, label).toBe(2);
 				expect.soft(result.stdout, label).toBe("");
 				expect.soft(result.stderr, label).toMatch(/^lane: broken: [^\n]+\n$/);
-				expect.soft(result.stderr, label).toContain(token);
+				expect.soft(result.stderr.startsWith(`lane: broken: ${start}`), `${label}: ${result.stderr}`).toBe(true);
 			};
-			for (const [args, token] of [
-				[[], "mode"],
-				[["--range", "HEAD~1..HEAD", "--working"], "mode"],
-				[["--working", "--working"], "mode"],
-				[["--working", "--frob"], "--frob"],
-				[["--range"], "--range"],
-				[["--range", "--working"], "--range"],
-				[["--paths"], "--paths"],
-				[["--paths", "--slices", "1"], "--paths"],
-				[["--paths", "a", "--slices", "0"], "--slices"],
-				[["--paths", "a", "--slices", "1.5"], "--slices"],
-				[["--paths", "a", "--slices", "x"], "--slices"],
-				[["--paths", "a", "--slices"], "--slices"],
-				[["--paths", "a", "--graph"], "--graph"],
+			const oneMode = "exactly one mode is needed";
+			for (const [args, start] of [
+				[[], `${oneMode} (got 0)`],
+				[["--range", "HEAD~1..HEAD", "--working"], `${oneMode} (got 2)`],
+				[["--working", "--working"], `${oneMode} (got 2)`],
+				[["--working", "--frob"], "unknown option --frob; usage: lane.mjs"],
+				[["--range"], "--range needs a value"],
+				[["--range", "--working"], "--range needs a value"],
+				[["--paths"], "--paths needs at least one path"],
+				[["--paths", "--slices", "1"], "--paths needs at least one path"],
+				[["--paths", "a", "--slices", "0"], "--slices must be a positive integer"],
+				[["--paths", "a", "--slices", "1.5"], "--slices must be a positive integer"],
+				[["--paths", "a", "--slices", "x"], "--slices must be a positive integer"],
+				[["--paths", "a", "--slices"], "--slices needs a value"],
+				[["--paths", "a", "--graph"], "--graph needs a value"],
 			]) {
-				isBroken(runLane(args, { cwd: repo }), token, args.join(" ") || "(none)");
+				isBroken(runLane(args, { cwd: repo }), start, args.join(" ") || "(none)");
 			}
 			const parent = tempDir();
 			const outside = join(parent, "not-a-repo");
 			mkdirSync(outside);
 			isBroken(
 				runLane(["--paths", "a"], { cwd: outside, env: { GIT_CEILING_DIRECTORIES: parent } }),
-				"git",
+				"git rev-parse failed: fatal:",
 				"outside a repository",
 			);
+			// Importing the module never runs the CLI (D17: entry point only).
+			const imported = spawnSync(
+				process.execPath,
+				["--input-type=module", "-e", `await import(${JSON.stringify(pathToFileURL(LANE).href)});`, "--", "--working"],
+				{ cwd: repo, encoding: "utf-8" },
+			);
+			// (is-main may note on stderr that `-e` has no script path to resolve.)
+			expect.soft(imported.status, "import only").toBe(0);
+			expect.soft(imported.stdout, "import only").toBe("");
+			expect.soft(imported.stderr, "import only").not.toContain("lane:");
 			// Pin: a broken .rpiv-lanes.json still classifies (D16).
 			put(repo, ".rpiv-lanes.json", "{not json");
 			const broken = runLane(["--paths", "src/a.ts", "--slices", "1"], { cwd: repo });
