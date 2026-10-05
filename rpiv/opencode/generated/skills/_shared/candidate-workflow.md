@@ -188,15 +188,8 @@ branch name. Preserve the chain so final validation can inspect the whole change
    reviews after any source, test, contract, or relevant configuration change;
    a contract change that keeps reviews valid under the append-only check
    (**Candidate Identity**) is not such a change.
-   Refactor in measured steps. When CodeScene or another Code Health tool is
-   available, record a baseline score for each touched file first. Then make one
-   small behavior-preserving change at a time; rerun the relevant tests and
-   re-measure after each. Revert a step that breaks tests or lowers the score.
-   Stop when the repository's declared threshold is met or, when none is
-   declared, when no touched file regresses from its baseline. If small steps
-   cannot reach the threshold, report the gap instead of rewriting. With no such
-   tool, record the measurement as `unavailable`, or as `broken` with its
-   diagnostic when the tool fails; never claim an unmeasured improvement.
+   Refactor in small behavior-preserving steps and rerun the relevant tests
+   after each; revert a step that breaks them.
 5. Run the slice's required automated and manual verification, preserving exact
    command, working directory, result, and inspected revision. Missing manual
    proof remains pending. Apply the availability-based checks below as well as
@@ -222,7 +215,8 @@ Retain RPIV's availability-based checks unless an explicit exception is agreed
 and permitted by repository policy. Run available test-quality lint on changed
 tests. Use connected CodeScene for changed-file baseline and post-change review;
 retain the existing advisory target of at least 9.0 with no new smells unless
-project policy or a recorded accepted regression says otherwise. Discover and
+project policy or a recorded accepted regression says otherwise; that target
+is advisory and does not block on its own. Discover and
 run an applicable mutation command for behavior-changing work when available;
 verify its actual scope and arguments, not merely its script name. Wholly
 non-behavioral work needs no mutation run. In validate, these are read-only

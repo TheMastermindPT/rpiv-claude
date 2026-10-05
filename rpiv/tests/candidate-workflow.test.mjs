@@ -15,15 +15,6 @@ describe("candidate workflow authority", () => {
 		["complete identity", /base_commit/, /untracked/, /contract.*hash/i],
 		["observed TDD", /Expected red/, /independent review\/refactor/i],
 		[
-			"measured refactor",
-			/record a baseline score for each touched file/,
-			/one\s+small behavior-preserving change at a time/,
-			/re-measure after each/,
-			/declared threshold is met/,
-			/no touched file regresses from its baseline/,
-			/measurement as `unavailable`, or as `broken`/,
-		],
-		[
 			"honest gates",
 			/unavailable/,
 			/broken/,
@@ -104,5 +95,20 @@ describe("lane rules", () => {
 		expect(joined(readFileSync(implementPath, "utf8"))).toMatch(
 			/exactly one commit/i,
 		);
+	});
+
+	it("drops the measured-refactor rule and keeps the advisory target", () => {
+		for (const text of workflowTexts()) {
+			for (const removed of [
+				/record a baseline score for each touched file/,
+				/declared threshold is met/,
+				/no touched file regresses from its baseline/,
+				/re-measure after each/,
+			]) {
+				expect(text).not.toMatch(removed);
+			}
+			expect(text).toMatch(/at least 9\.0/);
+			expect(text).toMatch(/does not block on its own/i);
+		}
 	});
 });
