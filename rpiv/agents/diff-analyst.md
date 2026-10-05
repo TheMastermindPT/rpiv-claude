@@ -2,7 +2,7 @@
 name: diff-analyst
 description: "Judgment-tier patch analyst. Walks a patch against a caller-supplied list of judgment surfaces — reasoning about flow, state, contracts, and reachability across files — and emits one pipe-delimited row per finding (`file:line | verbatim | surface-id | note`). Use for lens work that demands a mental model of each file (quality surfaces, source→sink traces, confidence scoring). Contrast: diff-auditor matches literal patterns and never reasons; diff-analyst reasons and still answers only in rows."
 tools: Read, Grep, Glob, mcp__plugin_context-mode_context-mode__ctx_search, mcp__context-mode__ctx_search
-model: fable
+model: opus
 effort: high
 ---
 

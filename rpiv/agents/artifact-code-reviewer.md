@@ -2,7 +2,7 @@
 name: artifact-code-reviewer
 description: "Independent code reviewer in intent or candidate mode. Audits code quality, codebase fit, actionability, and test-contract depth in a current brief or its actual frozen worktree candidate. Use before approving implementation intent or accepting candidate code. Emits severity-tagged findings without treating planned code as a tested implementation."
 tools: Read, Grep, Glob
-model: fable
+model: opus
 effort: high
 ---
 

@@ -36,8 +36,8 @@ The plugin adds `opencode/generated/skills` to OpenCode's skill paths. Do not ed
 
 | Claude source model | OpenCode model | Agents |
 | --- | --- | --- |
-| `fable` | `openai/gpt-6-astra` | 7 deep analysis and verification agents |
-| `opus` | `openai/gpt-5.6-terra` | 8 codebase and integration agents |
+| `fable` | `openai/gpt-6-astra` | 2 whole-system analysis agents (`entity-mapper`, `interaction-sweeper`) |
+| `opus` | `openai/gpt-5.6-terra` | 13 codebase, integration, review and verification agents |
 | `sonnet` | `openai/gpt-5.6-luna` | 4 mechanical locator/auditor agents |
 | `sonnet` | `openai/gpt-5.6-terra` | `web-search-researcher` |
 

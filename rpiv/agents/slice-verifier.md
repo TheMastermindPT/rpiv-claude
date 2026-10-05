@@ -2,7 +2,7 @@
 name: slice-verifier
 description: "Independent per-slice verifier in intent or candidate mode. Audits commitments, predecessor compatibility, atomicity, and research constraints. Use before approving a slice brief or accepting its frozen worktree candidate. Returns the stable Decisions / Cross-slice / Research summary; intent review never certifies implementation correctness."
 tools: Read, Grep, Glob
-model: fable
+model: opus
 effort: xhigh
 ---
 
