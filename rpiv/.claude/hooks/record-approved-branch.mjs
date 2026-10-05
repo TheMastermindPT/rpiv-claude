@@ -36,9 +36,12 @@ function recordCreation(name, place, before) {
 function cannotRecord(place, before) {
 	if (place.problem) return place.problem;
 	if (gitTimeLeft() <= 0) return "no time left to record it";
-	if (!Array.isArray(before?.[place.dir]))
-		return "no note of the branches before the command";
-	return repositoryProblem(place.dir);
+	// A directory that is not a repository has no note either; say why.
+	const problem = repositoryProblem(place.dir);
+	if (problem) return problem;
+	return Array.isArray(before?.[place.dir])
+		? null
+		: "no note of the branches before the command";
 }
 
 /** Marks `name` approved in `dir` when it exists now; a note on failure. */
@@ -109,13 +112,22 @@ function shellInput(event) {
 	}
 }
 
+/** A `!` inline alias runs its text in a shell with the command's later words
+    appended, so a placeholder stands for them (D14 S2 rev. 2). */
+const shellAliasCreates = (value) =>
+	value?.startsWith("!") === true && stringCreates(`${value.slice(1)} name`);
+
 /** Records the branch one git invocation created; a note when it cannot. */
 function creationNote(git, before) {
 	if (git.args.aliased && CREATING.has(git.sub))
 		return "a branch may be created through an inline git alias";
+	if (shellAliasCreates(git.args.aliasValue))
+		return "a branch is created through a shell (!) git alias";
 	const word = createdNameWord(git.sub, git.args);
 	if (word === undefined) return null;
 	if (isComputed(word)) return "a branch name is computed";
+	if (word.unreadable)
+		return `${word.value}: created in a form the recorder does not read`;
 	return recordCreation(word.value, git.place, before);
 }
 

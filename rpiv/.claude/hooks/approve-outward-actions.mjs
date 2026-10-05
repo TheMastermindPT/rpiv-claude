@@ -2761,12 +2761,24 @@ function markerReason(command, mode) {
 
 /** Does a `git config` invocation in `words` have a computed argument? */
 function computedConfigArgument(words, mode) {
-	return words.some((word, i) => {
-		if (commandName(word.value) !== "git") return false;
-		if (resolvedGitSub(words, i, mode) !== "config") return false;
-		const { from } = gitArguments(words, i, mode);
-		return anyFrom(words, from, "computed-config-arg", isComputed);
+	return words.some((_, i) => {
+		const from = configArgumentsFrom(words, i, mode);
+		return (
+			from !== null && anyFrom(words, from, "computed-config-arg", isComputed)
+		);
 	});
+}
+
+/** Where the arguments of a `git config` at `i` start — directly, through an
+    inline alias (the alias's own arguments), or as a `git-config` program word
+    (D14 S2 rev. 2) — or null when `i` is not one. */
+function configArgumentsFrom(words, i, mode) {
+	const name = commandName(words[i].value);
+	if (name === "git-config") return i + 1;
+	if (name !== "git" || resolvedGitSub(words, i, mode) !== "config")
+		return null;
+	const read = readGitOptions(words, i + 1, mode);
+	return read.reason ? null : read.sub + 1;
 }
 
 const commitGate = (detail) => `commit off an approved branch: ${detail}`;
@@ -2934,7 +2946,9 @@ function shellStateProblem(segments, mode) {
 function segmentStateProblem(segment, mode) {
 	const run = runPosition(segment, mode).index;
 	for (const [i, word] of segment.words.entries()) {
-		const name = commandName(word.value);
+		// Off the run position only the whole word counts: `ci/cd` is a path,
+		// not `cd` (D14 S2 rev. 2).
+		const name = i === run ? commandName(word.value) : word.value.toLowerCase();
 		if (/^CDPATH=/.test(word.value)) return "CDPATH is set";
 		const followed = i === run && isPlainCommand(segment, mode);
 		if (isDirectoryWord(name, mode) && !followed)
@@ -2950,8 +2964,12 @@ const isDirectoryWord = (name, mode) =>
 
 /** Where a literal `cd`-like command at `run` moves the directory. */
 function changedPlace(segment, run, name, place) {
-	// The path is the first non-option word (`Set-Location -Path <dir>`).
-	const target = segment.words.slice(run + 1).find((w) => !isOptionWord(w));
+	// The path is the only non-option word (`Set-Location -Path <dir>`); with
+	// more than one, the shell refuses the change (D14 S2 rev. 2).
+	const operands = segment.words.slice(run + 1).filter((w) => !isOptionWord(w));
+	if (operands.length > 1)
+		return { problem: `${name} with more than one operand does not run` };
+	const [target] = operands;
 	if (target === undefined)
 		return { problem: `${name} without a path leaves the directory unknown` };
 	if (isComputed(target)) return { problem: "the directory is computed" };
@@ -3017,10 +3035,15 @@ function resolvedGitSub(words, i, mode) {
 function gitArguments(words, i, mode) {
 	const read = readGitOptions(words, i + 1, mode);
 	const subWord = read.reason ? undefined : words[read.sub];
-	const aliased =
-		subWord !== undefined && read.aliases.has(subWord.value.toLowerCase());
+	const alias = subWord && read.aliases.get(subWord.value.toLowerCase());
+	const aliased = alias !== undefined;
 	const none = subWord === undefined || aliased;
-	return { words, from: none ? words.length : read.sub + 1, aliased };
+	return {
+		words,
+		from: none ? words.length : read.sub + 1,
+		aliased,
+		aliasValue: alias,
+	};
 }
 
 /** The commit gate for a commit running in `dir`. */
@@ -3106,28 +3129,32 @@ function readEvent() {
 function main() {
 	const input = readEvent();
 	const reason = safeDecide(input);
+	// The decision is written first, so the note's git work can never delay it
+	// (D14 S2 rev. 2).
+	if (reason)
+		process.stdout.write(
+			JSON.stringify({
+				hookSpecificOutput: {
+					hookEventName: "PreToolUse",
+					permissionDecision: "ask",
+					permissionDecisionReason: `[rpiv-hook] ${reason}`,
+				},
+			}),
+		);
 	try {
 		noteBranchesBefore(input);
 	} catch {
 		// The note only serves the recorder, which reports a missing note.
 	}
-	if (!reason) return;
-	process.stdout.write(
-		JSON.stringify({
-			hookSpecificOutput: {
-				hookEventName: "PreToolUse",
-				permissionDecision: "ask",
-				permissionDecisionReason: `[rpiv-hook] ${reason}`,
-			},
-		}),
-	);
 }
 
 /** Run as the hook, not when the approval recorder imports this file (D14). */
 function isEntryPoint() {
 	try {
+		// No script path (`node -e …`): cannot tell, so decide (D14 S2 rev. 2).
+		if (!process.argv[1]) return true;
 		const self = realpathSync(fileURLToPath(import.meta.url));
-		return realpathSync(process.argv[1] ?? "") === self;
+		return realpathSync(process.argv[1]) === self;
 	} catch {
 		// Cannot tell: decide anyway, so the hook never goes silent (D13).
 		return true;

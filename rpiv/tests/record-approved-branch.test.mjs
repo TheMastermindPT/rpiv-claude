@@ -5,7 +5,16 @@
 // `branch.<name>.rpivApproved` key in the fixture repository.
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
@@ -288,6 +297,42 @@ function revisionOneReports() {
 	];
 }
 
+// S2 revision 2 report cases: [label, tool call result, text the report contains].
+function revisionTwoReports() {
+	const call = (command, branch) =>
+		toolCall({ command: literal(command), effect: creates(branch) }).res;
+	const notRepository = toolCall({
+		command: literal("git switch -c feat/z"),
+		cwd: FX.plain,
+	}).res;
+	return [
+		[
+			"! alias",
+			call("git -c alias.nb='!git switch -c' nb feat/v", "feat/v"),
+			"",
+		],
+		["branch --", call("git branch -- feat/x2", "feat/x2"), ""],
+		["not a repository", notRepository, "not a readable git repository"],
+	];
+}
+
+const NOTES_DIR = join(tmpdir(), "rpiv-branch-notes");
+
+/** A note older than one hour is removed when a new note is written. */
+function staleNoteProblem() {
+	mkdirSync(NOTES_DIR, { recursive: true });
+	const stale = join(NOTES_DIR, `toolu_stale_${process.pid}.json`);
+	writeFileSync(stale, "{}");
+	const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+	utimesSync(stale, old, old);
+	sendPreToolUse("git switch -c feat/s", freshRepo(), {
+		tool_use_id: `toolu_fresh_${process.pid}`,
+	});
+	const left = existsSync(stale);
+	rmSync(stale, { force: true });
+	return left ? "a note older than one hour was not removed" : null;
+}
+
 /** 300 creations in one command: answered within 10 s, summarised. */
 function manyCreationsProblem() {
 	const names = Array.from({ length: 300 }, (_, k) => `b${k}`);
@@ -322,6 +367,8 @@ describe("record-approved-branch hook", () => {
 				})),
 			].flatMap((c) => recordFailures(c));
 			expect.soft(failures).toEqual([]);
+			// S2 revision 2: old before-notes are cleaned up.
+			expect.soft(staleNoteProblem()).toBeNull();
 		},
 		TEST_TIMEOUT,
 	);
@@ -346,6 +393,11 @@ describe("record-approved-branch hook", () => {
 				.filter(Boolean);
 			expect.soft(revisionOne).toEqual([]);
 			expect.soft(manyCreationsProblem()).toBeNull();
+			// S2 revision 2: more creations the recorder cannot follow; reasons.
+			const revisionTwo = revisionTwoReports()
+				.map(([label, res, text]) => reportProblem(label, res, text))
+				.filter(Boolean);
+			expect.soft(revisionTwo).toEqual([]);
 		},
 		TEST_TIMEOUT,
 	);

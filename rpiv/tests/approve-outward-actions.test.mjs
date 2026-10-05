@@ -8,9 +8,9 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { makeFixtures } from "./helpers/git-fixtures.mjs";
+import { git, makeFixtures } from "./helpers/git-fixtures.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const HOOK = join(ROOT, ".claude", "hooks", "approve-outward-actions.mjs");
@@ -208,6 +208,65 @@ const S2_REV1 = (() => {
 			.join("; "),
 	};
 })();
+
+// S2 revision-2 cases (D14 "S2 revision 2").
+const S2_REV2 = (() => {
+	const ok = quoted(FX.ok);
+	const main = quoted(FX.main);
+	const execPath = git(FX.ok, "--exec-path").replaceAll("\\", "/");
+	return {
+		refusedCd: [`cd ${ok} extra; git commit -m x`],
+		wholeWordSilent: [
+			'git commit -m "Set up CI/CD"',
+			"git add ci/cd && git commit -m x",
+		],
+		brokenAtMain: [`echo x | cd ${ok}; git commit -m x`],
+		brokenPsAtMain: [`Push-Location ${ok} | Out-Null; git commit -m x`],
+		brokenAtOk: [
+			"source x.sh && git commit -m x",
+			". x.sh && git commit -m x",
+			"alias c=cd; git commit -m x",
+		],
+		brokenPsAtOk: [
+			"Pop-Location; git commit -m x",
+			`iex 'cd ${main}'; git commit -m x`,
+			"Set-Item env:GIT_DIR x; git commit -m x",
+			"New-Item env:GIT_WORK_TREE -Value x; git commit -m x",
+		],
+		silentAtOk: ["git add . && git commit -m x"],
+		silentAtMain: [
+			`pushd ${ok} && git commit -m x && popd`,
+			`cd ${ok} && git commit -m "$(cat <<'EOF'\nmsg\nEOF\n)"`,
+		],
+		markerThroughAlias: [
+			"K=rpivApp; git -c alias.cf=config cf branch.main.${K}roved true",
+			`K=rpivApp; "${execPath}/git-config" branch.main.\${K}roved true`,
+		],
+		crowded: `git commit -m x ${"git ".repeat(65)}`,
+	};
+})();
+
+/** The hook imported by a process started without a script path. */
+function importedHookAsk(event) {
+	const url = pathToFileURL(HOOK).href;
+	const res = spawnSync(
+		process.execPath,
+		["--input-type=module", "-e", `await import(${JSON.stringify(url)})`],
+		{ input: event, encoding: "utf-8", timeout: 10_000 },
+	);
+	return res.stdout ?? "";
+}
+
+/** `headState` after the git time budget is spent (a child process). */
+function headStateWithoutBudget(dir) {
+	const url = pathToFileURL(join(ROOT, ".claude", "hooks", "_git-branch.mjs"));
+	const code = `const m = await import(${JSON.stringify(url.href)}); m.limitGitTime(0); console.log(JSON.stringify(m.headState(${JSON.stringify(dir)})));`;
+	const res = spawnSync(process.execPath, ["--input-type=module", "-e", code], {
+		encoding: "utf-8",
+		timeout: 10_000,
+	});
+	return res.stdout ?? "";
+}
 
 // Revision-2 cases of "inspects wrapper commands and fails closed on dynamic
 // ones" (B9), kept here so the test body stays readable.
@@ -1596,6 +1655,12 @@ describe("approve-outward-actions hook", () => {
 			expectSilent(["git commit -m x"], in_(FX.tagged));
 			expectSilent(["git commit -m x"], in_(FX.yes));
 			expectSilent(S2_REV1.silentAtMain, in_(FX.main));
+			// S2 revision 2 pin: bisect moves HEAD.
+			expectAsks(
+				["git bisect reset && git commit -m x"],
+				COMMIT_GATE,
+				in_(FX.ok),
+			);
 		},
 		TEST_TIMEOUT,
 	);
@@ -1643,6 +1708,16 @@ describe("approve-outward-actions hook", () => {
 			expectAsks([`sl ${main}; git commit -m x`], COMMIT_GATE, psIn(FX.ok));
 			expectSilent(S2_REV1.silentFollowed, in_(FX.main));
 			expectSilent(S2_REV1.silentPsAtPlain, psIn(FX.plain));
+			// S2 revision 2: refused cd, whole-word directory names, pins.
+			expectAsks(S2_REV2.refusedCd, BROKEN, in_(FX.main));
+			expectAsks(S2_REV2.refusedCd, BROKEN, psIn(FX.main));
+			expectSilent(S2_REV2.wholeWordSilent, in_(FX.ok));
+			expectAsks(S2_REV2.brokenAtMain, BROKEN, in_(FX.main));
+			expectAsks(S2_REV2.brokenPsAtMain, BROKEN, psIn(FX.main));
+			expectAsks(S2_REV2.brokenAtOk, BROKEN, in_(FX.ok));
+			expectAsks(S2_REV2.brokenPsAtOk, BROKEN, psIn(FX.ok));
+			expectSilent(S2_REV2.silentAtOk, in_(FX.ok));
+			expectSilent(S2_REV2.silentAtMain, in_(FX.main));
 		},
 		TEST_TIMEOUT,
 	);
@@ -1681,6 +1756,8 @@ describe("approve-outward-actions hook", () => {
 				`${OUTWARD}git push`,
 				in_(FX.ok),
 			);
+			// S2 revision 2: git config through an inline alias or git-config.
+			expectAsks(S2_REV2.markerThroughAlias, BROKEN, in_(FX.ok));
 		},
 		TEST_TIMEOUT,
 	);
@@ -1723,6 +1800,20 @@ describe("approve-outward-actions hook", () => {
 			);
 			expect.soft(timings.filter((ms) => ms >= 2_000)).toEqual([]);
 			expectAsks([S2_REV1.nineDirs], BROKEN, in_(FX.ok));
+			// S2 revision 2: entry point without a script path; pins for the
+			// 64-git-word bound and the spent git budget.
+			const imported = importedHookAsk(bashEvent("git push"));
+			expect.soft(imported).toContain(`${OUTWARD}git push`);
+			expect
+				.soft(
+					brokenWithFailure(
+						"65 git words",
+						bashEvent(S2_REV2.crowded),
+						"more than 64 git invocations",
+					),
+				)
+				.toBeNull();
+			expect.soft(headStateWithoutBudget(FX.ok)).toContain("git could not run");
 		},
 		TEST_TIMEOUT,
 	);

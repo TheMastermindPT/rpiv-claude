@@ -3,7 +3,14 @@
 // ran (D14 S2 rev. 1). Shared by the outward-action hook (PreToolUse: writes the
 // note) and the approval recorder (PostToolUse: reads it).
 
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -51,13 +58,19 @@ function optionNameWord(sub, { words, from }) {
     makes the invocation something other than a creation. */
 function branchNameWord({ words, from }) {
 	let name;
+	let unreadable = false;
 	for (let k = from; k < words.length; k++) {
 		const { value } = words[k];
 		if (!value.startsWith("-")) name ??= words[k];
+		else if (UNREAD_CREATE_FORMS.test(value)) unreadable = true;
 		else if (!BRANCH_CREATE_OPTIONS.has(value)) return undefined;
 	}
-	return name;
+	// `--` and `--track=<mode>` still create; the word is flagged so the
+	// recorder reports instead of guessing (D14 S2 rev. 2).
+	return unreadable && name ? { ...name, unreadable } : name;
 }
+
+const UNREAD_CREATE_FORMS = /^(--|--track=.*)$/;
 
 // ---- the before-note, keyed by the tool call ---------------------------------------
 
@@ -76,10 +89,22 @@ export function writeBeforeNote(toolUseId, branchesByDir) {
 	if (path === null) return false;
 	try {
 		mkdirSync(NOTES_DIR, { recursive: true });
+		removeOldNotes();
 		writeFileSync(path, JSON.stringify(branchesByDir));
 		return true;
 	} catch {
 		return false;
+	}
+}
+
+// Notes of denied or failed calls are never taken; they go after an hour.
+const NOTE_MAX_AGE_MS = 60 * 60 * 1000;
+
+function removeOldNotes() {
+	const cutoff = Date.now() - NOTE_MAX_AGE_MS;
+	for (const name of readdirSync(NOTES_DIR)) {
+		const file = join(NOTES_DIR, name);
+		if (statSync(file).mtimeMs < cutoff) rmSync(file, { force: true });
 	}
 }
 
