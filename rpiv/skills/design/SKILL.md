@@ -78,7 +78,7 @@ Stabilize the brief and record its body hash and the referenced contracts' hashe
 
 1. Dispatch `slice-verifier` with `mode=intent`, the exact `artifact_path` identity, and the next `slice_id`. It reviews commitments, seam/oracle sufficiency, dependencies, and verified upstream facts, not hypothetical implementation correctness.
 2. Dispatch independent `artifact-code-reviewer` and `artifact-coverage-reviewer` agents in parallel on that same intent identity. Read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/artifact-review-dispatch.md` for dispatch and evidence persistence.
-3. Present verified findings to the user. Fix gaps or explicitly reopen the affected commitment; then re-pin and rerun affected reviews. A changed contract cannot inherit approval for the old hash.
+3. Present verified findings to the user. Fix gaps or explicitly reopen the affected commitment; then re-record the body hash and rerun affected reviews. A changed contract cannot inherit approval for the old hash.
 4. Apply **States And Evidence**: unavailable, broken, failed, and passed remain distinct. Missing review or a blocker cannot be waived by filling a `resolution` cell. Hold the gate until the required evidence supports it.
 
 Done when the required intent reviews pass on the stabilized brief and the user confirms that intent. Candidate-mode review belongs to the later real source revision.
@@ -88,7 +88,7 @@ Done when the required intent reviews pass on the stabilized brief and the user 
 1. Verify canonical references, intent review evidence, and next-slice completeness; keep deferred questions explicit.
 2. For opt-in standing decisions, read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/decision-ledger.md` and apply its promotion protocol only to entries tagged `scope: standing`, `key`, and `rule`, within authorized write scope. Feature-local choices and the shared TDD requirement are not automatic promotions.
 3. Run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <design-path> --finalizing --stamp`. Fix reported faults and rerun; a broken gate is not a pass. Preserve the stamped `content_hash` as the final body identity.
-4. Flip `status: in-review` to `status: ready` only after the required gates pass. If finalization changed reviewed intent, re-pin and re-review before the flip.
+4. Flip `status: in-review` to `status: ready` only after the required gates pass. If finalization changed reviewed intent, re-record the body hash and re-review before the flip.
 5. Present the path, architectural outcome, next-slice readiness, and deferred scope. `ready` means reviewed design intent, not permission to build or proof of feature completion.
 
 Scheduling through `/rpiv:plan` is optional. A later build request can use the brief directly through the shared workflow; design never starts that build itself.

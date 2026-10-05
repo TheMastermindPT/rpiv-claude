@@ -68,23 +68,24 @@ describe("candidate execution instructions", () => {
 	it("no skill or agent describes a per-section contract hash", () => {
 		const perSection = [
 			/normative[^.]*hash/i,
-			/\b(?:hash|pin(?:s|ned)?)\b[^.]*normative/i,
+			/\b(?:hash(?:es)?|pin(?:s|ned)?)\b[^.]*normative/i,
 			/section hash/i,
 			/\b(?:approved-contract|approval|required|missing) pin\b/i,
 			/pinned content/i,
+			/\bre-pin/i,
 		];
+		const matches = (text) => perSection.some((rule) => rule.test(text));
 		const hits = [];
 		for (const dir of ["skills", "agents"]) {
 			const base = new URL(`../${dir}/`, import.meta.url);
 			for (const file of readdirSync(base, { recursive: true })) {
 				const path = file.replaceAll("\\", "/");
 				if (!path.endsWith(".md")) continue;
-				const lines = readFileSync(new URL(path, base), "utf8").split(/\r?\n/);
-				lines.forEach((line, index) => {
-					if (perSection.some((rule) => rule.test(line))) {
-						hits.push(`${dir}/${path}:${index + 1}`);
-					}
+				const text = readFileSync(new URL(path, base), "utf8");
+				text.split(/\r?\n/).forEach((line, index) => {
+					if (matches(line)) hits.push(`${dir}/${path}:${index + 1}`);
 				});
+				if (matches(joinWhitespace(text))) hits.push(`${dir}/${path} (joined)`);
 			}
 		}
 		expect(hits).toEqual([]);

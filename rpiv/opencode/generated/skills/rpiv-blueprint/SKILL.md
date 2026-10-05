@@ -76,7 +76,7 @@ Stabilize and pin the brief and referenced contracts through **Candidate Identit
 
 1. Dispatch `slice-verifier` with `mode=intent`, exact `artifact_path` identity, and `slice_id`.
 2. Dispatch independent `artifact-code-reviewer` and `artifact-coverage-reviewer` agents in parallel on the same stabilized intent. Read `$RPIV_PLUGIN_ROOT/skills/_shared/artifact-review-dispatch.md` for dispatch and evidence persistence.
-3. Present verified findings; fix gaps or explicitly reopen the affected commitment with the user. Re-pin and rerun affected reviews whenever reviewed intent changes.
+3. Present verified findings; fix gaps or explicitly reopen the affected commitment with the user. Re-record the body hash and rerun affected reviews whenever reviewed intent changes.
 4. Apply **States And Evidence**. Unavailable or broken review is not an empty clean result; failed gates remain failed. A filled `resolution` cell cannot replace missing evidence or waive a blocker.
 
 For a planning-only request, finalize the reviewed document in Step 6 and stop. Report build approval still pending; do not create a worktree or write source.
@@ -111,7 +111,7 @@ Stop at the authorized bound. Integration is a separate decision: apply **Integr
 
 1. Check canonical references, review/evidence identity, and executable/unresolved counts. Keep candidate acceptance and integration records separate from document readiness.
 2. Read `$RPIV_PLUGIN_ROOT/skills/_shared/decision-ledger.md` for opt-in promotion of decisions tagged `scope: standing`, `key`, and `rule`, within authorized scope. Shared TDD requirements and feature-local decisions are not automatic promotions.
-3. Run `node "$RPIV_PLUGIN_ROOT/skills/_shared/validate-artifact.mjs" <brief-path> --finalizing --stamp`; fix reported faults and rerun. Retain the stamped `content_hash`; re-pin and re-review if finalization changes reviewed intent.
+3. Run `node "$RPIV_PLUGIN_ROOT/skills/_shared/validate-artifact.mjs" <brief-path> --finalizing --stamp`; fix reported faults and rerun. Retain the stamped `content_hash`; re-record the body hash and re-review if finalization changes reviewed intent.
 4. Flip `status: in-review` to `status: ready` only when required intent gates and finalization lint pass. `ready` does not authorize source writes, mark a candidate accepted, or imply integration.
 5. Report the brief path, current authority, exact candidate/evidence pointers when present, unresolved gates, and Deferred Work. Completing the active slices is not whole-feature completion while deferred scope remains.
 
