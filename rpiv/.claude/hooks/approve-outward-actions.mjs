@@ -21,7 +21,11 @@
 // Extract one owner (shared-vocab-union) when the OpenCode mirror (S16) becomes the
 // second consumer of this outward list.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { headState, isApproved, limitGitTime } from "./_git-branch.mjs";
 
 // ---- command tokenizer -----------------------------------------------------------
 //
@@ -1134,6 +1138,9 @@ function decisiveArgComputed(sub, words, from) {
 }
 
 function gitSubcommandReason(sub, words, from) {
+	// Every git commit the analysis meets, aliases and wrapper strings included,
+	// is gated once the command has no other reason (D14).
+	if (sub === "commit") decision.commits++;
 	if (!Object.hasOwn(GIT_OUTWARD, sub)) return null;
 	if (decisiveArgComputed(sub, words, from))
 		return broken(`an argument that decides what git ${sub} does is computed`);
@@ -2416,10 +2423,12 @@ function aliasWordProblem(word, mode) {
 /** A computed word directly followed by words that would make an outward git
     invocation, or an outward write-capable gh invocation, may itself be git/gh. */
 function followReason(words, from, mode) {
-	if (
-		isOutward(gitInvocationReason(words, from, mode)) ||
-		ghWouldWrite(words, from)
-	)
+	// A speculative read: the words after a computed word are not a git commit
+	// the commit gate must count (D14).
+	const { commits } = decision;
+	const asGit = gitInvocationReason(words, from, mode);
+	decision.commits = commits;
+	if (isOutward(asGit) || ghWouldWrite(words, from))
 		return broken("a computed word is followed by an outward git or gh action");
 	return null;
 }
@@ -2682,12 +2691,18 @@ function decide(input) {
 	if (toolName.startsWith("mcp__")) return classifyMcp(toolName);
 	// Own properties only: an inherited `constructor` is not a shell (D3).
 	if (!Object.hasOwn(SHELL_MODES, toolName)) return null;
-	return shellCommandReason(input.tool_input?.command, SHELL_MODES[toolName]);
+	const mode = SHELL_MODES[toolName];
+	const command = input.tool_input?.command;
+	return (
+		shellCommandReason(command, mode) ??
+		commitGateReason(command, mode, input.cwd ?? ".")
+	);
 }
 
 /** State shared by every analysis of one hook decision, including literal
     wrapper strings analysed in nested calls (D5 rev. 3). */
 const newDecision = () => ({
+	commits: 0,
 	aliasExpansions: 0,
 	gitWords: 0,
 	configSet: false,
@@ -2701,7 +2716,184 @@ function shellCommandReason(command, mode) {
 	if (command.length > MAX_COMMAND_LENGTH)
 		return broken(`command longer than ${MAX_COMMAND_LENGTH} characters`);
 	decision = newDecision();
-	return analyzeCommand(command, mode);
+	return analyzeCommand(command, mode) ?? markerReason(command);
+}
+
+// ---- approved branches (D14, S2) -----------------------------------------------------
+
+/** Only the developer may approve or unapprove a branch: any command naming the
+    marker key asks, quoted or not, in any case. */
+const markerReason = (command) =>
+	/rpivapproved/i.test(command)
+		? "approval marker: the command names the rpivApproved key"
+		: null;
+
+const commitGate = (detail) => `commit off an approved branch: ${detail}`;
+
+/** A command that commits asks unless HEAD is on an approved branch where each
+    commit runs. A commit the analysis met but the walk cannot place (inside a
+    quoted wrapper string) asks. */
+function commitGateReason(command, mode, cwd) {
+	if (decision.commits === 0) return null;
+	const commits = [];
+	forEachGitInvocation(tokenize(command, mode), mode, cwd, (git) => {
+		if (git.sub === "commit") commits.push(git);
+	});
+	return placementReason(commits) ?? approvedDirsReason(commits);
+}
+
+/** A commit the hook cannot place, or whose HEAD may move first, asks. */
+function placementReason(commits) {
+	if (commits.length < decision.commits)
+		return commitGate("a commit runs inside a string the hook cannot place");
+	for (const { place, headMoved } of commits) {
+		if (place.problem) return broken(place.problem);
+		if (headMoved)
+			return commitGate("a git switch or checkout runs before the commit");
+	}
+	return null;
+}
+
+/** Each directory is read once, and only a few: every read runs git, and the
+    decision must stay inside the hook timeout (D13). */
+function approvedDirsReason(commits) {
+	const dirs = new Set(commits.map(({ place }) => place.dir));
+	if (dirs.size > MAX_COMMIT_DIRS)
+		return broken(`commits run in more than ${MAX_COMMIT_DIRS} directories`);
+	limitGitTime(GIT_BUDGET_MS);
+	for (const dir of dirs) {
+		const reason = branchGateReason(dir);
+		if (reason) return reason;
+	}
+	return null;
+}
+
+const MAX_COMMIT_DIRS = 8;
+// All git queries of one decision; past it a branch reads as unreadable.
+const GIT_BUDGET_MS = 5_000;
+
+// Commands that change the shell's directory (D14); `popd` leaves it unknown.
+const DIR_CHANGERS = {
+	bash: new Set(["cd", "pushd"]),
+	ps: new Set(["cd", "pushd", "chdir", "sl", "set-location", "push-location"]),
+};
+const DIR_RESTORERS = new Set(["popd", "pop-location"]);
+const GIT_LOCATION_ENV = /^(\$?env:)?GIT_(DIR|WORK_TREE)(=|$)/i;
+
+/** Calls `visit({ sub, args, place, headMoved })` for every git word of `segments` in
+    order, with the directory it runs in (`place.dir`, or `place.problem`) and
+    whether an earlier `git switch`/`checkout` may have moved HEAD. */
+function forEachGitInvocation(segments, mode, cwd, visit) {
+	let place = { dir: cwd };
+	let headMoved = false;
+	for (const segment of segments) {
+		place = placeAfter(segment, mode, place);
+		const { words } = segment;
+		words.forEach((word, i) => {
+			if (commandName(word.value) !== "git") return;
+			const sub = resolvedGitSub(words, i, mode);
+			const args = gitArguments(words, i, mode);
+			visit({ sub, args, place: gitPlace(words, i, mode, place), headMoved });
+			if (sub === "switch" || sub === "checkout") headMoved = true;
+		});
+	}
+}
+
+/** The directory after `segment` runs: a literal `cd` moves it; anything the
+    hook cannot follow turns it into a problem. */
+function placeAfter(segment, mode, place) {
+	const { words } = segment;
+	if (words.some(setsGitLocation))
+		return { problem: "GIT_DIR or GIT_WORK_TREE is set for the commit" };
+	const run = runPosition(segment, mode).index;
+	const name = commandName(words[run]?.value ?? "");
+	if (DIR_RESTORERS.has(name))
+		return { problem: `${name} leaves the directory unknown` };
+	if (!DIR_CHANGERS[mode].has(name) || place.problem) return place;
+	return changedPlace(segment, run, name, place);
+}
+
+/** Where a literal `cd`-like command at `run` moves the directory. */
+function changedPlace(segment, run, name, place) {
+	// The path is the first non-option word (`Set-Location -Path <dir>`).
+	const target = segment.words.slice(run + 1).find((w) => !isOptionWord(w));
+	if (target === undefined)
+		return { problem: `${name} without a path leaves the directory unknown` };
+	if (isComputed(target)) return { problem: "the directory is computed" };
+	if (segment.group || segment.piped)
+		return { problem: `${name} inside a group or pipeline` };
+	return { dir: resolveDir(place.dir, target.value) };
+}
+
+const setsGitLocation = (word) =>
+	GIT_LOCATION_ENV.test(word.value) ||
+	(word.vars ?? []).some((v) => GIT_LOCATION_ENV.test(v));
+
+/** `~`, Git Bash drive paths (`/c/Users/…`) and relative paths, from `base`. */
+function resolveDir(base, path) {
+	let target = path.replace(/^~(?=\/|\\|$)/, homedir());
+	if (process.platform === "win32")
+		target = target.replace(/^\/([a-zA-Z])(?=\/|$)/, "$1:");
+	return resolve(base, target);
+}
+
+/** Where the git invocation at `i` runs: `-C` moves it; `--git-dir` and
+    `--work-tree` make it unknown. */
+function gitPlace(words, i, mode, place) {
+	const { sub } = readGitOptions(words, i + 1, mode);
+	let at = place;
+	for (let k = i + 1; k < (sub ?? words.length); k++) {
+		const [name] = words[k].value.split("=", 1);
+		if (name === "--git-dir" || name === "--work-tree")
+			return { problem: `git ${name} sets where the commit runs` };
+		if (name !== "-C" || words[k + 1] === undefined) continue;
+		at = gitDirectoryOption(at, words[k + 1]);
+		k++;
+	}
+	return at;
+}
+
+function gitDirectoryOption(place, word) {
+	if (isComputed(word)) return { problem: "git -C names a computed directory" };
+	return place.problem ? place : { dir: resolveDir(place.dir, word.value) };
+}
+
+/** The subcommand the git word at `i` runs, through inline aliases; null for a
+    `!` alias or when it cannot be read. */
+function resolvedGitSub(words, i, mode) {
+	const read = readGitOptions(words, i + 1, mode);
+	let sub = read.reason ? undefined : words[read.sub]?.value.toLowerCase();
+	for (let n = 0; sub !== undefined && read.aliases.has(sub); n++) {
+		const value = read.aliases.get(sub);
+		if (n >= MAX_NESTING || value.startsWith("!")) return null;
+		sub = tokenize(value, "bash")[0]?.words[0]?.value.toLowerCase();
+	}
+	return sub ?? null;
+}
+
+/** `{ words, from }`: where the arguments of the git subcommand at `i` start,
+    without copying (D13); `from` is past the end when there are none or an
+    inline alias renames the subcommand (its own arguments are not these). */
+function gitArguments(words, i, mode) {
+	const read = readGitOptions(words, i + 1, mode);
+	const subWord = read.reason ? undefined : words[read.sub];
+	const aliased =
+		subWord === undefined || read.aliases.has(subWord.value.toLowerCase());
+	return { words, from: aliased ? words.length : read.sub + 1 };
+}
+
+/** The commit gate for a commit running in `dir`. */
+function branchGateReason(dir) {
+	const head = headState(dir);
+	// Fail closed (D13): an unreadable branch is never an approved one.
+	if (head.problem)
+		return broken(`cannot read the branch of the commit: ${head.problem}`);
+	if (head.branch === null) return commitGate("HEAD is detached");
+	if (!head.born)
+		return commitGate(`branch "${head.branch}" has no commit yet`);
+	return isApproved(dir, head.branch)
+		? null
+		: commitGate(`branch "${head.branch}" is not approved`);
 }
 
 /** Fail closed (D13): an exception must never become an unprompted run. */
@@ -2738,6 +2930,18 @@ function main() {
 	);
 }
 
+/** Run as the hook, not when the approval recorder imports this file (D14). */
+function isEntryPoint() {
+	try {
+		const self = realpathSync(fileURLToPath(import.meta.url));
+		return realpathSync(process.argv[1] ?? "") === self;
+	} catch {
+		return false;
+	}
+}
+
 // Returns normally: no `process.exit`, so a pending stdout write is never dropped
 // (D13). Nothing else keeps the event loop alive, so the process exits with 0.
-main();
+if (isEntryPoint()) main();
+
+export { forEachGitInvocation, isComputed, tokenize };

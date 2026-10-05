@@ -1,5 +1,5 @@
 {
-  "description": "rpiv lifecycle hooks: session bootstrap/restore, read-only enforcement and auto-approval for rpiv agents, approval prompts before outward actions (git push, branch/worktree creation, GitHub writes), artifact validation and fence-duplication detection on Write, agent model/output checks, compaction state preservation.",
+  "description": "rpiv lifecycle hooks: session bootstrap/restore, read-only enforcement and auto-approval for rpiv agents, approval prompts before outward actions (git push, branch/worktree creation, GitHub writes) and before commits off an approved branch, recording of approved branches, artifact validation and fence-duplication detection on Write, agent model/output checks, compaction state preservation.",
   "hooks": {
     "SessionStart": [
       {
@@ -59,6 +59,16 @@
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/.claude/hooks/fence-duplication-check.mjs\"",
             "timeout": 25,
             "statusMessage": "Checking artifact fences for duplication"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/.claude/hooks/record-approved-branch.mjs\"",
+            "timeout": 10
           }
         ]
       }

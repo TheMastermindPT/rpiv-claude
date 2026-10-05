@@ -9,12 +9,18 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
+import { makeFixtures } from "./helpers/git-fixtures.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const HOOK = join(ROOT, ".claude", "hooks", "approve-outward-actions.mjs");
 // Some behaviors spawn over a hundred hook processes.
 const TEST_TIMEOUT = 120_000;
+
+// Every event runs in a fixture repository (S2): by default on the approved
+// branch `feat/ok`, so commit gating stays out of the S1 oracles.
+const FX = makeFixtures();
+afterAll(() => FX.cleanup());
 
 function runHook(stdin, nodeArgs = []) {
 	const res = spawnSync(process.execPath, [...nodeArgs, HOOK], {
@@ -26,9 +32,19 @@ function runHook(stdin, nodeArgs = []) {
 }
 
 const bashEvent = (command, extra = {}) =>
-	JSON.stringify({ tool_name: "Bash", tool_input: { command }, ...extra });
-const psEvent = (command) =>
-	JSON.stringify({ tool_name: "PowerShell", tool_input: { command } });
+	JSON.stringify({
+		tool_name: "Bash",
+		tool_input: { command },
+		cwd: FX.ok,
+		...extra,
+	});
+const psEvent = (command, extra = {}) =>
+	JSON.stringify({
+		tool_name: "PowerShell",
+		tool_input: { command },
+		cwd: FX.ok,
+		...extra,
+	});
 const mcpEvent = (toolName) =>
 	JSON.stringify({ tool_name: toolName, tool_input: {} });
 
@@ -100,6 +116,27 @@ const rawEvent = (s) => s;
 
 const OUTWARD = "[rpiv-hook] outward action: ";
 const BROKEN = "[rpiv-hook] broken input:";
+const COMMIT_GATE = "[rpiv-hook] commit off an approved branch:";
+const MARKER = "[rpiv-hook] approval marker:";
+
+// S2 events run in a named fixture: `in_(FX.main)` builds Bash events there.
+const in_ = (cwd) => (command) => bashEvent(command, { cwd });
+const psIn = (cwd) => (command) => psEvent(command, { cwd });
+const quoted = (path) => `"${path}"`;
+
+/** One soft assertion for `command` run in each fixture, labelled by fixture. */
+function expectAsksInEach(repos, command, prefix) {
+	const failures = repos
+		.map((cwd) =>
+			askFailure(
+				`${JSON.stringify(command)} in ${cwd.split("/").pop()}`,
+				bashEvent(command, { cwd }),
+				prefix,
+			),
+		)
+		.filter(Boolean);
+	expect.soft(failures).toEqual([]);
+}
 
 // Revision-2 cases of "inspects wrapper commands and fails closed on dynamic
 // ones" (B9), kept here so the test body stays readable.
@@ -1448,6 +1485,116 @@ describe("approve-outward-actions hook", () => {
 				`${OUTWARD}git push`,
 			);
 			expectAsks(["$b = git push"], `${OUTWARD}git push`, psEvent);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"asks for git commit off an approved branch",
+		() => {
+			expectAsksInEach(
+				[FX.main, FX.x, FX.y, FX.det, FX.unborn],
+				"git commit -m x",
+				COMMIT_GATE,
+			);
+			expectAsks(
+				[
+					"git commit --amend --no-edit",
+					"git -c user.name=x commit -m x",
+					"git -c alias.ci=commit ci -m x",
+				],
+				COMMIT_GATE,
+				in_(FX.main),
+			);
+			expectAsks(["git commit -m x"], COMMIT_GATE, psIn(FX.main));
+			expectSilent(
+				["git commit -m x", 'git commit -m "do not git push"'],
+				in_(FX.ok),
+			);
+			expectSilent(["git status"], in_(FX.main));
+			expectAsksInEach(
+				[FX.ok, FX.main],
+				"git commit -m x && git push",
+				`${OUTWARD}git push`,
+			);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"reads the branch where the commit runs",
+		() => {
+			const ok = quoted(FX.ok);
+			const main = quoted(FX.main);
+			expectSilent(
+				[
+					`cd ${ok} && git commit -m x`,
+					`git -C ${ok} commit -m x`,
+					`pushd ${ok} && git commit -m x`,
+				],
+				in_(FX.plain),
+			);
+			expectSilent([`Set-Location ${ok}; git commit -m x`], psIn(FX.plain));
+			expectSilent(["cd sub && git commit -m x"], in_(FX.ok));
+			expectAsks(
+				[
+					`git -C ${main} commit -m x`,
+					`cd ${main} && git commit -m x`,
+					"git switch main && git commit -m x",
+					"git checkout feat/ok && git commit -m x",
+				],
+				COMMIT_GATE,
+				in_(FX.ok),
+			);
+			expectAsks(
+				[
+					"cd $D && git commit -m x",
+					'git -C "$D" commit -m x',
+					"GIT_DIR=x git commit -m x",
+					"git --git-dir=x commit -m x",
+				],
+				BROKEN,
+				in_(FX.ok),
+			);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"asks before any command touches the approval marker",
+		() => {
+			expectAsks(
+				[
+					"git config branch.feat/x.rpivApproved true",
+					"git config --unset branch.main.rpivApproved",
+					"git config --bool branch.main.RPIVAPPROVED yes",
+					`echo '[branch "main"] rpivApproved = true' >> .git/config`,
+					"git -c branch.main.rpivApproved=true commit -m x",
+				],
+				MARKER,
+				in_(FX.ok),
+			);
+			expectAsks(
+				["git config branch.main.rpivApproved true"],
+				MARKER,
+				psIn(FX.ok),
+			);
+			expectSilent(["git config --get user.name"], in_(FX.ok));
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"fails closed when the commit branch cannot be read",
+		() => {
+			const repos = [FX.plain, FX.missing];
+			expectAsksInEach(repos, "git commit -m x", BROKEN);
+			const slow = repos.filter((cwd) => {
+				const started = Date.now();
+				runHook(bashEvent("git commit -m x", { cwd }));
+				return Date.now() - started >= 2_000;
+			});
+			expect.soft(slow).toEqual([]);
 		},
 		TEST_TIMEOUT,
 	);
