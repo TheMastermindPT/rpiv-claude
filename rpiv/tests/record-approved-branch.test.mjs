@@ -5,7 +5,7 @@
 // `branch.<name>.rpivApproved` key in the fixture repository.
 
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
@@ -17,8 +17,13 @@ import {
 } from "./helpers/git-fixtures.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const RECORDER = join(ROOT, ".claude", "hooks", "record-approved-branch.mjs");
+const HOOKS = join(ROOT, ".claude", "hooks");
+const RECORDER = join(HOOKS, "record-approved-branch.mjs");
+const PRE_HOOK = join(HOOKS, "approve-outward-actions.mjs");
 const TEST_TIMEOUT = 120_000;
+// The accepted S1 commit: hooks.json entries other than the recorder's stay as
+// they were there (B21).
+const S1_ACCEPTED = "8b045e41b5cf10dfb1400b53d73e841dd11ef58c";
 const NOT_RECORDED = "[rpiv-hook] approval not recorded:";
 
 const FX = makeFixtures();
@@ -32,14 +37,18 @@ function freshRepo(branches = []) {
 	return dir;
 }
 
-function runRecorder(stdin) {
-	const res = spawnSync(process.execPath, [RECORDER], {
+function runHookFile(file, stdin, spawnOptions = {}) {
+	const res = spawnSync(process.execPath, [file], {
 		input: stdin,
 		encoding: "utf-8",
-		timeout: 10_000,
+		timeout: 20_000,
+		...spawnOptions,
 	});
 	return { status: res.status, stdout: res.stdout ?? "" };
 }
+
+const runRecorder = (stdin, spawnOptions) =>
+	runHookFile(RECORDER, stdin, spawnOptions);
 
 const postEvent = (command, cwd, extra = {}) =>
 	JSON.stringify({
@@ -48,8 +57,43 @@ const postEvent = (command, cwd, extra = {}) =>
 		tool_input: { command },
 		tool_response: {},
 		cwd,
+		duration_ms: 50,
 		...extra,
 	});
+
+let toolUseCount = 0;
+/** The PreToolUse event for the same tool call: the hook notes which branch
+    names exist before the command runs (D14 S2 revision 1). */
+function sendPreToolUse(command, cwd, extra = {}) {
+	const event = {
+		hook_event_name: "PreToolUse",
+		tool_name: "Bash",
+		tool_input: { command },
+		cwd,
+		...extra,
+	};
+	runHookFile(PRE_HOOK, JSON.stringify(event));
+}
+
+/** One tool call: PreToolUse, then the command's effect, then PostToolUse. */
+function toolCall({
+	command,
+	cwd,
+	before = [],
+	effect = () => {},
+	extra = {},
+}) {
+	const repo = freshRepo(before);
+	const where = cwd ?? repo;
+	const text = command(repo);
+	const id = { tool_use_id: `toolu_test_${toolUseCount++}` };
+	const toolName = extra.tool_name ? { tool_name: extra.tool_name } : {};
+	sendPreToolUse(text, where, { ...id, ...toolName });
+	effect(repo);
+	const started = Date.now();
+	const res = runRecorder(postEvent(text, where, { ...id, ...extra }));
+	return { repo, res, recorderMs: Date.now() - started };
+}
 
 /** Records nothing unexpected: exit 0, empty stdout. */
 function quietProblem(label, res) {
@@ -58,18 +102,22 @@ function quietProblem(label, res) {
 	return null;
 }
 
-/** After the event, each named branch's key must read `want`. */
+/** After the tool call, each named branch's key must read `want`. `before`
+    branches exist before the command; `created` ones are its effect. */
 function recordFailures({
 	label,
 	command,
 	branches,
+	before = [],
 	created = branches,
 	cwd,
 	extra,
 	want,
 }) {
-	const repo = freshRepo(created);
-	const res = runRecorder(postEvent(command(repo), cwd ?? repo, extra));
+	const effect = (repo) => {
+		for (const branch of created) git(repo, "branch", "-f", branch);
+	};
+	const { repo, res } = toolCall({ command, cwd, before, effect, extra });
 	const problems = [quietProblem(label, res)];
 	for (const branch of branches) {
 		const got = approvalOf(repo, branch);
@@ -112,7 +160,16 @@ const RECORDED = [
 		branches: ["feat/h"],
 		extra: { tool_name: "PowerShell" },
 	},
+	// S2 revision 1 pins.
+	{ command: literal("git checkout -B feat/b2"), branches: ["feat/b2"] },
+	{
+		command: literal("git worktree add -B feat/e2 ../wt-e2"),
+		branches: ["feat/e2"],
+	},
+	{ command: literal("git switch --create=feat/l"), branches: ["feat/l"] },
 ];
+
+const existed = (branch) => ({ before: [branch], created: [] });
 
 const NOT_RECORDED_QUIETLY = [
 	{
@@ -120,9 +177,21 @@ const NOT_RECORDED_QUIETLY = [
 		branches: ["feat/missing"],
 		created: [],
 	},
-	{ command: literal("git switch feat/x"), branches: ["feat/x"] },
-	{ command: literal("git branch -d feat/x"), branches: ["feat/x"] },
-	{ command: literal("git branch --list"), branches: ["feat/x"] },
+	{
+		command: literal("git switch feat/x"),
+		branches: ["feat/x"],
+		...existed("feat/x"),
+	},
+	{
+		command: literal("git branch -d feat/x"),
+		branches: ["feat/x"],
+		...existed("feat/x"),
+	},
+	{
+		command: literal("git branch --list"),
+		branches: ["feat/x"],
+		...existed("feat/x"),
+	},
 	{
 		command: literal("git switch -c feat/a"),
 		branches: ["feat/a"],
@@ -133,10 +202,27 @@ const NOT_RECORDED_QUIETLY = [
 		branches: ["feat/a"],
 		extra: { hook_event_name: "PostToolUseFailure" },
 	},
+	// S2 revision 1: a branch that existed before the command is not recorded.
+	{
+		command: literal("git branch -f main HEAD"),
+		branches: ["main"],
+		created: [],
+	},
+	{
+		command: literal("git switch -C feat/x"),
+		branches: ["feat/x"],
+		...existed("feat/x"),
+	},
+	{
+		command: literal("git branch feat/c || true"),
+		branches: ["feat/c"],
+		...existed("feat/c"),
+	},
 ];
 
-/** A report: exit 0 and exactly one PostToolUse additionalContext object. */
-function reportProblem(label, res) {
+/** A report: exit 0 and exactly one PostToolUse additionalContext object
+    (that contains `text`, when given). */
+function reportProblem(label, res, text = "") {
 	if (res.status !== 0) return `${label}: exit ${res.status}`;
 	let parsed;
 	try {
@@ -152,9 +238,71 @@ function reportProblem(label, res) {
 			.join(",") === "additionalContext,hookEventName" &&
 		out.hookEventName === "PostToolUse";
 	if (!shapeOk) return `${label}: unexpected shape ${res.stdout}`;
-	return out.additionalContext.startsWith(NOT_RECORDED)
+	const context = out.additionalContext;
+	return context.startsWith(NOT_RECORDED) && context.includes(text)
 		? null
-		: `${label}: context lacks prefix: ${out.additionalContext}`;
+		: `${label}: context lacks ${NOT_RECORDED} … ${text}: ${context}`;
+}
+
+/** Creates `branch` in `repo` (the command's effect). */
+const creates = (branch) => (repo) => git(repo, "branch", branch);
+
+// S2 revision 1 report cases: [label, tool call, text the report contains].
+function revisionOneReports() {
+	const noSnapshot = (() => {
+		const repo = freshRepo();
+		git(repo, "branch", "feat/n");
+		const stdin = postEvent("git switch -c feat/n", repo, {
+			tool_use_id: "toolu_never_seen",
+		});
+		return runRecorder(stdin);
+	})();
+	const call = (command, branch) =>
+		toolCall({ command: literal(command), effect: creates(branch) }).res;
+	const emptyPath = (() => {
+		const repo = freshRepo();
+		const id = { tool_use_id: "toolu_empty_path" };
+		sendPreToolUse("git switch -c feat/z", repo, id);
+		git(repo, "branch", "feat/z");
+		return runRecorder(postEvent("git switch -c feat/z", repo, id), {
+			env: { ...process.env, PATH: "", Path: "" },
+		});
+	})();
+	const locked = toolCall({
+		command: literal("git switch -c feat/lk"),
+		effect: (repo) => {
+			git(repo, "branch", "feat/lk");
+			writeFileSync(`${repo}/.git/config.lock`, "");
+		},
+	}).res;
+	return [
+		["no PreToolUse note", noSnapshot, ""],
+		["wrapper string", call("bash -c 'git switch -c feat/w'", "feat/w"), ""],
+		[
+			"inline alias",
+			call("git -c alias.nb='switch -c' nb feat/v", "feat/v"),
+			"",
+		],
+		["git cannot run", emptyPath, "git could not run"],
+		["config.lock", locked, ""],
+	];
+}
+
+/** 300 creations in one command: answered within 10 s, summarised. */
+function manyCreationsProblem() {
+	const names = Array.from({ length: 300 }, (_, k) => `b${k}`);
+	const { res, recorderMs } = toolCall({
+		command: literal(names.map((b) => `git branch ${b}`).join("; ")),
+		effect: (repo) => {
+			for (const b of names) git(repo, "branch", b);
+		},
+	});
+	return (
+		reportProblem("300 creations", res, "more") ??
+		(recorderMs >= 10_000
+			? `300 creations: recorder took ${recorderMs} ms`
+			: null)
+	);
 }
 
 describe("record-approved-branch hook", () => {
@@ -192,6 +340,12 @@ describe("record-approved-branch hook", () => {
 				.map(([label, stdin]) => reportProblem(label, runRecorder(stdin)))
 				.filter(Boolean);
 			expect.soft(failures).toEqual([]);
+			// S2 revision 1: what the recorder cannot follow or confirm is reported.
+			const revisionOne = revisionOneReports()
+				.map(([label, res, text]) => reportProblem(label, res, text))
+				.filter(Boolean);
+			expect.soft(revisionOne).toEqual([]);
+			expect.soft(manyCreationsProblem()).toBeNull();
 		},
 		TEST_TIMEOUT,
 	);
@@ -215,5 +369,32 @@ describe("record-approved-branch hook", () => {
 		expect(entry.hooks).toHaveLength(1);
 		expect(entry.hooks[0].type).toBe("command");
 		expect(entry.hooks[0].timeout).toBeLessThanOrEqual(10);
+		// S2 revision 1: every other entry is as it was at 8b045e4.
+		const base = JSON.parse(
+			git(ROOT, "show", `${S1_ACCEPTED}:./hooks/hooks.json`),
+		).hooks;
+		const others = {
+			...hooks,
+			PostToolUse: hooks.PostToolUse.filter((e) => e !== entry),
+		};
+		expect(others).toEqual(base);
+		// S2 revision 1: the entry-point guard must not silence the hook,
+		// however its path is spelled.
+		const link = join(FX.root, "hooks-link");
+		symlinkSync(HOOKS, link, "junction");
+		const event = JSON.stringify({
+			tool_name: "Bash",
+			tool_input: { command: "git push" },
+			cwd: FX.ok,
+		});
+		const paths = [
+			PRE_HOOK.replaceAll("\\", "/"),
+			join(link, "approve-outward-actions.mjs"),
+		];
+		const silent = paths.filter(
+			(path) =>
+				!runHookFile(path, event).stdout.includes("outward action: git push"),
+		);
+		expect(silent).toEqual([]);
 	});
 });

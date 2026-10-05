@@ -6,11 +6,13 @@
 // The commit gate in approve-outward-actions.mjs reads the marker.
 
 import { readFileSync } from "node:fs";
+import { createdNameWord, takeBeforeNote } from "./_branch-creations.mjs";
 import {
+	branchExists,
 	gitTimeLeft,
-	isRepository,
 	limitGitTime,
-	runGit,
+	markApproved,
+	repositoryProblem,
 } from "./_git-branch.mjs";
 import {
 	forEachGitInvocation,
@@ -20,89 +22,76 @@ import {
 
 const SHELL_MODES = { Bash: "bash", PowerShell: "ps" };
 
-// Options whose next word names the branch being created (D14).
-const NAME_OPTIONS = {
-	switch: /^(-[a-zA-Z]*[cC]|--create|--force-create)$/,
-	checkout: /^-[a-zA-Z]*[bB]$/,
-	worktree: /^-[a-zA-Z]*[bB]$/,
-};
-const JOINED_NAME_OPTION = /^--(create|force-create)=(.+)$/;
-// `git branch <name>` creates only with these options; any other option lists,
-// deletes, renames or copies, and is not recorded.
-const BRANCH_CREATE_OPTIONS = new Set([
-	"-f",
-	"--force",
-	"-q",
-	"--quiet",
-	"-t",
-	"--track",
-	"--no-track",
-]);
-
-/** The word naming the branch a git invocation creates, if any. */
-function createdNameWord(sub, args) {
-	if (sub === "branch") return branchNameWord(args);
-	if (sub === "worktree" && args.words[args.from]?.value !== "add")
-		return undefined;
-	return Object.hasOwn(NAME_OPTIONS, sub)
-		? optionNameWord(sub, args)
-		: undefined;
+/** Marks `name` approved where the creation ran when this command created it:
+    it was not in the PreToolUse note and exists now (D14 S2 rev. 1). A note
+    when it cannot tell, null otherwise. */
+function recordCreation(name, place, before) {
+	const why = cannotRecord(place, before);
+	if (why) return `${name}: ${why}`;
+	if (before[place.dir].includes(name)) return null;
+	return markIfCreated(name, place.dir);
 }
 
-/** The word after a name-taking option (or joined `--create=<name>`). */
-function optionNameWord(sub, { words, from }) {
-	for (let k = from; k < words.length && words[k].value !== "--"; k++) {
-		const joined = sub === "switch" && JOINED_NAME_OPTION.exec(words[k].value);
-		if (joined) return { ...words[k], value: joined[2] };
-		if (NAME_OPTIONS[sub].test(words[k].value)) return words[k + 1];
-	}
-	return undefined;
+/** Why nothing can be recorded at `place`, or null. */
+function cannotRecord(place, before) {
+	if (place.problem) return place.problem;
+	if (gitTimeLeft() <= 0) return "no time left to record it";
+	if (!Array.isArray(before?.[place.dir]))
+		return "no note of the branches before the command";
+	return repositoryProblem(place.dir);
 }
 
-/** `git branch <name> [<start>]`: the first non-option word, unless an option
-    makes the invocation something other than a creation. */
-function branchNameWord({ words, from }) {
-	let name;
-	for (let k = from; k < words.length; k++) {
-		const { value } = words[k];
-		if (!value.startsWith("-")) name ??= words[k];
-		else if (!BRANCH_CREATE_OPTIONS.has(value)) return undefined;
-	}
-	return name;
-}
-
-/** Marks `name` approved where the creation ran, when the branch exists: a
-    note when it cannot, null otherwise (a missing branch was not created). */
-function recordCreation(name, place) {
-	if (place.problem) return `${name}: ${place.problem}`;
-	if (gitTimeLeft() <= 0) return `${name}: no time left to record it`;
-	if (!isRepository(place.dir))
-		return `${name}: ${place.dir} is not a readable git repository`;
-	const exists = runGit(place.dir, [
-		"show-ref",
-		"--verify",
-		"--quiet",
-		`refs/heads/${name}`,
-	]);
-	if (exists.status !== 0) return null;
-	const set = runGit(place.dir, [
-		"config",
-		`branch.${name}.rpivApproved`,
-		"true",
-	]);
-	return set.status === 0 ? null : `${name}: git config failed`;
+/** Marks `name` approved in `dir` when it exists now; a note on failure. */
+function markIfCreated(name, dir) {
+	const now = branchExists(dir, name);
+	if (now.problem) return `${name}: ${now.problem}`;
+	if (!now.exists) return null;
+	const failed = markApproved(dir, name);
+	return failed ? `${name}: ${failed}` : null;
 }
 
 /** Records the event's creations; returns notes on what it could not record. */
 function recordEvent(event) {
 	const input = shellInput(event);
 	if (input.notes) return input.notes;
+	const before = takeBeforeNote(event.tool_use_id);
 	const notes = [];
 	forEachGitInvocation(input.segments, input.mode, event.cwd ?? ".", (git) => {
-		const note = creationNote(git);
+		const note = creationNote(git, before);
 		if (note) notes.push(note);
 	});
+	if (createsInsideString(input.segments))
+		notes.push(
+			"a branch is created inside a string the recorder cannot follow",
+		);
 	return notes;
+}
+
+// Subcommands that can create a branch (D14 forms).
+const CREATING = new Set(["switch", "checkout", "branch", "worktree"]);
+
+/** Does a literal wrapper string (a quoted word holding a command, such as
+    `bash -c 'git switch -c x'`) create a branch? Its creation is not followed,
+    so it is reported (D14 S2 rev. 1). */
+function createsInsideString(segments) {
+	return segments.some(({ words }) =>
+		words.some(
+			(w) =>
+				/\s/.test(w.value) && /\bgit\b/.test(w.value) && stringCreates(w.value),
+		),
+	);
+}
+
+function stringCreates(text) {
+	let creates = false;
+	try {
+		forEachGitInvocation(tokenize(text, "bash"), "bash", ".", (git) => {
+			creates ||= createdNameWord(git.sub, git.args) !== undefined;
+		});
+	} catch {
+		return false;
+	}
+	return creates;
 }
 
 /** The event's parsed shell command `{ mode, segments }`, or `{ notes }` when
@@ -121,11 +110,13 @@ function shellInput(event) {
 }
 
 /** Records the branch one git invocation created; a note when it cannot. */
-function creationNote(git) {
+function creationNote(git, before) {
+	if (git.args.aliased && CREATING.has(git.sub))
+		return "a branch may be created through an inline git alias";
 	const word = createdNameWord(git.sub, git.args);
 	if (word === undefined) return null;
 	if (isComputed(word)) return "a branch name is computed";
-	return recordCreation(word.value, git.place);
+	return recordCreation(word.value, git.place, before);
 }
 
 function readNotes() {

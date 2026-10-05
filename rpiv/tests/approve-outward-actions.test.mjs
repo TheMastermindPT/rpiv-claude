@@ -22,11 +22,12 @@ const TEST_TIMEOUT = 120_000;
 const FX = makeFixtures();
 afterAll(() => FX.cleanup());
 
-function runHook(stdin, nodeArgs = []) {
+function runHook(stdin, nodeArgs = [], spawnOptions = {}) {
 	const res = spawnSync(process.execPath, [...nodeArgs, HOOK], {
 		input: stdin,
 		encoding: "utf-8",
 		timeout: 10_000,
+		...spawnOptions,
 	});
 	return { status: res.status, stdout: res.stdout ?? "" };
 }
@@ -137,6 +138,76 @@ function expectAsksInEach(repos, command, prefix) {
 		.filter(Boolean);
 	expect.soft(failures).toEqual([]);
 }
+
+/** The hook asks broken and its reason contains `text` (S2 revision 1). */
+function brokenWithFailure(label, stdin, text, spawnOptions) {
+	const { status, stdout } = runHook(stdin, [], spawnOptions);
+	if (status !== 0) return `${label}: exit ${status}`;
+	const out = parseAskObject(stdout);
+	if (typeof out === "string") return `${label}: ${out}`;
+	const reason = out.permissionDecisionReason;
+	if (!reason.startsWith(BROKEN) || !reason.includes(text))
+		return `${label}: reason ${JSON.stringify(reason)} lacks ${BROKEN} … ${text}`;
+	return null;
+}
+
+/** Milliseconds one hook decision takes. */
+function decisionMs(stdin) {
+	const started = Date.now();
+	runHook(stdin);
+	return Date.now() - started;
+}
+
+// S2 revision-1 cases (D14 "S2 revision 1"), kept here so test bodies stay short.
+const S2_REV1 = (() => {
+	const ok = quoted(FX.ok);
+	const main = quoted(FX.main);
+	const root = quoted(FX.root);
+	return {
+		gateAtOk: ["git symbolic-ref HEAD refs/heads/main && git commit -m x"],
+		gateAtMain: ["git-commit -m x", 'bash -c "git commit -m x"'],
+		silentAtMain: ["git merge feat/x", "git revert HEAD", "git rebase main"],
+		brokenAtMain: [
+			`cd ${ok} & git commit -m x`,
+			`cd ${ok} | cat; git commit -m x`,
+			`env cd ${ok}; git commit -m x`,
+			`nohup cd ${ok}; git commit -m x`,
+			`function cd { :; }; cd ${ok} && git commit -m x`,
+			`git commit -m "$(cd ${ok}; echo m)"`,
+			`(cd ${ok}) && git commit -m x`,
+			`pushd ${ok} && popd && git commit -m x`,
+		],
+		brokenAtOk: [
+			`eval 'cd ${main}'; git commit -m x`,
+			`builtin cd ${main} && git commit -m x`,
+			`CDPATH=${FX.root}/cdp cd sub && git commit -m x`,
+			"GIT_WORK_TREE=x git commit -m x",
+			"git --work-tree=x commit -m x",
+			"export GIT_DIR=x; git commit -m x",
+		],
+		brokenPsAtOk: [
+			"[Environment]::SetEnvironmentVariable('GIT_DIR', 'x'); git commit -m x",
+			"$env:GIT_WORK_TREE='x'; git commit -m x",
+		],
+		gateFollowed: [`cd ${root} && cd main && git commit -m x`],
+		silentFollowed: [`cd ${root} && git -C ok commit -m x`],
+		silentPsAtPlain: [
+			`sl ${ok}; git commit -m x`,
+			`chdir ${ok}; git commit -m x`,
+			`Push-Location ${ok}; git commit -m x`,
+		],
+		markerSpellings: [
+			"git config branch.main.rpiv''Approved true",
+			"git config branch.main.rpiv\\Approved true",
+			"git config branch.main.rpivApp'roved' true",
+		],
+		markerComputed: ["K=rpivApp; git config branch.main.${K}roved true"],
+		manyCommits: "git commit -m x; ".repeat(2000),
+		nineDirs: FX.nine
+			.map((dir) => `cd ${quoted(dir)} && git commit -m x`)
+			.join("; "),
+	};
+})();
 
 // Revision-2 cases of "inspects wrapper commands and fails closed on dynamic
 // ones" (B9), kept here so the test body stays readable.
@@ -1517,6 +1588,14 @@ describe("approve-outward-actions hook", () => {
 				"git commit -m x && git push",
 				`${OUTWARD}git push`,
 			);
+			// S2 revision 1: HEAD movers, git-commit, same-named tag, git booleans,
+			// only `git commit` gated.
+			expectAsks(S2_REV1.gateAtOk, COMMIT_GATE, in_(FX.ok));
+			expectAsks(S2_REV1.gateAtMain, COMMIT_GATE, in_(FX.main));
+			expectSilent(["git-commit -m x"], in_(FX.ok));
+			expectSilent(["git commit -m x"], in_(FX.tagged));
+			expectSilent(["git commit -m x"], in_(FX.yes));
+			expectSilent(S2_REV1.silentAtMain, in_(FX.main));
 		},
 		TEST_TIMEOUT,
 	);
@@ -1556,6 +1635,14 @@ describe("approve-outward-actions hook", () => {
 				BROKEN,
 				in_(FX.ok),
 			);
+			// S2 revision 1: only a plain top-level directory change is followed.
+			expectAsks(S2_REV1.brokenAtMain, BROKEN, in_(FX.main));
+			expectAsks(S2_REV1.brokenAtOk, BROKEN, in_(FX.ok));
+			expectAsks(S2_REV1.brokenPsAtOk, BROKEN, psIn(FX.ok));
+			expectAsks(S2_REV1.gateFollowed, COMMIT_GATE, in_(FX.ok));
+			expectAsks([`sl ${main}; git commit -m x`], COMMIT_GATE, psIn(FX.ok));
+			expectSilent(S2_REV1.silentFollowed, in_(FX.main));
+			expectSilent(S2_REV1.silentPsAtPlain, psIn(FX.plain));
 		},
 		TEST_TIMEOUT,
 	);
@@ -1580,6 +1667,20 @@ describe("approve-outward-actions hook", () => {
 				psIn(FX.ok),
 			);
 			expectSilent(["git config --get user.name"], in_(FX.ok));
+			// S2 revision 1: decoded spellings, computed `git config` arguments,
+			// precedence (marker before gate, outward before marker).
+			expectAsks(S2_REV1.markerSpellings, MARKER, in_(FX.ok));
+			expectAsks(S2_REV1.markerComputed, BROKEN, in_(FX.ok));
+			expectAsks(
+				["git -c branch.main.rpivApproved=true commit -m x"],
+				MARKER,
+				in_(FX.main),
+			);
+			expectAsks(
+				["git push; git config branch.x.rpivApproved true"],
+				`${OUTWARD}git push`,
+				in_(FX.ok),
+			);
 		},
 		TEST_TIMEOUT,
 	);
@@ -1595,6 +1696,33 @@ describe("approve-outward-actions hook", () => {
 				return Date.now() - started >= 2_000;
 			});
 			expect.soft(slow).toEqual([]);
+			// S2 revision 1: distinct diagnostics; bounded git work (D13).
+			const emptyPath = { env: { ...process.env, PATH: "", Path: "" } };
+			const failures = [
+				brokenWithFailure(
+					"no cwd",
+					JSON.stringify({
+						tool_name: "Bash",
+						tool_input: { command: "git commit -m x" },
+					}),
+					"no cwd",
+					{ cwd: FX.ok },
+				),
+				brokenWithFailure(
+					"PATH empty",
+					bashEvent("git commit -m x"),
+					"git could not run",
+					emptyPath,
+				),
+			].filter(Boolean);
+			expect.soft(failures).toEqual([]);
+			expectAsks([S2_REV1.manyCommits], COMMIT_GATE, in_(FX.main));
+			expectSilent([S2_REV1.manyCommits], in_(FX.ok));
+			const timings = [FX.main, FX.ok].map((cwd) =>
+				decisionMs(bashEvent(S2_REV1.manyCommits, { cwd })),
+			);
+			expect.soft(timings.filter((ms) => ms >= 2_000)).toEqual([]);
+			expectAsks([S2_REV1.nineDirs], BROKEN, in_(FX.ok));
 		},
 		TEST_TIMEOUT,
 	);

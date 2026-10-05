@@ -39,7 +39,9 @@ export function approvalOf(dir, branch) {
 }
 
 /** A temp root with the D14 fixtures: main, ok (approved, with sub/), x, y
-    (marker false), det, unborn, plain (no repository) and missing (absent). */
+    (marker false), det, unborn, plain (no repository) and missing (absent);
+    S2 revision 1 adds tagged (approved branch with a same-named tag), yes
+    (marker `yes`), cdp/sub (a CDPATH target) and d0…d8. */
 export function makeFixtures() {
 	const root = mkdtempSync(join(tmpdir(), "rpiv-s2-")).replaceAll("\\", "/");
 	const repo = (name, setup, options) => {
@@ -63,6 +65,13 @@ export function makeFixtures() {
 		y: repo("y", onBranch("feat/y", "false")),
 		det: repo("det", (dir) => git(dir, "checkout", "-q", "--detach")),
 		unborn: repo("unborn", undefined, { unborn: true }),
+		tagged: repo("tagged", (dir) => {
+			onBranch("feat/t", "true")(dir);
+			git(dir, "tag", "feat/t");
+		}),
+		yes: repo("yes", onBranch("feat/yes", "yes")),
+		cdpSub: repo("cdp/sub"),
+		nine: Array.from({ length: 9 }, (_, k) => repo(`d${k}`)),
 		plain: `${root}/plain`,
 		missing: `${root}/missing`,
 		cleanup: () => rmSync(root, { recursive: true, force: true }),

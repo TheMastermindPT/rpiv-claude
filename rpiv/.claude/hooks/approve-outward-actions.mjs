@@ -25,7 +25,13 @@ import { readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { headState, isApproved, limitGitTime } from "./_git-branch.mjs";
+import { createdNameWord, writeBeforeNote } from "./_branch-creations.mjs";
+import {
+	approval,
+	branchNames,
+	headState,
+	limitGitTime,
+} from "./_git-branch.mjs";
 
 // ---- command tokenizer -----------------------------------------------------------
 //
@@ -156,7 +162,14 @@ function newSegmentBuilder(p, options = {}) {
 			if (word !== null) targetPending = false;
 			word = null;
 		},
-		endSegment({ nextPiped = false, nextCalled = false } = {}) {
+		// `ending`: how the segment ends — "list" (`;`, `&&`, `||`, newline, end),
+		// "pipe" (it feeds the next one) or "background" (Bash `&`); `depth` is 1
+		// for top-level segments, more inside substitutions (D14 S2 rev. 1).
+		endSegment({
+			nextPiped = false,
+			nextCalled = false,
+			ending = "list",
+		} = {}) {
 			this.endWord();
 			if (words.length > 0)
 				p.segments.push({
@@ -166,6 +179,8 @@ function newSegmentBuilder(p, options = {}) {
 					stdinRedirect,
 					inheritedFed: options.fed === true,
 					group: groups.at(-1) ?? null,
+					ending,
+					depth: p.depth,
 				});
 			words = [];
 			piped = nextPiped;
@@ -470,7 +485,8 @@ function stepSeparator(p, seg, ch, next) {
 	if (ch === "&") stepAmpersand(p, seg, next);
 	else if (ch === "|") {
 		// `||` is a list operator; `|` and Bash `|&` pipe into the next segment.
-		seg.endSegment({ nextPiped: next !== "|" });
+		const pipes = next !== "|";
+		seg.endSegment({ nextPiped: pipes, ending: pipes ? "pipe" : "list" });
 		p.i += next === "|" || next === "&" ? 2 : 1;
 	} else if (ch === ";") {
 		seg.endSegment();
@@ -528,7 +544,12 @@ function stepAmpersand(p, seg, next) {
 		return;
 	}
 	// PowerShell `& <command>` is the call operator: its command word is checked.
-	seg.endSegment({ nextCalled: p.mode === "ps" && next !== "&" });
+	// A single Bash `&` runs the segment before it as a background job.
+	const background = p.mode === "bash" && next !== "&";
+	seg.endSegment({
+		nextCalled: p.mode === "ps" && next !== "&",
+		ending: background ? "background" : "list",
+	});
 	p.i += next === "&" ? 2 : 1;
 }
 
@@ -2636,10 +2657,10 @@ const CONFIG_NAME = new RegExp(`^${CONFIG_VARIABLE}$`, "i");
 const CONFIG_KEY = /^(alias\.|include\.path|includeif\.)/i;
 
 /** PowerShell `[Environment]::SetEnvironmentVariable('GIT_CONFIG_…', …)`. */
-function setsEnvironmentVariable(word) {
+function setsEnvironmentVariable(word, names = CONFIG_NAME) {
 	if (!/::setenvironmentvariable$/i.test(word.value)) return false;
 	const first = word.expression?.[0]?.words[0]?.value ?? "";
-	return CONFIG_NAME.test(first.split(",")[0]);
+	return names.test(first.split(",")[0]);
 }
 
 // Bash assignments and `export`; PowerShell `$env:`/`${env:}`, `Set-Item` or
@@ -2695,7 +2716,7 @@ function decide(input) {
 	const command = input.tool_input?.command;
 	return (
 		shellCommandReason(command, mode) ??
-		commitGateReason(command, mode, input.cwd ?? ".")
+		commitGateReason(command, mode, input.cwd)
 	);
 }
 
@@ -2716,17 +2737,37 @@ function shellCommandReason(command, mode) {
 	if (command.length > MAX_COMMAND_LENGTH)
 		return broken(`command longer than ${MAX_COMMAND_LENGTH} characters`);
 	decision = newDecision();
-	return analyzeCommand(command, mode) ?? markerReason(command);
+	return analyzeCommand(command, mode) ?? markerReason(command, mode);
 }
 
 // ---- approved branches (D14, S2) -----------------------------------------------------
 
+const MARKER_KEY = /rpivapproved/i;
+
 /** Only the developer may approve or unapprove a branch: any command naming the
-    marker key asks, quoted or not, in any case. */
-const markerReason = (command) =>
-	/rpivapproved/i.test(command)
-		? "approval marker: the command names the rpivApproved key"
+    marker key asks — in its text or in a word as the shell decodes it
+    (`rpiv''Approved`) — and a computed `git config` argument, which may
+    assemble the key at run time, asks broken (D14 S2 rev. 1). */
+function markerReason(command, mode) {
+	const segments = tokenize(command, mode);
+	const named =
+		MARKER_KEY.test(command) ||
+		segments.some(({ words }) => words.some((w) => MARKER_KEY.test(w.value)));
+	if (named) return "approval marker: the command names the rpivApproved key";
+	return segments.some(({ words }) => computedConfigArgument(words, mode))
+		? broken("a git config argument is computed")
 		: null;
+}
+
+/** Does a `git config` invocation in `words` have a computed argument? */
+function computedConfigArgument(words, mode) {
+	return words.some((word, i) => {
+		if (commandName(word.value) !== "git") return false;
+		if (resolvedGitSub(words, i, mode) !== "config") return false;
+		const { from } = gitArguments(words, i, mode);
+		return anyFrom(words, from, "computed-config-arg", isComputed);
+	});
+}
 
 const commitGate = (detail) => `commit off an approved branch: ${detail}`;
 
@@ -2735,8 +2776,13 @@ const commitGate = (detail) => `commit off an approved branch: ${detail}`;
     quoted wrapper string) asks. */
 function commitGateReason(command, mode, cwd) {
 	if (decision.commits === 0) return null;
+	// The commit's directory starts at the event's cwd; without one it is unknown.
+	if (typeof cwd !== "string") return broken("the event has no cwd");
+	const segments = tokenize(command, mode);
+	const stateProblem = shellStateProblem(segments, mode);
+	if (stateProblem) return broken(stateProblem);
 	const commits = [];
-	forEachGitInvocation(tokenize(command, mode), mode, cwd, (git) => {
+	forEachGitInvocation(segments, mode, cwd, (git) => {
 		if (git.sub === "commit") commits.push(git);
 	});
 	return placementReason(commits) ?? approvedDirsReason(commits);
@@ -2780,23 +2826,54 @@ const DIR_CHANGERS = {
 const DIR_RESTORERS = new Set(["popd", "pop-location"]);
 const GIT_LOCATION_ENV = /^(\$?env:)?GIT_(DIR|WORK_TREE)(=|$)/i;
 
-/** Calls `visit({ sub, args, place, headMoved })` for every git word of `segments` in
-    order, with the directory it runs in (`place.dir`, or `place.problem`) and
-    whether an earlier `git switch`/`checkout` may have moved HEAD. */
+// Subcommands after which HEAD may point elsewhere (D14, S2 rev. 1).
+const HEAD_MOVERS = new Set(["switch", "checkout", "symbolic-ref", "bisect"]);
+
+/** Calls `visit({ sub, args, place, headMoved })` for every git and
+    `git-<name>` word of `segments` in order, with the directory it runs in
+    (`place.dir`, or `place.problem`) and whether an earlier invocation may
+    have moved HEAD. */
 function forEachGitInvocation(segments, mode, cwd, visit) {
 	let place = { dir: cwd };
 	let headMoved = false;
 	for (const segment of segments) {
 		place = placeAfter(segment, mode, place);
 		const { words } = segment;
-		words.forEach((word, i) => {
-			if (commandName(word.value) !== "git") return;
-			const sub = resolvedGitSub(words, i, mode);
-			const args = gitArguments(words, i, mode);
-			visit({ sub, args, place: gitPlace(words, i, mode, place), headMoved });
-			if (sub === "switch" || sub === "checkout") headMoved = true;
-		});
+		// Each git word re-reads its own `-C` options; past a bound the place is
+		// not computed, so the walk stays linear (D13).
+		const crowded = countGitWords(words) > MAX_GIT_WORDS;
+		for (let i = 0; i < words.length; i++) {
+			const git = gitInvocationAt(words, i, mode, crowded ? CROWDED : place);
+			if (git === null) continue;
+			visit({ ...git, headMoved });
+			if (HEAD_MOVERS.has(git.sub)) headMoved = true;
+		}
 	}
+}
+
+const MAX_GIT_WORDS = 64;
+const CROWDED = {
+	problem: `more than ${MAX_GIT_WORDS} git invocations in one command`,
+};
+
+const countGitWords = (words) =>
+	words.reduce((n, w) => (commandName(w.value) === "git" ? n + 1 : n), 0);
+
+/** `{ sub, args, place }` of the git or `git-<name>` word at `i`, or null. */
+function gitInvocationAt(words, i, mode, place) {
+	const name = commandName(words[i].value);
+	if (isGitDashName(name))
+		return {
+			sub: name.slice("git-".length),
+			args: { words, from: i + 1 },
+			place,
+		};
+	if (name !== "git") return null;
+	return {
+		sub: resolvedGitSub(words, i, mode),
+		args: gitArguments(words, i, mode),
+		place: place.problem ? place : gitPlace(words, i, mode, place),
+	};
 }
 
 /** The directory after `segment` runs: a literal `cd` moves it; anything the
@@ -2810,8 +2887,64 @@ function placeAfter(segment, mode, place) {
 	if (DIR_RESTORERS.has(name))
 		return { problem: `${name} leaves the directory unknown` };
 	if (!DIR_CHANGERS[mode].has(name) || place.problem) return place;
+	if (!isPlainCommand(segment, mode))
+		return { problem: `${name} runs where it cannot move the shell` };
 	return changedPlace(segment, run, name, place);
 }
+
+/** A top-level command the shell runs itself (D14 S2 rev. 1): no launcher, not
+    in a group, a pipeline, a background job or a substitution. */
+function isPlainCommand(segment, mode) {
+	const plainEnding = segment.ending === "list" || segment.ending === undefined;
+	return (
+		runPosition(segment, mode).launchers.length === 0 &&
+		!segment.group &&
+		!segment.piped &&
+		plainEnding &&
+		(segment.depth ?? 1) === 1
+	);
+}
+
+// Words that can change the shell's directory or state when they run: only a
+// plain directory change is followed; with a gated commit, these ask broken.
+const SHELL_STATE_WORDS = new Set([
+	"eval",
+	"source",
+	".",
+	"builtin",
+	"function",
+	"alias",
+	"exec",
+	"invoke-expression",
+	"iex",
+]);
+
+/** A directory-changing word the walk does not follow, or a shell-state word
+    run as a command, anywhere in the command (D14 S2 rev. 1). */
+function shellStateProblem(segments, mode) {
+	for (const segment of segments) {
+		const problem = segmentStateProblem(segment, mode);
+		if (problem) return problem;
+	}
+	return null;
+}
+
+function segmentStateProblem(segment, mode) {
+	const run = runPosition(segment, mode).index;
+	for (const [i, word] of segment.words.entries()) {
+		const name = commandName(word.value);
+		if (/^CDPATH=/.test(word.value)) return "CDPATH is set";
+		const followed = i === run && isPlainCommand(segment, mode);
+		if (isDirectoryWord(name, mode) && !followed)
+			return `${name} is not a plain directory change`;
+		if (i === run && SHELL_STATE_WORDS.has(name))
+			return `${name} may change the shell's directory or state`;
+	}
+	return null;
+}
+
+const isDirectoryWord = (name, mode) =>
+	DIR_CHANGERS[mode].has(name) || DIR_RESTORERS.has(name);
 
 /** Where a literal `cd`-like command at `run` moves the directory. */
 function changedPlace(segment, run, name, place) {
@@ -2825,9 +2958,13 @@ function changedPlace(segment, run, name, place) {
 	return { dir: resolveDir(place.dir, target.value) };
 }
 
+// PowerShell `[Environment]::SetEnvironmentVariable('GIT_DIR', …)`.
+const LOCATION_NAME = /^GIT_(DIR|WORK_TREE)$/i;
+
 const setsGitLocation = (word) =>
 	GIT_LOCATION_ENV.test(word.value) ||
-	(word.vars ?? []).some((v) => GIT_LOCATION_ENV.test(v));
+	(word.vars ?? []).some((v) => GIT_LOCATION_ENV.test(v)) ||
+	setsEnvironmentVariable(word, LOCATION_NAME);
 
 /** `~`, Git Bash drive paths (`/c/Users/…`) and relative paths, from `base`. */
 function resolveDir(base, path) {
@@ -2871,15 +3008,17 @@ function resolvedGitSub(words, i, mode) {
 	return sub ?? null;
 }
 
-/** `{ words, from }`: where the arguments of the git subcommand at `i` start,
-    without copying (D13); `from` is past the end when there are none or an
-    inline alias renames the subcommand (its own arguments are not these). */
+/** `{ words, from, aliased }`: where the arguments of the git subcommand at `i`
+    start, without copying (D13); `from` is past the end when there are none or
+    an inline alias renames the subcommand (`aliased`: its own arguments are
+    not these). */
 function gitArguments(words, i, mode) {
 	const read = readGitOptions(words, i + 1, mode);
 	const subWord = read.reason ? undefined : words[read.sub];
 	const aliased =
-		subWord === undefined || read.aliases.has(subWord.value.toLowerCase());
-	return { words, from: aliased ? words.length : read.sub + 1 };
+		subWord !== undefined && read.aliases.has(subWord.value.toLowerCase());
+	const none = subWord === undefined || aliased;
+	return { words, from: none ? words.length : read.sub + 1, aliased };
 }
 
 /** The commit gate for a commit running in `dir`. */
@@ -2891,9 +3030,56 @@ function branchGateReason(dir) {
 	if (head.branch === null) return commitGate("HEAD is detached");
 	if (!head.born)
 		return commitGate(`branch "${head.branch}" has no commit yet`);
-	return isApproved(dir, head.branch)
+	const marker = approval(dir, head.branch);
+	if (marker.problem)
+		return broken(`cannot read the branch of the commit: ${marker.problem}`);
+	return marker.approved
 		? null
 		: commitGate(`branch "${head.branch}" is not approved`);
+}
+
+// Git time for the before-note, kept apart from the commit gate's budget (D13).
+const NOTE_BUDGET_MS = 2_000;
+
+/** For the approval recorder: the branch names that exist, before the command
+    runs, where it creates branches by literal names — keyed by the tool call
+    (D14 S2 rev. 1). */
+function noteBranchesBefore(input) {
+	const shell = noteableShellCommand(input);
+	if (shell === null) return;
+	const { command, mode, cwd } = shell;
+	const dirs = creationDirs(tokenize(command, mode), mode, cwd);
+	if (dirs.size === 0 || dirs.size > MAX_COMMIT_DIRS) return;
+	limitGitTime(NOTE_BUDGET_MS);
+	const note = {};
+	for (const dir of dirs) note[dir] = branchNames(dir).names ?? null;
+	writeBeforeNote(input.tool_use_id, note);
+}
+
+/** `{ command, mode, cwd }` of a Bash/PowerShell event worth a note, or null. */
+function noteableShellCommand(input) {
+	const tool = input?.tool_name ?? "";
+	if (!Object.hasOwn(SHELL_MODES, tool)) return null;
+	const command = input.tool_input?.command;
+	if (typeof command !== "string" || command.length > MAX_COMMAND_LENGTH)
+		return null;
+	if (typeof input.cwd !== "string") return null;
+	return { command, mode: SHELL_MODES[tool], cwd: input.cwd };
+}
+
+/** The directories where `segments` create branches by literal names. */
+function creationDirs(segments, mode, cwd) {
+	const dirs = new Set();
+	forEachGitInvocation(segments, mode, cwd, (git) => {
+		if (createsLiteralBranch(git) && git.place.dir) dirs.add(git.place.dir);
+	});
+	return dirs;
+}
+
+/** Does the git invocation create a branch whose name is literal? */
+function createsLiteralBranch(git) {
+	const word = createdNameWord(git.sub, git.args);
+	return word !== undefined && !isComputed(word);
 }
 
 /** Fail closed (D13): an exception must never become an unprompted run. */
@@ -2918,6 +3104,11 @@ function readEvent() {
 function main() {
 	const input = readEvent();
 	const reason = safeDecide(input);
+	try {
+		noteBranchesBefore(input);
+	} catch {
+		// The note only serves the recorder, which reports a missing note.
+	}
 	if (!reason) return;
 	process.stdout.write(
 		JSON.stringify({
@@ -2936,7 +3127,8 @@ function isEntryPoint() {
 		const self = realpathSync(fileURLToPath(import.meta.url));
 		return realpathSync(process.argv[1] ?? "") === self;
 	} catch {
-		return false;
+		// Cannot tell: decide anyway, so the hook never goes silent (D13).
+		return true;
 	}
 }
 
