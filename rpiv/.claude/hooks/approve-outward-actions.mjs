@@ -2795,7 +2795,9 @@ function placementReason(commits) {
 	for (const { place, headMoved } of commits) {
 		if (place.problem) return broken(place.problem);
 		if (headMoved)
-			return commitGate("a git switch or checkout runs before the commit");
+			return commitGate(
+				"git switch, checkout, symbolic-ref or bisect runs before the commit",
+			);
 	}
 	return null;
 }
