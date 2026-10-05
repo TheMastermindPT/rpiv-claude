@@ -112,7 +112,12 @@ const LOCKFILES = [
 const KINDS = {
 	migration: {
 		check: isMigration,
-		yes: ["db/migrations/001_init.sql", "migration/x.ts", "schema.sql"],
+		yes: [
+			"db/migrations/001_init.sql",
+			"migration/x.ts",
+			"schema.sql",
+			String.raw`db\migrations\x.ts`, // S3 rev. 1 pin
+		],
 		no: ["src/migrate.ts"],
 	},
 	ci: {
@@ -127,6 +132,7 @@ const KINDS = {
 			".travis.yml",
 			"bitbucket-pipelines.yml",
 			".buildkite/pipeline.yml",
+			"azure-pipelines.yaml", // S3 rev. 1
 		],
 		no: [".github/CODEOWNERS", "docs/ci.md"],
 	},
@@ -141,13 +147,22 @@ const KINDS = {
 			"docker-compose.override.yaml",
 			"compose.yaml",
 			".dockerignore",
+			"compose.override.yaml", // S3 rev. 1
+			"compose.yml", // S3 rev. 1 pin
 		],
 		no: ["docs/docker.md"],
 	},
 	env: {
 		check: isEnvFile,
 		yes: [".env", ".env.local", ".env.production", "config/app.env"],
-		no: [".env.example", ".env.sample", ".env.template", "src/environment.ts"],
+		no: [
+			".env.example",
+			".env.sample",
+			".env.template",
+			"src/environment.ts",
+			".env.production.example", // S3 rev. 1
+			".env.local.example", // S3 rev. 1
+		],
 	},
 };
 
@@ -169,6 +184,46 @@ const SENSITIVE = [
 	["db/schemaless.ts", []],
 	["secretary/notes.md", []],
 	["src/service.ts", []],
+	// S3 revision 1: derived forms and acronym plurals.
+	["src/middleware/authenticated.ts", ["auth"]],
+	["lambda/authorizer.ts", ["auth"]],
+	["src/guards/Authorized.tsx", ["auth"]],
+	["lib/authenticator.ts", ["auth"]],
+	["lib/encrypted-storage.ts", ["crypto"]],
+	["services/decryption.go", ["crypto"]],
+	["utils/decrypted.ts", ["crypto"]],
+	["src/cryptographic/hash.rs", ["crypto"]],
+	["secured/area.ts", ["security"]],
+	["db/migrator.ts", ["migration"]],
+	["db/migrated.ts", ["migration"]],
+	["src/utils/parseJWTs.ts", ["jwt"]],
+	["src/IPCs.ts", ["ipc"]],
+	// S3 revision 1 pins: every remaining word and form, and the rule's edges.
+	["security/policy.md", ["security"]],
+	["config/secrets.yaml", ["secret"]],
+	["aws/credentials", ["credential"]],
+	["billing/payments.ts", ["payment"]],
+	["db/schema.prisma", ["schema"]],
+	["deploy/ssh_config", ["ssh"]],
+	["creds.json", ["credential"]],
+	["perm/check.ts", ["permission"]],
+	["perms.ts", ["permission"]],
+	["authn.go", ["auth"]],
+	["authz.go", ["auth"]],
+	["authorization.ts", ["auth"]],
+	["authenticate.ts", ["auth"]],
+	["authorize.ts", ["auth"]],
+	["secure-store.ts", ["security"]],
+	["crypt.c", ["crypto"]],
+	["cryptography.py", ["crypto"]],
+	["encrypt.ts", ["crypto"]],
+	["decrypt.ts", ["crypto"]],
+	["sshes.ts", ["ssh"]],
+	["auth/authService.ts", ["auth"]],
+	[String.raw`src\auth\x.ts`, ["auth"]],
+	["my secret notes.md", ["secret"]],
+	["lib/x509cert.pem", ["cert"]],
+	["src/oauth2client.js", ["auth"]],
 ];
 
 const git = (repo, ...args) =>
@@ -245,11 +300,22 @@ describe("path vocabulary (S3)", () => {
 			.soft(
 				mismatches(
 					isLockfile,
-					["package.json", "Cargo.toml", "pom.xml"],
+					[
+						"package.json",
+						"Cargo.toml",
+						"pom.xml",
+						// S3 revision 1 pins
+						"go.mod",
+						"Pipfile",
+						"deno.json",
+						"uv.lock",
+					],
 					false,
 				),
 			)
 			.toEqual([]);
+		// S3 revision 1 pin: nothing beyond the union.
+		expect.soft(isManifest("uv.lock")).toBe(false);
 	});
 
 	it("recognizes migrations, CI config, container files and env files", () => {
@@ -281,6 +347,11 @@ describe("path vocabulary (S3)", () => {
 				"db/migrations/001.sql": "migration/no",
 				Dockerfile: "other/no",
 				".env": "other/no",
+				// S3 revision 1 pins: ratified precedence.
+				"setup.py": "source/yes",
+				"docs/package.json": "docs/yes",
+				"deno.json": "manifest/yes",
+				Gemfile: "manifest/yes",
 			};
 			const wrong = Object.entries(cases)
 				.map(([file, want]) => [file, want, reviewRangeOf(file)])

@@ -78,10 +78,13 @@ export const isFixture = (p) =>
 // non-JS conventions above would be dead weight in a generated config.
 export const TEST_EXCLUDE_RE = "\\.(test|spec)\\.[a-z]+$|(^|/)__tests__/";
 
-// ---- risk vocabulary (D15, S3) — scaffold, filled behavior by behavior ----------
+// ---- risk vocabulary (D15, S3) -------------------------------------------------
+
+/** A path with `/` separators, so one rule serves Windows paths too. */
+const slashed = (p) => p.replace(/\\/g, "/");
 
 /** The file name of a path ("a/b/C.txt" → "C.txt"). */
-const baseOf = (p) => p.slice(p.replace(/\\/g, "/").lastIndexOf("/") + 1);
+const baseOf = (p) => slashed(p).slice(slashed(p).lastIndexOf("/") + 1);
 
 // Dependency manifests and lockfiles: the union of review-range.mjs's MANIFEST_RE
 // (23 alternatives) and its strict subset MANIFEST_BASENAME_RE — no novelties.
@@ -95,28 +98,26 @@ const LOCKFILE_NAME_RE =
 export const isManifest = (p) => MANIFEST_NAME_RE.test(baseOf(p));
 /** True for a dependency lockfile (a subset of isManifest). */
 export const isLockfile = (p) => LOCKFILE_NAME_RE.test(baseOf(p));
-/** A path with `/` separators, so one rule serves Windows paths too. */
-const slashed = (p) => p.replace(/\\/g, "/");
 
-/** A migration: a `migration(s)` directory or a `.sql` file — identical to
-    review-range.mjs's rule. */
+/** A migration: a `migration(s)` directory or a `.sql` file — the one rule
+    review-range.mjs imports. */
 export const isMigration = (p) =>
 	/(^|\/)migrations?\//i.test(slashed(p)) || extOf(slashed(p)) === "sql";
 
 const CI_PATH_RE =
-	/(^|\/)(\.github\/workflows\/[^/]+\.ya?ml|\.gitlab-ci\.yml|\.circleci\/.+|azure-pipelines\.yml|Jenkinsfile|\.travis\.yml|bitbucket-pipelines\.yml|\.buildkite\/.+)$/;
+	/(^|\/)(\.github\/workflows\/[^/]+\.ya?ml|\.gitlab-ci\.yml|\.circleci\/.+|azure-pipelines\.ya?ml|Jenkinsfile|\.travis\.yml|bitbucket-pipelines\.yml|\.buildkite\/.+)$/;
 /** A CI pipeline definition. */
 export const isCiConfig = (p) => CI_PATH_RE.test(slashed(p));
 
 const CONTAINER_NAME_RE =
-	/^(dockerfile(\..+)?|.+\.dockerfile|containerfile|docker-compose[^/]*\.ya?ml|compose\.ya?ml|\.dockerignore)$/i;
+	/^(dockerfile(\..+)?|.+\.dockerfile|containerfile|docker-compose[^/]*\.ya?ml|compose(\.[^/]+)?\.ya?ml|\.dockerignore)$/i;
 /** A container build or compose file. */
 export const isContainerFile = (p) => CONTAINER_NAME_RE.test(baseOf(p));
 
 // `.env`, `.env.<x>`, `<x>.env` — except the placeholder templates (developer
 // choice, D15).
 const ENV_NAME_RE = /^(\.env(\..+)?|.+\.env)$/i;
-const ENV_TEMPLATE_RE = /^\.env\.(example|sample|template)$/i;
+const ENV_TEMPLATE_RE = /^\.env(\..+)?\.(example|sample|template)$/i;
 /** A real environment file (templates excluded). */
 export const isEnvFile = (p) => {
 	const base = baseOf(p);
@@ -126,15 +127,21 @@ export const isEnvFile = (p) => {
 // each one covers. A token matches a word or form exactly, or its plural (+s/+es)
 // — never a prefix: `author`, `tokenizer`, `schemaless`, `secretary` stay out.
 const SENSITIVE_FORMS = {
-	auth: ["authn", "authz", "authentication", "authorization", "authenticate", "authorize", "oauth"],
-	security: ["secure"],
-	crypto: ["crypt", "cryptography", "encrypt", "encryption", "decrypt"],
+	auth: [
+		"authn", "authz", "authentication", "authorization", "authenticate", "authorize", "oauth",
+		"authenticated", "authenticator", "authorized", "authorizer",
+	],
+	security: ["secure", "secured"],
+	crypto: [
+		"crypt", "cryptography", "cryptographic", "encrypt", "encryption", "encrypted",
+		"decrypt", "decryption", "decrypted",
+	],
 	secret: [],
 	credential: ["creds"],
 	permission: ["perm", "perms"],
 	token: [],
 	payment: [],
-	migration: ["migrate"],
+	migration: ["migrate", "migrated", "migrator"],
 	schema: [],
 	ipc: [],
 	preload: [],
@@ -155,9 +162,10 @@ const SENSITIVE_TOKENS = new Map(
 );
 
 /** Lower-cased words of a path: split at separators and camelCase boundaries
-    (`authService` → auth, service; `JWTToken` → jwt, token). */
+    (`authService` → auth, service; `JWTToken` → jwt, token; `parseJWTs` → parse,
+    jwts — an acronym keeps its plural `s`). */
 const pathTokens = (p) =>
-	(p.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+/g) ?? []).map((t) =>
+	(p.match(/[A-Z]+s(?![a-z])|[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+/g) ?? []).map((t) =>
 		t.toLowerCase(),
 	);
 
