@@ -78,7 +78,9 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 
 import {
 	extOf,
+	isGenerated,
 	isManifest,
+	isMedia,
 	isMigration,
 	isSource,
 	isTest,
@@ -95,31 +97,11 @@ const COMPANION_ROW_CAP = 10;
 const REVIEW_SHARD_FILE_CAP = 60;
 const REVIEW_SHARD_PATH_BYTE_CAP = 6000;
 
-const MEDIA_EXT = new Set([
-	"avif",
-	"bmp",
-	"gif",
-	"ico",
-	"jpeg",
-	"jpg",
-	"mov",
-	"mp3",
-	"mp4",
-	"pdf",
-	"png",
-	"svg",
-	"webm",
-	"webp",
-	"woff",
-	"woff2",
-]);
-const GENERATED_PATH_RE =
-	/(^|\/)(\.rpiv\/artifacts|opencode\/generated|coverage|dist|build|node_modules)(\/|$)/i;
-// Manifests and migrations come from the shared owner (source-vocab.mjs, D15), so
-// the manifest category and `manifest_changed` read the same list.
+// Generated paths, media, manifests and migrations come from the shared owner
+// (source-vocab.mjs, D15/D17), so review-range and the lane CLI read the same lists.
 const pathCategory = (path) => {
-	if (GENERATED_PATH_RE.test(path)) return "generated-artifact";
-	if (MEDIA_EXT.has(extOf(path))) return "media";
+	if (isGenerated(path)) return "generated-artifact";
+	if (isMedia(path)) return "media";
 	if (isTest(path)) return "test";
 	if (isMigration(path)) return "migration";
 	if (isSource(path)) return "source";
