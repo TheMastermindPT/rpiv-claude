@@ -36,7 +36,15 @@ class Unparseable extends Error {}
 const MAX_NESTING = 64;
 
 function tokenize(src, mode) {
-	const p = { src, i: 0, mode, segments: [], heredocs: [], depth: 0 };
+	const p = {
+		src,
+		i: 0,
+		mode,
+		segments: [],
+		heredocs: [],
+		depth: 0,
+		arithmeticFailed: new Set(),
+	};
 	parseList(p, null);
 	return p.segments;
 }
@@ -139,7 +147,8 @@ function newSegmentBuilder(p, options = {}) {
 			else stdinRedirect = true;
 		},
 		endWord() {
-			if (word !== null && !targetPending) words.push(word);
+			if (word !== null && !targetPending)
+				words.push(...psParameterParts(p, word));
 			if (word !== null) targetPending = false;
 			word = null;
 		},
@@ -172,7 +181,9 @@ function newSegmentBuilder(p, options = {}) {
 		},
 		/** Records the segments parsed inside an argument expression `( … )`. */
 		noteExpression(segments) {
-			word.expression = segments;
+			// The first expression is the call's argument list (`Create("…")`); a
+			// later member call such as `.Invoke()` does not replace it.
+			word.expression ??= segments;
 		},
 		openGroup(paren) {
 			const fed = piped && empty();
@@ -186,6 +197,23 @@ function newSegmentBuilder(p, options = {}) {
 			if (closedGroup?.paren) openParens--;
 		},
 	};
+}
+
+// PowerShell `-Name:value` is the parameter `-Name` with the value `value`.
+const PS_JOINED_PARAMETER = /^-[A-Za-z][A-Za-z0-9]*:./;
+
+/** A word as the segment receives it: PowerShell `-Name:value` becomes the two
+    words `-Name` and `value` (D5 rev. 3). */
+function psParameterParts(p, word) {
+	if (p.mode !== "ps" || !PS_JOINED_PARAMETER.test(word.value)) return [word];
+	const colon = word.value.indexOf(":");
+	const name = {
+		value: word.value.slice(0, colon),
+		raw: word.raw.slice(0, colon),
+		dynamic: false,
+		firstLiteral: true,
+	};
+	return [name, { ...word, ...joinedValue(word, colon + 1) }];
 }
 
 /** Is the segment's stdin a pipe, a `<`/`<<`/`<<<` redirection or a fed group? */
@@ -546,6 +574,9 @@ function readVariableName(p, seg) {
     `$((` does not close with `))`: POSIX then reads it as a command substitution
     starting with a subshell (D5 rev. 2). */
 function readArithmetic(p, seg) {
+	// A start that already failed is not re-tried: nested unclosed `$((` would
+	// otherwise be re-scanned at every level (exponential, D5 rev. 3).
+	if (p.arithmeticFailed.has(p.i)) return false;
 	const saved = { i: p.i, depth: p.depth, segments: p.segments.length };
 	p.i += 3;
 	try {
@@ -559,6 +590,7 @@ function readArithmetic(p, seg) {
 	p.i = saved.i;
 	p.depth = saved.depth;
 	p.segments.length = saved.segments;
+	p.arithmeticFailed.add(saved.i);
 	return false;
 }
 
@@ -729,7 +761,13 @@ function readHereString(p) {
 /** The body of an expanding heredoc or `@"…"@` here-string: only substitutions
     are parsed (their segments are inspected); quote characters are plain text. */
 function scanExpandingBody(p, body) {
-	const q = { ...p, src: body, i: 0, heredocs: [] };
+	const q = {
+		...p,
+		src: body,
+		i: 0,
+		heredocs: [],
+		arithmeticFailed: new Set(),
+	};
 	const sink = newSegmentBuilder(q);
 	while (q.i < body.length) {
 		const ch = body[q.i];
@@ -1253,8 +1291,8 @@ function gitInvocationReason(words, start, mode, chain = null) {
 		? new Map([...chain.aliases, ...read.aliases])
 		: read.aliases;
 	if (!aliases.has(sub)) return gitSubcommandReason(sub, words, read.sub + 1);
-	const rest = words.slice(read.sub + 1);
-	return expandGitAlias(sub, rest, mode, { aliases, seen: chain?.seen });
+	const args = { words, from: read.sub + 1 };
+	return expandGitAlias(sub, args, mode, { aliases, seen: chain?.seen });
 }
 
 function gitSubcommandProblem(subWord) {
@@ -1268,16 +1306,24 @@ function gitSubcommandProblem(subWord) {
 
 /** Expands inline alias `sub` in front of its arguments `rest`; a `!` alias is
     a shell command. */
-function expandGitAlias(sub, rest, mode, { aliases, seen = new Set() }) {
-	const problem = aliasChainProblem(sub, seen);
+function expandGitAlias(sub, args, mode, { aliases, seen = new Set() }) {
+	const problem = aliasChainProblem(sub, seen) ?? aliasBudgetProblem();
 	if (problem) return problem;
 	const alias = aliases.get(sub);
 	if (alias.startsWith("!")) return analyzeCommand(alias.slice(1), "bash");
 	const expanded = tokenize(alias, "bash")[0]?.words ?? [];
-	return gitInvocationReason([...expanded, ...rest], 0, mode, {
+	const { words, from } = args;
+	return gitInvocationReason([...expanded, ...words.slice(from)], 0, mode, {
 		aliases,
 		seen: new Set([...seen, sub]),
 	});
+}
+
+/** Each expansion copies the rest of its segment, so one decision may expand
+    at most MAX_NESTING inline aliases (D5/D13 rev. 3). */
+function aliasBudgetProblem() {
+	if (++decision.aliasExpansions <= MAX_NESTING) return null;
+	return broken(`git alias expansions exceed ${MAX_NESTING} in one command`);
 }
 
 /** An alias that expands to itself, or a chain deeper than the nesting bound,
@@ -1739,13 +1785,15 @@ function runPosition(segment, mode) {
 	const { words } = segment;
 	let k = 0;
 	let after;
+	const launchers = [];
 	while (isLeadingWord(words[k])) k++;
 	for (let skip = launcherSkip(words, k, mode); skip; ) {
+		launchers.push(k);
 		after ??= skip.unknown;
 		k = skip.next;
 		skip = launcherSkip(words, k, mode);
 	}
-	segment.run = { index: k, after };
+	segment.run = { index: k, after, launchers };
 	return segment.run;
 }
 
@@ -1980,8 +2028,9 @@ function scriptblockReason(word, fed) {
 	return innerReason(only, "ps", fed);
 }
 
+// `[scriptblock]::Create(…)`, also followed by member access (`.Invoke()`).
 const isScriptblockCreate = (word, mode) =>
-	mode === "ps" && /^\[scriptblock\]::create$/i.test(word.value);
+	mode === "ps" && /^\[scriptblock\]::create(\.|$)/i.test(word.value);
 
 // Wrappers that run an option's value as a command string (D12 rev. 2).
 // `onPositional` says what a positional word is: "skip" (a user, file or lock),
@@ -2068,6 +2117,21 @@ function wrapperPositional(words, k, wrapper, fed) {
 	return inner([words[k]], "bash", 0, fed);
 }
 
+const isEnvSplitString = ({ value }) => /^(-S|--split-string)/.test(value);
+
+/** An option a wrapper does not know, before its string, asks broken. env's
+    other options are a launcher's, so for env it asks only when a `-S` /
+    `--split-string` string follows (D12 rev. 3). */
+function unknownWrapperOptionReason(words, k, name) {
+	const unknown = broken(
+		`${name} option ${JSON.stringify(words[k].value)} may take the next word`,
+	);
+	if (!STRING_WRAPPERS[name].unknownOk) return unknown;
+	return anyFrom(words, k + 1, "env-split-string", isEnvSplitString)
+		? unknown
+		: null;
+}
+
 function stringWrapperReason(words, from, name, ctx) {
 	const wrapper = STRING_WRAPPERS[name];
 	let end = readWrapperOptions(words, from, name);
@@ -2075,17 +2139,46 @@ function stringWrapperReason(words, from, name, ctx) {
 	if (wrapper.onPositional === "second" && end.positional !== undefined)
 		end = readWrapperOptions(words, end.positional + 1, name);
 	if (end.unknown !== undefined)
-		return verdict(
-			wrapper.unknownOk
-				? null
-				: broken(
-						`${name} option ${JSON.stringify(words[end.unknown].value)} may take the next word`,
-					),
-		);
+		return verdict(unknownWrapperOptionReason(words, end.unknown, name));
 	if (end.string !== undefined)
 		return inner(end.string ? [end.string] : [], "bash", 0, ctx.fed);
-	if (end.positional === undefined) return verdict(null);
+	if (end.positional === undefined) return verdict(shellFromStdin(name, ctx));
 	return wrapperPositional(words, end.positional, wrapper, ctx.fed);
+}
+
+// Wrappers that start a shell when given no command string (D12 rev. 3).
+const SHELL_STARTING_WRAPPERS = new Set([
+	"su",
+	"runuser",
+	"sg",
+	"script",
+	"flock",
+]);
+
+/** A run, stdin-fed wrapper with no command string starts a shell reading stdin. */
+const shellFromStdin = (name, ctx) =>
+	SHELL_STARTING_WRAPPERS.has(name) && ctx.isRun && ctx.fed
+		? broken(STDIN_FED)
+		: null;
+
+// `sudo -s`/`-i` (`--shell`, `--login`) and `doas -s` start a shell.
+const ELEVATED_SHELL_OPTION = {
+	sudo: /^(-[A-Za-z]*[si]|--shell|--login)$/,
+	doas: /^-[A-Za-z]*s$/,
+};
+
+/** A stdin-fed `sudo -s|-i` or `doas -s` in the launcher chain, with no command
+    after its options, runs a shell reading stdin (D12 rev. 3). */
+function elevatedShellReason({ words, from, name, ctx, segment, mode }) {
+	if (!ctx.fed) return null;
+	if (!runPosition(segment, mode).launchers.includes(from - 1)) return null;
+	const end = readOptions(words, from, LAUNCHERS[name]);
+	if (end.unknown !== undefined || words[end.next] !== undefined) return null;
+	const options = words.slice(from, end.next);
+	const startsShell = options.some((w) =>
+		ELEVATED_SHELL_OPTION[name].test(w.value),
+	);
+	return startsShell ? broken(STDIN_FED) : null;
 }
 
 // tmux runs strings from these commands, and stores strings that run later in
@@ -2181,6 +2274,8 @@ const WRAPPER_CHECKS = new Map([
 		(w) => stringWrapperReason(w.words, w.from, n, w.ctx),
 	]),
 	["tmux", (w) => verdict(tmuxReason(w.words, w.from))],
+	["sudo", (w) => verdict(elevatedShellReason(w))],
+	["doas", (w) => verdict(elevatedShellReason(w))],
 	["source", (w) => sourceReason(w.words, w.from, w.ctx)],
 	[".", (w) => sourceReason(w.words, w.from, w.ctx)],
 ]);
@@ -2189,7 +2284,7 @@ function wrapperReason(segment, i, name, mode) {
 	const check = WRAPPER_CHECKS.get(name);
 	if (check === undefined) return verdict(null);
 	const ctx = { fed: isStdinFed(segment), isRun: isRunWord(segment, i, mode) };
-	return check({ words: segment.words, from: i + 1, name, ctx, segment });
+	return check({ words: segment.words, from: i + 1, name, ctx, segment, mode });
 }
 
 // ---- run-time arguments, aliases and computed words (D5 rev. 1) ---------------------
@@ -2228,9 +2323,13 @@ function runCommandReason(word, runner) {
 	if (isComputed(word)) return broken(`${runner} runs a computed command`);
 	if (/\s/.test(word.value)) return analyzeCommand(word.value, "bash");
 	const name = commandName(word.value);
-	if (!RUN_TARGETS.has(name)) return null;
+	if (!RUN_TARGETS.has(name) && !name.startsWith("git-")) return null;
 	return broken(`${runner} supplies the arguments of ${name} at run time`);
 }
+
+// parallel's argument separators: with no command before them, each argument or
+// input line is itself run as a command.
+const PARALLEL_SOURCES = new Set([":::", "::::", ":::+", "::::+"]);
 
 function runnerReason(words, from, runner) {
 	const end = readOptions(words, from, RUNNER_SPECS[runner]);
@@ -2238,7 +2337,12 @@ function runnerReason(words, from, runner) {
 		return broken(
 			`${runner} option ${JSON.stringify(words[end.unknown].value)} may take the next word`,
 		);
-	return runCommandReason(words[end.next], runner);
+	const command = words[end.next];
+	const noCommand =
+		command === undefined || PARALLEL_SOURCES.has(command.value);
+	if (runner === "parallel" && noCommand)
+		return broken("parallel runs its input as commands");
+	return runCommandReason(command, runner);
 }
 
 const GIT_OR_GH = new Set(["git", "gh"]);
@@ -2259,13 +2363,27 @@ function mentionsGitOrGh(text) {
     up to the next alias definition, so each word is checked once. */
 function aliasDefinitionReason(words, from, mode) {
 	for (let k = from; k < words.length; k++) {
-		const v = words[k].value;
-		if (ALIAS_DEFINERS[mode].has(commandName(v))) break;
-		const value = mode === "bash" ? v.slice(v.indexOf("=") + 1) : v;
-		if (mode === "bash" && !v.includes("=")) continue;
-		if (mode === "ps" && v.startsWith("-")) continue;
-		if (mentionsGitOrGh(value)) return broken("a shell alias names git or gh");
+		if (ALIAS_DEFINERS[mode].has(commandName(words[k].value))) break;
+		const problem = aliasWordProblem(words[k], mode);
+		if (problem) return problem;
 	}
+	return null;
+}
+
+/** The alias value in a definition word: Bash `name=value`, or a PowerShell
+    non-option argument; undefined when the word defines no value. */
+function aliasValue(v, mode) {
+	if (mode === "bash")
+		return v.includes("=") ? v.slice(v.indexOf("=") + 1) : undefined;
+	return v.startsWith("-") ? undefined : v;
+}
+
+function aliasWordProblem(word, mode) {
+	// A computed alias value may name git or gh (D5 rev. 3).
+	if (isComputed(word)) return broken("a shell alias value is computed");
+	const value = aliasValue(word.value, mode);
+	if (value !== undefined && mentionsGitOrGh(value))
+		return broken("a shell alias names git or gh");
 	return null;
 }
 
@@ -2318,10 +2436,25 @@ function wordReason(segment, i, mode, seen) {
 }
 
 /** Position-independent: any `git`/`gh`/wrapper word in a segment is checked (D5). */
+/** PowerShell `Start-Process` running git or gh reads its arguments from
+    `-ArgumentList`; anywhere but straight after the command word, the hook cannot
+    pair them with it, so it asks broken (D5 rev. 3). */
+function psLaunchedGitReason(segment, mode) {
+	if (mode !== "ps") return null;
+	const { words } = segment;
+	if (!PS_LAUNCHERS.has(commandName(words[0]?.value ?? ""))) return null;
+	const run = runPosition(segment, mode).index;
+	const name = commandName(words[run]?.value ?? "");
+	if (!GIT_OR_GH.has(name) && !name.startsWith("git-")) return null;
+	const argList = words.findIndex((w) => PS_ARGUMENT_LIST.test(w.value));
+	if (argList === -1 || argList === run + 1) return null;
+	return broken(`Start-Process passes -ArgumentList apart from ${name}`);
+}
+
 function segmentReason(segment, mode) {
 	if (segment.broken) return segment.broken;
 	const seen = { find: false };
-	let firstBroken = null;
+	let firstBroken = psLaunchedGitReason(segment, mode);
 	for (let i = 0; i < segment.words.length; i++) {
 		const { reason, covered } = wordReason(segment, i, mode, seen);
 		if (isOutward(reason)) return reason;
@@ -2333,7 +2466,70 @@ function segmentReason(segment, mode) {
 		firstBroken ??= broken(
 			`command word ${JSON.stringify(cmd.value)} is computed at run time`,
 		);
-	return firstBroken;
+	return firstBroken ?? unplacedGitWordReason(segment, mode);
+}
+
+// Commands that never execute their arguments: a git or gh word is safe as
+// their operand (D5 rev. 3 safety net).
+const SAFE_OPERAND_COMMANDS = new Set([
+	"which",
+	"type",
+	"where",
+	"whereis",
+	"whatis",
+	"apropos",
+	"man",
+	"help",
+	"info",
+	"command",
+	"get-command",
+	"gcm",
+	"get-help",
+	"rg",
+	"grep",
+	"egrep",
+	"fgrep",
+	"ag",
+	"ack",
+	"findstr",
+	"select-string",
+	"sls",
+	"echo",
+	"printf",
+	"write-host",
+	"write-output",
+	"ls",
+	"dir",
+	"cat",
+	"cd",
+	"head",
+	"tail",
+	"less",
+	"more",
+	"wc",
+]);
+
+const isGitOrGhName = (name) => GIT_OR_GH.has(name) || name.startsWith("git-");
+
+/** Safety net (D5 rev. 3): in a segment the hook otherwise gives no opinion on,
+    a git or gh word must be the command being run, an argument after a git/gh
+    command being run, or an operand of a command that never runs its
+    arguments. Anywhere else, what runs it is unknown, so it asks broken. */
+function unplacedGitWordReason(segment, mode) {
+	const { words } = segment;
+	const run = runPosition(segment, mode);
+	if (SAFE_OPERAND_COMMANDS.has(commandName(words[run.index]?.value ?? "")))
+		return null;
+	for (let i = 0; i < words.length; i++) {
+		const name = commandName(words[i].value);
+		if (!isGitOrGhName(name) || isComputed(words[i])) continue;
+		// Every later word is this git/gh command's own argument.
+		if (isRunWord(segment, i, mode)) return null;
+		return broken(
+			`${JSON.stringify(words[i].value)} sits where the hook cannot tell what runs it`,
+		);
+	}
+	return null;
 }
 
 // Wrapper and alias re-parsing depth; bounds work on inputs like `eval eval ... x`.
@@ -2406,16 +2602,16 @@ function writesGitConfigKey(words, i, mode) {
     contains a git word; a `git config` alias/include write needs another git
     word to act on. */
 function runtimeConfigReason(segments, mode) {
-	let gitWords = 0;
-	let configWrite = false;
-	let configSet = false;
+	// Counted per decision: a wrapper string's git word and the configuration
+	// set around the wrapper belong to one command (D5 rev. 3).
 	for (const { words } of segments)
 		words.forEach((word, i) => {
-			configSet ||= setsGitConfig(word);
+			decision.configSet ||= setsGitConfig(word);
 			if (commandName(word.value) !== "git") return;
-			gitWords++;
-			configWrite ||= writesGitConfigKey(words, i, mode);
+			decision.gitWords++;
+			decision.configWrite ||= writesGitConfigKey(words, i, mode);
 		});
+	const { configSet, configWrite, gitWords } = decision;
 	const supplied = (configSet && gitWords > 0) || (configWrite && gitWords > 1);
 	return supplied ? broken(RUNTIME_CONFIG) : null;
 }
@@ -2436,11 +2632,22 @@ function decide(input) {
 	return shellCommandReason(input.tool_input?.command, SHELL_MODES[toolName]);
 }
 
+/** State shared by every analysis of one hook decision, including literal
+    wrapper strings analysed in nested calls (D5 rev. 3). */
+const newDecision = () => ({
+	aliasExpansions: 0,
+	gitWords: 0,
+	configSet: false,
+	configWrite: false,
+});
+let decision = newDecision();
+
 function shellCommandReason(command, mode) {
 	if (typeof command !== "string")
 		return broken("tool_input.command is missing");
 	if (command.length > MAX_COMMAND_LENGTH)
 		return broken(`command longer than ${MAX_COMMAND_LENGTH} characters`);
+	decision = newDecision();
 	return analyzeCommand(command, mode);
 }
 

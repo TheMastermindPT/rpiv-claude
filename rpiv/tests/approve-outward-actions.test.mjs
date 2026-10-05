@@ -271,6 +271,39 @@ const DECIDING_REV2 = {
 	],
 };
 
+// Revision-3 cases of B9 and B12.
+const WRAPPERS_REV3 = {
+	outwardPs: [
+		'iex -Command:"git push"',
+		"Invoke-Expression -Command:'git push'",
+		'[scriptblock]::Create("git push").Invoke()',
+	],
+};
+const DECIDING_REV3 = {
+	broken: [
+		"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=push bash -c 'git p'",
+		"GIT_CONFIG_GLOBAL=x.cfg sh -c 'git p'",
+		"git config alias.p push && bash -c 'git p'",
+		'alias g="$(which git)"; g push',
+		"alias g=$GIT; g push",
+		"echo 'push origin main' | xargs git-lfs",
+		"parallel ::: 'git push'",
+		"echo 'git push' | parallel",
+		"echo push | xargs -i git {}",
+		"echo push | xargs -e git",
+		"echo push | xargs -l git",
+	],
+	brokenPs: [
+		"$env:GIT_CONFIG_COUNT=1; $env:GIT_CONFIG_KEY_0='alias.p'; $env:GIT_CONFIG_VALUE_0='push'; iex 'git p'",
+		"Set-Alias g (Get-Command git); g push",
+		"sal g $gitPath; g push",
+		"Start-Process -ArgumentList push -FilePath git",
+		"start -ArgumentList push git",
+		'Start-Process -ArgumentList "pr create -t t -b b" -FilePath gh',
+	],
+	outwardPs: ["Start-Process -FilePath:git -ArgumentList:push"],
+};
+
 describe("approve-outward-actions hook", () => {
 	it(
 		"asks before any git push",
@@ -515,6 +548,8 @@ describe("approve-outward-actions hook", () => {
 				["gh api -X GET -X POST repos/o/r/labels", "gh browse"],
 				`${OUTWARD}gh`,
 			);
+			// Revision 3: `-h` is read like `--help`.
+			expectAsks(["gh pr -h create"], `${OUTWARD}gh`);
 		},
 		TEST_TIMEOUT,
 	);
@@ -820,6 +855,11 @@ describe("approve-outward-actions hook", () => {
 			expectAsks(WRAPPERS_REV2.broken, BROKEN);
 			expectAsks(WRAPPERS_REV2.brokenPs, BROKEN, psEvent);
 			expectSilent(WRAPPERS_REV2.silent);
+			// Revision 3: `-Name:value`, scriptblock member access, env options.
+			expectAsks(WRAPPERS_REV3.outwardPs, `${OUTWARD}git push`, psEvent);
+			expectAsks(["watch -d 'git push'"], `${OUTWARD}git push`);
+			expectAsks(["env --frobnicate -S 'git push'", "eval"], BROKEN);
+			expectSilent(["env --frobnicate git status"]);
 		},
 		TEST_TIMEOUT,
 	);
@@ -851,6 +891,16 @@ describe("approve-outward-actions hook", () => {
 				["tmux ".repeat(13_000), null],
 				["su ".repeat(21_000), null],
 				["git config alias.p x ".repeat(3_000), BROKEN],
+				// Revision 3: nested unclosed `$((` and repeated alias expansion are
+				// bounded.
+				[`git push\n${"$((".repeat(22)}`, BROKEN],
+				["$((".repeat(40), BROKEN],
+				[
+					"git -c alias.b=branch b -d x -- ".repeat(2_000),
+					`${BROKEN} git alias`,
+				],
+				["git -c alias.p=status p ".repeat(2_700), `${BROKEN} git alias`],
+				[`${"sudo -u x ".repeat(6_000)}bash`, null],
 			];
 			const failures = pathological
 				.map(([command, prefix]) => {
@@ -1112,6 +1162,11 @@ describe("approve-outward-actions hook", () => {
 			expectAsks(DECIDING_REV2.aliasProblems, `${BROKEN} git alias`);
 			expectAsks(DECIDING_REV2.brokenPs, BROKEN, psEvent);
 			expectSilent(DECIDING_REV2.silent);
+			// Revision 3: config across wrapper strings, computed aliases,
+			// Start-Process placement, runner `git-<name>`, command-less parallel.
+			expectAsks(DECIDING_REV3.broken, BROKEN);
+			expectAsks(DECIDING_REV3.brokenPs, BROKEN, psEvent);
+			expectAsks(DECIDING_REV3.outwardPs, `${OUTWARD}git push`, psEvent);
 		},
 		TEST_TIMEOUT,
 	);
@@ -1286,6 +1341,55 @@ describe("approve-outward-actions hook", () => {
 				"t PowerShell $x",
 				"source ~/.bashrc",
 			]);
+			// Revision 3: wrappers that start a shell reading stdin.
+			expectAsks(
+				[
+					"su",
+					"su root",
+					"runuser -l root",
+					"sg grp",
+					"script -q /dev/null",
+					"sudo -s",
+					"sudo -i",
+					"doas -s",
+					"flock /tmp/l bash",
+				].map(piped),
+				BROKEN,
+			);
+			expectSilent(["su root", "sudo -i"]);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"asks when a git or gh word sits where the hook cannot classify it",
+		() => {
+			expectAsks(
+				[
+					"echo push | xargs sudo git",
+					"echo push | xargs env git",
+					"echo push | xargs timeout 60 git",
+					"echo push | parallel sudo git",
+					"echo create | xargs sudo gh pr",
+					"mytool git",
+					"npm exec gh",
+				],
+				BROKEN,
+			);
+			expectAsks(["Invoke-Thing git"], BROKEN, psEvent);
+			expectSilent([
+				"which git",
+				"type git",
+				"command -v git",
+				"rg git src",
+				"echo git",
+				"man git",
+				"git help git",
+				"ls git",
+				"cd git",
+				"sudo git",
+			]);
+			expectSilent(["Get-Command git", "Write-Host gh"], psEvent);
 		},
 		TEST_TIMEOUT,
 	);
