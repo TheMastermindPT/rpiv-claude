@@ -2,19 +2,30 @@
 // Routes a change into `fast`, `normal` or `rigorous` from its size (FR2) and its
 // sensitive signals (FR3), reading the risk vocabulary from source-vocab.mjs.
 // Pure apart from loadLaneThresholds, which reads the optional repo-root
-// `.rpiv-lanes.json`. No Jev (D10) and no CLI (the CLI is S5).
+// `.rpiv-lanes.json`. No Jev (D10).
 //
-// Importable-only: no CLI, no isMain.
+// CLI (D17, S5), run only as the entry point:
+//   node lane.mjs (--range <revision-range> | --working | --paths <path>...)
+//                 [--slices <n>] [--graph <depcruise-or-madge.json>]
+// prints `lane: <lane>`, then `reason: …` and `diagnostic: …` lines, exit 0. Line
+// counts come from `git diff --numstat -z`; generated and media paths are dropped;
+// hubs come only from a graph file (no analysis tool is run). A broken call prints
+// `lane: broken: <detail>` on stderr and exits 2, never a lane.
+//
 // Importable: DEFAULT_LANE_THRESHOLDS, classifyLane, loadLaneThresholds, mergeLane.
 
+import { execFileSync } from "node:child_process";
 import { lstatSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { isMain } from "./is-main.mjs";
 import {
 	isCiConfig,
 	isContainerFile,
 	isEnvFile,
 	isFixture,
+	isGenerated,
 	isManifest,
+	isMedia,
 	isMigration,
 	isTest,
 	sensitiveWords,
@@ -252,3 +263,245 @@ export const mergeLane = (previous, next) => {
 	assertLane(next, "next");
 	return previous === undefined ? next : higher(previous, next);
 };
+
+// ---- CLI (D17, S5) ----
+
+/** A path as git and the vocabulary read it: `/` separators, no leading `./`. */
+const cleanPath = (p) => p.replace(/^\.\//, "");
+
+/** git's stdout, run in `cwd`; a failure throws one line naming git. With
+    `allowFailure`, exit status 1 with no stderr (a `--quiet` "no") returns "". */
+const gitIn = (cwd, args, { allowFailure = false } = {}) => {
+	try {
+		return execFileSync("git", args, {
+			cwd,
+			encoding: "utf-8",
+			stdio: ["ignore", "pipe", "pipe"],
+			maxBuffer: 64 * 1024 * 1024,
+		});
+	} catch (error) {
+		if (allowFailure && error.status === 1 && !String(error.stderr ?? "").trim())
+			return "";
+		const why = String(error.stderr ?? error.message).trim().split("\n")[0];
+		throw new Error(`git ${args[0]} failed: ${why}`);
+	}
+};
+
+/** Files of `git diff --numstat -z` output: NUL-ended `added<TAB>deleted<TAB>path`
+    records; a binary record (`-`/`-`) has no counts. */
+const parseNumstat = (text) =>
+	text
+		.split("\0")
+		.filter(Boolean)
+		.map((record) => {
+			const [added, deleted, path] = record.split("\t");
+			return added === "-"
+				? { path }
+				: { path, added: Number(added), deleted: Number(deleted) };
+		});
+
+/** Changed files of a revision range (renames read as deletion plus addition). */
+const rangeFiles = (root, range) =>
+	parseNumstat(
+		gitIn(root, ["diff", "--numstat", "-z", "--no-renames", "--end-of-options", range, "--"]),
+	);
+
+// git's empty tree: what an unborn HEAD is compared against.
+const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+const BINARY_PROBE_BYTES = 8000; // git's binary rule: a NUL in the first 8000 bytes
+
+/** An untracked file as numstat would count it: all lines added. */
+const untrackedFile = (root, path) => {
+	const bytes = readFileSync(join(root, path));
+	if (bytes.subarray(0, BINARY_PROBE_BYTES).includes(0)) return { path };
+	let added = bytes.filter((byte) => byte === 0x0a).length;
+	if (bytes.length > 0 && bytes.at(-1) !== 0x0a) added++;
+	return { path, added, deleted: 0 };
+};
+
+/** Tracked changes against HEAD (staged and unstaged) plus untracked files. */
+const workingFiles = (root) => {
+	const base = gitIn(root, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], {
+		allowFailure: true,
+	})
+		? "HEAD"
+		: EMPTY_TREE;
+	const untracked = gitIn(root, ["ls-files", "--others", "--exclude-standard", "-z"])
+		.split("\0")
+		.filter(Boolean);
+	return [...rangeFiles(root, base), ...untracked.map((path) => untrackedFile(root, path))];
+};
+
+// A hub is imported by at least this many other modules (deep-review's [hub] rule,
+// references/discovery-map.md; D17).
+const HUB_MIN_FAN_IN = 3;
+/** A graph or changed path as compared: `/` separators, no leading `./`. */
+const graphKey = (p) => cleanPath(slashed(p));
+
+/** The counted [importer, imported] edges of a dependency-cruiser `modules` list,
+    or the first problem. Core modules and unresolved imports do not count. */
+const depcruiseEdges = (modules) => {
+	if (!Array.isArray(modules)) return "modules is not an array";
+	const edges = [];
+	for (const [i, module] of modules.entries()) {
+		if (
+			!isPlainObject(module) ||
+			typeof module.source !== "string" ||
+			!Array.isArray(module.dependencies)
+		)
+			return `modules[${i}] has no string source and dependencies array`;
+		for (const dependency of module.dependencies) {
+			if (!isPlainObject(dependency) || typeof dependency.resolved !== "string")
+				return `modules[${i}] has a dependency without a string resolved`;
+			if (!dependency.coreModule && !dependency.couldNotResolve)
+				edges.push([module.source, dependency.resolved]);
+		}
+	}
+	return edges;
+};
+
+/** The [importer, imported] edges of a madge object map, or the first problem. */
+const madgeEdges = (graph) => {
+	const edges = [];
+	for (const [from, imports] of Object.entries(graph)) {
+		if (!isStringList(imports)) return `${from} does not map to an array of strings`;
+		for (const to of imports) edges.push([from, to]);
+	}
+	return edges;
+};
+
+/** Graph paths imported by at least HUB_MIN_FAN_IN distinct other modules. */
+const hubKeys = (edges) => {
+	const importers = new Map();
+	for (const [from, to] of edges.map(([f, t]) => [graphKey(f), graphKey(t)])) {
+		if (from === to || /(^|\/)node_modules\//.test(to)) continue;
+		if (!importers.has(to)) importers.set(to, new Set());
+		importers.get(to).add(from);
+	}
+	return [...importers]
+		.filter(([, from]) => from.size >= HUB_MIN_FAN_IN)
+		.map(([to]) => to);
+};
+
+/** `{ hubs }` — the changed paths a graph file names as hubs — or `{ broken }`. A
+    changed path matches a hub path equal to it or ending it after a `/` (a graph
+    made in a sub-directory). */
+const readHubs = (graphPath, paths) => {
+	let graph;
+	try {
+		graph = JSON.parse(readFileSync(graphPath, "utf8"));
+	} catch (error) {
+		return {
+			broken:
+				error instanceof SyntaxError
+					? `invalid JSON (${error.message})`
+					: `cannot read (${error.code ?? error.message})`,
+		};
+	}
+	if (!isPlainObject(graph)) return { broken: "the top level is not an object" };
+	const edges = Object.hasOwn(graph, "modules")
+		? depcruiseEdges(graph.modules)
+		: madgeEdges(graph);
+	if (typeof edges === "string") return { broken: edges };
+	const hubs = hubKeys(edges);
+	const isHub = (path) =>
+		hubs.some((hub) => graphKey(path) === hub || graphKey(path).endsWith(`/${hub}`));
+	return { hubs: paths.filter(isHub) };
+};
+
+/** A broken graph (D17): its diagnostic replaces `hub signal unavailable`, and fast
+    rises one step (FR5 step); normal and rigorous are unchanged. */
+const reportBrokenGraph = (result, graph, broken) => {
+	const diagnostics = result.diagnostics.filter((d) => d !== "hub signal unavailable");
+	diagnostics.push(`hub signal broken: ${graph}: ${broken}`);
+	if (result.lane !== "fast") return { ...result, diagnostics };
+	return {
+		lane: "normal",
+		reasons: [...result.reasons, "hub signal broken: raised to normal"],
+		diagnostics,
+	};
+};
+
+const USAGE =
+	"usage: lane.mjs (--range <revision-range> | --working | --paths <path>...) [--slices <n>] [--graph <file>]";
+const MODES = ["--range", "--working", "--paths"];
+
+/** The value after option `argv[i]`; a missing one (or another option) is a broken call. */
+const optionValue = (argv, i) => {
+	const value = argv[i + 1];
+	check(value !== undefined && !value.startsWith("--"), `${argv[i]} needs a value`);
+	return value;
+};
+
+/** The CLI options: the one mode and its argument, `--slices` and `--graph`.
+    Throws a usage error naming the option, or `mode`. */
+const parseArgs = (argv) => {
+	const options = { paths: [] };
+	const modes = [];
+	for (let i = 0; i < argv.length; i++) {
+		const arg = argv[i];
+		if (MODES.includes(arg)) modes.push(arg);
+		if (arg === "--working") continue;
+		if (arg === "--paths") {
+			while (i + 1 < argv.length && !argv[i + 1].startsWith("--"))
+				options.paths.push(argv[++i]);
+			check(options.paths.length > 0, "--paths needs at least one path");
+		} else if (arg === "--range") options.range = optionValue(argv, i++);
+		else if (arg === "--graph") options.graph = optionValue(argv, i++);
+		else if (arg === "--slices") {
+			options.slices = Number(optionValue(argv, i++));
+			check(isPositive(options.slices), "--slices must be a positive integer");
+		} else check(false, `unknown option ${arg}; ${USAGE}`);
+	}
+	check(modes.length === 1, `exactly one mode is needed (got ${modes.length}); ${USAGE}`);
+	options.mode = modes[0].slice(2);
+	return options;
+};
+
+const isDropped = (path) => isGenerated(slashed(path)) || isMedia(slashed(path));
+
+/** The changed files the chosen mode names. */
+const modeFiles = (options, root) => {
+	if (options.mode === "range") return rangeFiles(root, options.range);
+	if (options.mode === "working") return workingFiles(root);
+	return options.paths.map((path) => ({ path: cleanPath(path) }));
+};
+
+/** The CLI's stdout for `argv`, run in `cwd`; throws on a broken call. */
+const runCli = (argv, cwd) => {
+	const options = parseArgs(argv);
+	const root = gitIn(cwd, ["rev-parse", "--show-toplevel"]).trim();
+	const listed = modeFiles(options, root);
+	const files = listed.filter((file) => !isDropped(file.path));
+	const signal =
+		options.graph === undefined
+			? {}
+			: readHubs(resolve(cwd, options.graph), files.map((file) => file.path));
+	let result = classifyLane(
+		{ files, slices: options.slices, hubs: signal.hubs },
+		loadLaneThresholds(root),
+	);
+	if (signal.broken !== undefined)
+		result = reportBrokenGraph(result, options.graph, signal.broken);
+	const { lane, reasons, diagnostics } = result;
+	const dropped = listed.length - files.length;
+	if (dropped) diagnostics.push(`excluded generated/media files: ${dropped}`);
+	return [
+		`lane: ${lane}`,
+		...reasons.map((reason) => `reason: ${reason}`),
+		...diagnostics.map((diagnostic) => `diagnostic: ${diagnostic}`),
+	]
+		.map((line) => `${line}\n`)
+		.join("");
+};
+
+if (isMain(import.meta.url)) {
+	try {
+		process.stdout.write(runCli(process.argv.slice(2), process.cwd()));
+	} catch (error) {
+		// A broken call never prints a lane (degrade-distinguishes-broken).
+		const detail = String(error?.message ?? error).split("\n")[0];
+		process.stderr.write(`lane: broken: ${detail}\n`);
+		process.exitCode = 2;
+	}
+}
