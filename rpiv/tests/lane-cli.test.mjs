@@ -129,6 +129,12 @@ const putGraphs = (repo) => {
 			"src/c.ts": ["src/core.ts"],
 		}),
 	);
+	// Review-2 pin: one importer in two spellings is one importer.
+	put(
+		repo,
+		"graphs/madge-importer-spelling.json",
+		JSON.stringify({ "./src/a.ts": ["src/x.ts"], "src/a.ts": ["src/x.ts"], "src/b.ts": ["src/x.ts"] }),
+	);
 };
 
 describe("lane CLI (S5)", () => {
@@ -272,9 +278,15 @@ describe("lane CLI (S5)", () => {
 			// S5 rev. 1 pin: git runs at the root, also from a sub-directory.
 			expect.soft(working(join(repo, "src")), "from src/").toEqual(twelve);
 			put(repo, "data/x.bin", Buffer.from([1, 0, 2]));
-			expect.soft(working(repo), "untracked binary").toEqual(
-				printed("lane: fast", "reason: within fast limits", "diagnostic: lines unknown", "diagnostic: hub signal unavailable"),
+			const withBinary = printed(
+				"lane: fast",
+				"reason: within fast limits",
+				"diagnostic: lines unknown",
+				"diagnostic: hub signal unavailable",
 			);
+			expect.soft(working(repo), "untracked binary").toEqual(withBinary);
+			// Review-2 pin: `data/x.bin` lies outside `src/`, so this fails if git ran in the cwd.
+			expect.soft(working(join(repo, "src")), "untracked binary from src/").toEqual(withBinary);
 			const unborn = newRepo();
 			put(unborn, "src/a.ts", lines(151));
 			git(unborn, "add", "src/a.ts");
@@ -295,6 +307,12 @@ describe("lane CLI (S5)", () => {
 			const big = committed();
 			put(big, "big.bin", Buffer.concat([Buffer.alloc(8000, 97), Buffer.from([0, 10])]));
 			expect.soft(working(big), "NUL after 8000 bytes").toEqual(oneLine);
+			// Review-2 pin: the other edge — a NUL at index 7999 makes it binary.
+			const edge = committed();
+			put(edge, "edge.bin", Buffer.concat([Buffer.alloc(7999, 97), Buffer.from([0, 10])]));
+			expect.soft(working(edge), "NUL at index 7999").toEqual(
+				printed("lane: fast", "reason: within fast limits", "diagnostic: lines unknown", "diagnostic: hub signal unavailable"),
+			);
 			// S5 rev. 1 pin: a detached HEAD at a healthy commit.
 			const detached = committed();
 			git(detached, "checkout", "-q", "--detach");
@@ -334,6 +352,7 @@ describe("lane CLI (S5)", () => {
 				// S5 rev. 1 pins: coreModule does not count; mixed spellings in the graph.
 				["fs", "graphs/dc.json", fast],
 				["src/core.ts", "graphs/madge-spelling.json", hub("src/core.ts")],
+				["src/x.ts", "graphs/madge-importer-spelling.json", fast],
 			]) {
 				expect.soft(withGraph(path, graph), `${path} with ${graph}`).toEqual(want);
 			}
@@ -473,6 +492,15 @@ describe("lane CLI (S5)", () => {
 				writeFileSync(join(broken, ".git/refs/heads/main"), ref);
 				isBroken(runLane(["--working", "--slices", "1"], { cwd: broken }), "git ", label);
 			}
+			// Review-2 pin: a broken detached HEAD (HEAD itself names a missing object).
+			const detachedBroken = newRepo();
+			put(detachedBroken, "a.ts", "a\n");
+			git(detachedBroken, "add", "-A");
+			git(detachedBroken, "commit", "-q", "-m", "c0");
+			writeFileSync(join(detachedBroken, ".git/HEAD"), "0000000000000000000000000000000000000001\n");
+			isBroken(runLane(["--working", "--slices", "1"], { cwd: detachedBroken }), "git ", "broken detached HEAD");
+			// Review-2 pin: a `-`-leading range is a revision for git, never a git option.
+			isBroken(runLane(["--range", "-R"], { cwd: repo }), "git diff failed:", "--range -R");
 			// Importing the module never runs the CLI (D17: entry point only).
 			const imported = spawnSync(
 				process.execPath,
