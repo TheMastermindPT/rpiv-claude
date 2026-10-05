@@ -1688,15 +1688,16 @@ const SHELL_KEYWORDS = new Set([
 // Launchers that run their operand, with their option tables (D12 rev. 2).
 const LAUNCHERS = {
 	sudo: optionSpec({
-		flag: "A b E e H i K k l n P S s V v B N --askpass --background --edit --set-home --login --remove-timestamp --reset-timestamp --list --non-interactive --preserve-groups --stdin --shell --version --validate --bell --help --nonewline",
+		flag: "A b E e H i K k l n P S s V v B N --askpass --background --edit --set-home --login --remove-timestamp --reset-timestamp --list --non-interactive --preserve-groups --stdin --shell --version --validate --bell --help --nonewline --no-update",
 		value:
 			"u g h p C D r t U T R --user --group --host --prompt --close-from --chdir --role --type --other-user --command-timeout --chroot",
 		optional: "--preserve-env",
 	}),
-	doas: optionSpec({ flag: "n s L", value: "u C" }),
+	doas: optionSpec({ flag: "n s L", value: "u C a" }),
 	env: optionSpec({
-		flag: "i 0 v --ignore-environment --null --debug --help --version",
-		value: "u C --unset --chdir",
+		flag: "i 0 v --ignore-environment --null --debug --help --version --list-signal-handling",
+		value: "u C a --unset --chdir --argv0",
+		optional: "--default-signal --ignore-signal --block-signal",
 		string: "S --split-string",
 	}),
 	command: optionSpec({ flag: "p v V" }),
@@ -1783,7 +1784,7 @@ function launcherSkip(words, k, mode) {
 function runPosition(segment, mode) {
 	if (segment.run !== undefined) return segment.run;
 	const { words } = segment;
-	let k = 0;
+	let k = mode === "ps" ? psLeadingEnd(words) : 0;
 	let after;
 	const launchers = [];
 	while (isLeadingWord(words[k])) k++;
@@ -1801,6 +1802,16 @@ const isRunWord = (segment, i, mode) => {
 	const run = runPosition(segment, mode);
 	return i === run.index || (run.after !== undefined && i > run.after);
 };
+
+const PS_ASSIGNMENT_OPS = new Set(["=", "+=", "-=", "*=", "/=", "%=", "??="]);
+
+/** PowerShell `$x = …`, `[t]$x = …` and a foreach header's `$f in …` come
+    before the command being run (D5 rev. 4): the index after them, else 0. */
+function psLeadingEnd(words) {
+	const next = words[1]?.value;
+	const leads = PS_ASSIGNMENT_OPS.has(next) || next === "in";
+	return words[0]?.dynamic && leads ? 2 : 0;
+}
 
 /** An assignment or shell keyword before the command word. */
 const isLeadingWord = (word) =>
@@ -2033,10 +2044,12 @@ const isScriptblockCreate = (word, mode) =>
 	mode === "ps" && /^\[scriptblock\]::create(\.|$)/i.test(word.value);
 
 // Wrappers that run an option's value as a command string (D12 rev. 2).
-// `onPositional` says what a positional word is: "skip" (a user, file or lock),
-// "second" (sg: the group, then the string), "rest" (watch: the command words),
-// "first" (trap: the action) or "stop" (env: the command; env's other options
-// are a launcher's, so an unknown one is not this rule's).
+// `onPositional` says what a positional word is: "skip" (a user or file),
+// "second" (sg: the group, then the string), "lock" (flock: the lock, then the
+// command words), "rest" (watch: the command words), "first" (trap: the action)
+// or "stop" (env: the command; env's other options are a launcher's, so an
+// unknown one is not this rule's). `endCommand`: words after `--` are the
+// command (runuser, D12 rev. 4).
 const STRING_WRAPPERS = {
 	su: {
 		onPositional: "skip",
@@ -2048,6 +2061,7 @@ const STRING_WRAPPERS = {
 	},
 	runuser: {
 		onPositional: "skip",
+		endCommand: true,
 		spec: optionSpec({
 			flag: "l m p f P h V --login --preserve-environment --pty --fast --help --version",
 			value:
@@ -2066,7 +2080,7 @@ const STRING_WRAPPERS = {
 		}),
 	},
 	flock: {
-		onPositional: "skip",
+		onPositional: "lock",
 		spec: optionSpec({
 			flag: "s x u n o F --shared --exclusive --unlock --nonblock --nb --close --no-fork --verbose --help --version",
 			value: "w E --timeout --wait --conflict-exit-code",
@@ -2088,7 +2102,8 @@ const STRING_WRAPPERS = {
 
 /** Where a string wrapper's options end: `{ string }` (the command-string word,
     or null when it has none), `{ unknown }`, `{ positional }` (the first
-    positional that decides; "skip" wrappers walk past theirs) or `{}`. Cached. */
+    positional that decides; "skip" wrappers walk past theirs), `{ command }`
+    (the first word after an `endCommand` wrapper's `--`) or `{}`. Cached. */
 function readWrapperOptions(words, from, name) {
 	const wrapper = STRING_WRAPPERS[name];
 	return memoWalk(words, `wrapper/${name}`, from, (k) => {
@@ -2099,6 +2114,8 @@ function readWrapperOptions(words, from, name) {
 				: { done: { positional: k } };
 		const opt = readOption(words, k, wrapper.spec);
 		if (opt.unknown) return { done: { unknown: k } };
+		if (opt.kind === "end" && wrapper.endCommand)
+			return { done: { command: k + 1 } };
 		if (opt.kind === "string") return { done: { string: opt.value ?? null } };
 		return { next: k + opt.width };
 	});
@@ -2110,7 +2127,7 @@ const isTrapReset = (word) => !word.dynamic && /^-?$/.test(word.value);
 /** What a deciding positional word of a string wrapper runs. */
 function wrapperPositional(words, k, wrapper, fed) {
 	if (wrapper.onPositional === "stop") return verdict(null);
-	if (wrapper.onPositional === "rest")
+	if (wrapper.onPositional === "rest" || wrapper.onPositional === "lock")
 		return inner(words.slice(k), "bash", words.length, fed);
 	if (wrapper.onPositional === "first" && isTrapReset(words[k]))
 		return verdict(null);
@@ -2135,13 +2152,17 @@ function unknownWrapperOptionReason(words, k, name) {
 function stringWrapperReason(words, from, name, ctx) {
 	const wrapper = STRING_WRAPPERS[name];
 	let end = readWrapperOptions(words, from, name);
-	// sg: the first positional is the group, the second the command string.
-	if (wrapper.onPositional === "second" && end.positional !== undefined)
+	// sg: the first positional is the group, the second the command string;
+	// flock: the first is the lock, the command words follow.
+	const twoPositionals = ["second", "lock"].includes(wrapper.onPositional);
+	if (twoPositionals && end.positional !== undefined)
 		end = readWrapperOptions(words, end.positional + 1, name);
 	if (end.unknown !== undefined)
 		return verdict(unknownWrapperOptionReason(words, end.unknown, name));
 	if (end.string !== undefined)
 		return inner(end.string ? [end.string] : [], "bash", 0, ctx.fed);
+	if (end.command < words.length)
+		return inner(words.slice(end.command), "bash", words.length, ctx.fed);
 	if (end.positional === undefined) return verdict(shellFromStdin(name, ctx));
 	return wrapperPositional(words, end.positional, wrapper, ctx.fed);
 }
@@ -2323,7 +2344,7 @@ function runCommandReason(word, runner) {
 	if (isComputed(word)) return broken(`${runner} runs a computed command`);
 	if (/\s/.test(word.value)) return analyzeCommand(word.value, "bash");
 	const name = commandName(word.value);
-	if (!RUN_TARGETS.has(name) && !name.startsWith("git-")) return null;
+	if (!RUN_TARGETS.has(name) && !isGitDashName(name)) return null;
 	return broken(`${runner} supplies the arguments of ${name} at run time`);
 }
 
@@ -2346,6 +2367,11 @@ function runnerReason(words, from, runner) {
 }
 
 const GIT_OR_GH = new Set(["git", "gh"]);
+
+/** A `git-<name>` program: `<name>` is a plain word, so a file name such as
+    `git-context.mjs` is not one (D4 rev. 2, D5 rev. 4). */
+const isGitDashName = (name) =>
+	name.startsWith("git-") && PLAIN_WORD.test(name.slice("git-".length));
 
 /** Does `text`, parsed as a command, contain a git or gh word? */
 function mentionsGitOrGh(text) {
@@ -2413,7 +2439,7 @@ function specialWordReason(segment, i, mode) {
 function commandCheck(name, mode) {
 	if (name === "git")
 		return (words, i) => gitInvocationReason(words, i + 1, mode);
-	if (name.startsWith("git-"))
+	if (isGitDashName(name))
 		return (words, i) => gitDashReason(name, words, i + 1);
 	if (name === "gh") return (words, i) => ghInvocationReason(words, i + 1);
 	if (RUNNERS.has(name)) return (words, i) => runnerReason(words, i + 1, name);
@@ -2435,7 +2461,6 @@ function wordReason(segment, i, mode, seen) {
 	return wrapperReason(segment, i, name, mode);
 }
 
-/** Position-independent: any `git`/`gh`/wrapper word in a segment is checked (D5). */
 /** PowerShell `Start-Process` running git or gh reads its arguments from
     `-ArgumentList`; anywhere but straight after the command word, the hook cannot
     pair them with it, so it asks broken (D5 rev. 3). */
@@ -2445,28 +2470,46 @@ function psLaunchedGitReason(segment, mode) {
 	if (!PS_LAUNCHERS.has(commandName(words[0]?.value ?? ""))) return null;
 	const run = runPosition(segment, mode).index;
 	const name = commandName(words[run]?.value ?? "");
-	if (!GIT_OR_GH.has(name) && !name.startsWith("git-")) return null;
+	if (!isGitOrGhName(name)) return null;
 	const argList = words.findIndex((w) => PS_ARGUMENT_LIST.test(w.value));
 	if (argList === -1 || argList === run + 1) return null;
 	return broken(`Start-Process passes -ArgumentList apart from ${name}`);
 }
 
+/** Position-independent: any `git`/`gh`/wrapper word in a segment is checked (D5). */
 function segmentReason(segment, mode) {
 	if (segment.broken) return segment.broken;
 	const seen = { find: false };
+	// Word spans a wrapper analysed as its command: the safety net already ran
+	// on them inside (D5 rev. 4).
+	const analysed = [];
 	let firstBroken = psLaunchedGitReason(segment, mode);
 	for (let i = 0; i < segment.words.length; i++) {
 		const { reason, covered } = wordReason(segment, i, mode, seen);
 		if (isOutward(reason)) return reason;
 		firstBroken ??= reason;
+		if (covered > 0) analysed.push([i + 1, i + covered]);
 		i += covered;
 	}
-	const cmd = segment.words[commandWordIndex(segment, mode)];
-	if (cmd?.dynamic)
+	const cmd = computedCommandWord(segment, mode);
+	if (cmd)
 		firstBroken ??= broken(
 			`command word ${JSON.stringify(cmd.value)} is computed at run time`,
 		);
-	return firstBroken ?? unplacedGitWordReason(segment, mode);
+	return firstBroken ?? unplacedGitWordReason(segment, mode, analysed);
+}
+
+/** The computed word a segment runs, if any: its command word, or the D12 run
+    position past keywords and launchers (D5 rev. 4). PowerShell runs a computed
+    word there only through a launcher. */
+function computedCommandWord(segment, mode) {
+	const { words } = segment;
+	const cmd = words[commandWordIndex(segment, mode)];
+	if (cmd?.dynamic) return cmd;
+	const run = runPosition(segment, mode);
+	if (mode === "ps" && run.launchers.length === 0) return undefined;
+	const word = words[run.index];
+	return word?.dynamic ? word : undefined;
 }
 
 // Commands that never execute their arguments: a git or gh word is safe as
@@ -2509,27 +2552,37 @@ const SAFE_OPERAND_COMMANDS = new Set([
 	"wc",
 ]);
 
-const isGitOrGhName = (name) => GIT_OR_GH.has(name) || name.startsWith("git-");
+const isGitOrGhName = (name) => GIT_OR_GH.has(name) || isGitDashName(name);
 
-/** Safety net (D5 rev. 3): in a segment the hook otherwise gives no opinion on,
-    a git or gh word must be the command being run, an argument after a git/gh
-    command being run, or an operand of a command that never runs its
-    arguments. Anywhere else, what runs it is unknown, so it asks broken. */
-function unplacedGitWordReason(segment, mode) {
+/** Safety net (D5 rev. 3, rev. 4): in a segment the hook otherwise gives no
+    opinion on, a git or gh word must be the command being run (exactly the run
+    position), an argument after a git/gh command being run, an operand of a
+    command that never runs its arguments, or inside a span a wrapper already
+    analysed as a command. Anywhere else, what runs it is unknown: broken. */
+function unplacedGitWordReason(segment, mode, analysed) {
 	const { words } = segment;
 	const run = runPosition(segment, mode);
 	if (SAFE_OPERAND_COMMANDS.has(commandName(words[run.index]?.value ?? "")))
 		return null;
-	for (let i = 0; i < words.length; i++) {
-		const name = commandName(words[i].value);
-		if (!isGitOrGhName(name) || isComputed(words[i])) continue;
-		// Every later word is this git/gh command's own argument.
-		if (isRunWord(segment, i, mode)) return null;
-		return broken(
-			`${JSON.stringify(words[i].value)} sits where the hook cannot tell what runs it`,
-		);
-	}
-	return null;
+	const inside = analysedWords(words.length, analysed);
+	const i = words.findIndex((w, k) => !inside[k] && isLiteralGitOrGh(w));
+	// At the run position, every later word is this git/gh command's argument.
+	if (i === -1 || i === run.index) return null;
+	return broken(
+		`${JSON.stringify(words[i].value)} sits where the hook cannot tell what runs it`,
+	);
+}
+
+const isLiteralGitOrGh = (word) =>
+	isGitOrGhName(commandName(word.value)) && !isComputed(word);
+
+/** Marks the words inside the analysed spans. The spans are disjoint (the
+    segment scan skips covered words), so marking stays linear. */
+function analysedWords(length, analysed) {
+	const inside = new Uint8Array(length);
+	for (const [from, to] of analysed)
+		inside.fill(1, from, Math.min(to + 1, length));
+	return inside;
 }
 
 // Wrapper and alias re-parsing depth; bounds work on inputs like `eval eval ... x`.

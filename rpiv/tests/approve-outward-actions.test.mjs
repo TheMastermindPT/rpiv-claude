@@ -304,6 +304,47 @@ const DECIDING_REV3 = {
 	outwardPs: ["Start-Process -FilePath:git -ArgumentList:push"],
 };
 
+// Revision-4 cases of B12, B14 and B15.
+const REV4 = {
+	computedRun: [
+		"sudo $GIT $SUB origin main",
+		"command $GIT $SUB origin main",
+		"env $GIT -c include.path=x.cfg p",
+		"if $GIT $SUB origin main; then :; fi",
+	],
+	fedCommandsSilent: [
+		"echo x | flock /tmp/l rg x",
+		"echo x | runuser -u root -- npm test",
+		"ps aux | grep su",
+		"echo x | sudo -s ls",
+	],
+	fedShells: ["runuser -u root -- bash", "flock /tmp/l bash", "sudo su"],
+	placedSilent: [
+		"watch git status",
+		"watch -n 2 git status",
+		"eval git status",
+		"flock /tmp/l git fetch",
+		"runuser -u root -- git status",
+		"sed -n 1,20p skills/_shared/git-context.mjs",
+		"node scripts/git-hooks.mjs",
+	],
+	placedSilentPs: [
+		"$b = git branch --show-current",
+		"$prs = gh pr list",
+		"$null = git fetch",
+		"[string]$b = git branch",
+		"foreach ($f in git ls-files) { $f }",
+	],
+	unplaced: [
+		"env -a x npm exec gh",
+		"env --frobnicate mytool git",
+		"doas -a x mytool git",
+		"sudo --no-update mytool git",
+		"bash -c 'mytool git'",
+		"mytool git-status",
+	],
+};
+
 describe("approve-outward-actions hook", () => {
 	it(
 		"asks before any git push",
@@ -1167,6 +1208,9 @@ describe("approve-outward-actions hook", () => {
 			expectAsks(DECIDING_REV3.broken, BROKEN);
 			expectAsks(DECIDING_REV3.brokenPs, BROKEN, psEvent);
 			expectAsks(DECIDING_REV3.outwardPs, `${OUTWARD}git push`, psEvent);
+			// Revision 4: a computed word at the launcher-aware run position.
+			expectAsks(REV4.computedRun, BROKEN);
+			expectAsks(["Start-Process $GIT push"], BROKEN, psEvent);
 		},
 		TEST_TIMEOUT,
 	);
@@ -1357,6 +1401,9 @@ describe("approve-outward-actions hook", () => {
 				BROKEN,
 			);
 			expectSilent(["su root", "sudo -i"]);
+			// Revision 4: flock / runuser -- run their command words.
+			expectSilent(REV4.fedCommandsSilent);
+			expectAsks(REV4.fedShells.map(piped), BROKEN);
 		},
 		TEST_TIMEOUT,
 	);
@@ -1390,6 +1437,17 @@ describe("approve-outward-actions hook", () => {
 				"sudo git",
 			]);
 			expectSilent(["Get-Command git", "Write-Host gh"], psEvent);
+			// Revision 4: exact run position, wrapper-analysed words, PowerShell
+			// assignments, `git-<name>` as a plain program name.
+			expectSilent(REV4.placedSilent);
+			expectSilent(REV4.placedSilentPs, psEvent);
+			expectAsks(REV4.unplaced, BROKEN);
+			expectAsks(["iex 'Invoke-Thing git'"], BROKEN, psEvent);
+			expectAsks(
+				["rg git push", "flock /tmp/l git push"],
+				`${OUTWARD}git push`,
+			);
+			expectAsks(["$b = git push"], `${OUTWARD}git push`, psEvent);
 		},
 		TEST_TIMEOUT,
 	);
