@@ -24,7 +24,7 @@ Read the input, its referenced normative sections, relevant project guidance, an
 
 ## 1. Verify and Prepare
 
-On start and resume, verify managed RPIV artifacts' recorded `content_hash` with `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <absolute-artifact-path> --root <repository-path>` without `--stamp`. Verify ordinary guidance and pinned approved normative sections separately using the shared contract-identity rules, without requiring artifact frontmatter on every referenced document; append-only evidence is not part of those sections. A missing required pin or mismatch needs reconciliation and renewed approval, not a silent re-stamp.
+On start and resume, verify managed RPIV artifacts' recorded `content_hash` with `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <absolute-artifact-path> --root <repository-path>` without `--stamp`. Verify referenced plain documents by their hash and run the shared append-only check against the approved copy, without requiring artifact frontmatter on every referenced document; appended evidence and progress do not reopen approval. A failed check, a missing approved copy, or a mismatch needs reconciliation and renewed approval, not a silent re-stamp.
 
 Reconcile the actual candidate, accepted predecessor, reviews, and evidence before selecting work. Existing checkmarks are claims to verify, not proof. Preserve the artifact status vocabulary `in-progress`, `in-review`, `ready`; document readiness is separate from slice acceptance and scope completion.
 
@@ -58,7 +58,7 @@ Present the exact candidate revision, contract identity, changed scope, red/gree
 
 Stop until the human accepts the exact candidate revision. Edits after that checkpoint invalidate acceptance for the changed revision and require new tests, reviews, and acceptance. Only then may an authorized next slice start from this accepted predecessor via the shared setup. A request for one slice ends here even when more work is pending.
 
-Update only evidence-backed progress for this slice. Keep pending, deferred, and blocked scope visible; the active slice being done never marks the whole scope complete. When evidence or progress changes a document body, verify its approved normative sections are unchanged before finalizing its new `content_hash` with the artifact validator's `--finalizing --stamp`; retain the prior identity in the append-only audit trail. Contract edits belong to revise and require renewed approval.
+Update only evidence-backed progress for this slice. Keep pending, deferred, and blocked scope visible; the active slice being done never marks the whole scope complete. When evidence or progress changes a document body, run the shared append-only check against the approved copy before finalizing its new `content_hash` with the artifact validator's `--finalizing --stamp`; retain the prior identity in the append-only audit trail. Contract edits belong to revise and require renewed approval.
 
 ## 5. Integration and Close
 

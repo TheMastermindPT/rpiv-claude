@@ -23,7 +23,7 @@ node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/skill-context.mjs" now
 
 ## 1. Reconcile the Current State
 
-Read the target, its referenced normative sections, decisions, and evidence. On start and resume, verify every referenced document's `content_hash` with `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <absolute-artifact-path> --root <repository-path>` without `--stamp`. Verify approved normative sections separately through the shared contract identity. A mismatch or missing approval pin requires reconciliation before editing; do not silently replace the approved identity.
+Read the target, its referenced normative sections, decisions, and evidence. On start and resume, verify every referenced document's `content_hash` with `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <absolute-artifact-path> --root <repository-path>` without `--stamp`. Run the shared append-only check against the approved copy. A mismatch, a failed check, or a missing approved copy requires reconciliation before editing; do not silently replace the approved identity.
 
 Separate accepted slices, the active candidate, pending slices, and deferred intent. Verify claimed completion from actual candidate and review evidence; old checkmarks are not proof. Preserve the original integration target and exact accepted predecessor relationships. Research only the code or decision uncertainty needed for this revision.
 
@@ -53,8 +53,8 @@ Update `last_updated`, `last_updated_by`, and a concise `last_updated_note` wher
 
 ## 4. Review and Resume
 
-Dispatch independent read-only intent review with `mode=intent` and the exact input fields in the shared workflow. Freeze and verify the revised contract identity, including the actual approved normative sections and referenced document hashes, excluding append-only evidence. Resolve findings and repeat review after edits. Capture human approval of the exact revised contract, not merely permission to edit the document.
+Dispatch independent read-only intent review with `mode=intent` and the exact input fields in the shared workflow. Freeze and verify the revised contract identity: the revised document's body hash and the referenced document hashes. Resolve findings and repeat review after edits. Capture human approval of the exact revised contract, not merely permission to edit the document, and save its approved copy per the shared workflow.
 
-Before finalizing a revised artifact, use `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <absolute-artifact-path> --root <repository-path> --finalizing --stamp` after reconciling the old identity and preserving history. Verify the new `content_hash` without `--stamp`. This document hash is not a candidate approval and cannot replace the shared approved-contract pin.
+Before finalizing a revised artifact, use `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <absolute-artifact-path> --root <repository-path> --finalizing --stamp` after reconciling the old identity and preserving history. Verify the new `content_hash` without `--stamp`. This document hash is not a candidate approval and does not replace the human approval of the revised contract.
 
 Report the artifact path, changed intent IDs, active slice, deferred work, invalidated proof, and approval state. Resume only the authorized active slice through the shared loop after contract approval; then require observed expected red, minimal green, separate independent review/refactor, and human acceptance. The next slice, integration consent, and final combined validation remain separate checkpoints.

@@ -63,8 +63,9 @@ describe("candidate execution instructions", () => {
 			const source = read(`${name}/SKILL.md`);
 			expect(source).toMatch(/on (?:start and )?resume/i);
 			expect(source).toContain("content_hash");
-			expect(source).toMatch(/normative.*sections/i);
 			expect(source).toMatch(/validate-artifact\.mjs/);
+			expect(source).toMatch(/append-only check/i);
+			expect(source).toMatch(/approved copy/i);
 		},
 	);
 
