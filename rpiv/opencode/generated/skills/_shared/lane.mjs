@@ -7,7 +7,7 @@
 // Importable-only: no CLI, no isMain.
 // Importable: DEFAULT_LANE_THRESHOLDS, classifyLane, loadLaneThresholds, mergeLane.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
 	isCiConfig,
@@ -29,6 +29,8 @@ const LANES = ["fast", "normal", "rigorous"];
 const higher = (a, b) => (LANES.indexOf(a) >= LANES.indexOf(b) ? a : b);
 
 const CONFIG_FILE = ".rpiv-lanes.json";
+/** A path with `\` read as `/` (Windows paths). */
+const slashed = (p) => p.replace(/\\/g, "/");
 const isPlainObject = (v) =>
 	typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -41,7 +43,8 @@ const isCounted = (f) =>
     toward the rigorous file limit (developer choice, D16). An unknown measure does
     not block fast; it is reported as a diagnostic instead. */
 const sizeFindings = ({ files, slices }, { fast, rigorous }, diagnostics) => {
-	const sized = files.filter((f) => !isTest(f.path) && !isFixture(f.path));
+	const isSupport = (p) => isTest(slashed(p)) || isFixture(slashed(p));
+	const sized = files.filter((f) => !isSupport(f.path));
 	const findings = [];
 	if (slices === undefined) diagnostics.push("slices unknown");
 	else if (slices > fast.maxSlices)
@@ -71,8 +74,6 @@ const RIGOROUS_KINDS = [
 ];
 // Words with known false positives (design tokens, schema definitions): normal only.
 const WEAK_WORDS = new Set(["token", "schema"]);
-
-const slashed = (p) => p.replace(/\\/g, "/");
 
 /** Sensitive-signal rules (FR3), per file in input order. A manifest only blocks
     fast ("possible new dependency", developer choice, D16). */
@@ -125,9 +126,26 @@ const assertInput = (input) => {
 	check(optional(hubs, isStringList), "hubs must be an array of strings");
 };
 
+/** Throws a TypeError naming the bad key unless every threshold is a
+    non-negative integer (S4 revision 1; precedent 09be34d, a NaN threshold). */
+const assertThresholds = (thresholds) => {
+	check(isPlainObject(thresholds), "thresholds must be an object");
+	for (const [group, keys] of Object.entries(DEFAULT_LANE_THRESHOLDS)) {
+		const value = thresholds[group];
+		check(isPlainObject(value), `thresholds.${group} must be an object`);
+		for (const key of Object.keys(keys)) {
+			check(
+				isCount(value[key]),
+				`thresholds.${group}.${key} must be a non-negative integer`,
+			);
+		}
+	}
+};
+
 /** The lane of a change (D16): `{ lane, reasons, diagnostics }`. */
 export const classifyLane = (input, thresholds = DEFAULT_LANE_THRESHOLDS) => {
 	assertInput(input);
+	assertThresholds(thresholds);
 	const diagnostics = [];
 	let lane;
 	let reasons;
@@ -184,6 +202,12 @@ const configProblem = (config) => {
     `<repoRoot>/.rpiv-lanes.json` (D9). A broken file yields the defaults plus a
     `broken` detail, which classifyLane reports and acts on. */
 export const loadLaneThresholds = (repoRoot) => {
+	// A wrong root is a caller bug, not a missing file (S4 revision 1).
+	check(
+		typeof repoRoot === "string" &&
+			statSync(repoRoot, { throwIfNoEntry: false })?.isDirectory(),
+		`repoRoot must name an existing directory: ${String(repoRoot)}`,
+	);
 	const defaults = structuredClone(DEFAULT_LANE_THRESHOLDS);
 	let text;
 	try {

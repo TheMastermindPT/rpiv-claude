@@ -160,6 +160,15 @@ describe("lane classifier (S4)", () => {
 				.soft(classifyLane({ files, slices: 1, hubs: [] }).diagnostics)
 				.toEqual(["lines unknown"]);
 		}
+		// S4 revision 1: backslash test and fixture paths stay out of the fast limits.
+		for (const path of [
+			"tests\\fixtures\\big.json",
+			"src\\test\\resources\\data.json",
+		]) {
+			expect
+				.soft(classify([file(path, 5000), file("src/a.ts", 1)]).lane, path)
+				.toBe("fast");
+		}
 	});
 
 	it("raises the lane on each sensitive-signal family", () => {
@@ -243,6 +252,39 @@ describe("lane classifier (S4)", () => {
 			lane: "normal",
 			reasons: ["lines: 201 > 150", "manifest: package.json"],
 		});
+
+		// S4 revision 1 pins: reason order across files and kinds, and diagnostics order.
+		const f1 = (path) => ({ path, added: 1, deleted: 0 });
+		expect(classify([f1("src/auth/x.ts"), f1(".env")])).toEqual({
+			lane: "rigorous",
+			reasons: ["sensitive word: auth (src/auth/x.ts)", "env file: .env"],
+		});
+		expect(classify([f1("auth/package.json")])).toEqual({
+			lane: "rigorous",
+			reasons: [
+				"manifest: auth/package.json",
+				"sensitive word: auth (auth/package.json)",
+			],
+		});
+		expect(
+			classify([f1("db/migrations/x.sql")], { hubs: ["db/migrations/x.sql"] })
+				.reasons,
+		).toEqual([
+			"hub: db/migrations/x.sql",
+			"migration: db/migrations/x.sql",
+			"sensitive word: migration (db/migrations/x.sql)",
+		]);
+		const { diagnostics } = classifyLane(
+			{ files: [{ path: "src/a.ts" }] },
+			loadWith("{not json"),
+		);
+		expect(diagnostics).toHaveLength(4);
+		expect(diagnostics[0]).toMatch(/^broken config: \.rpiv-lanes\.json: \S/);
+		expect(diagnostics.slice(1)).toEqual([
+			"slices unknown",
+			"lines unknown",
+			"hub signal unavailable",
+		]);
 	});
 
 	it("loads lane thresholds and flags a broken config", () => {
@@ -283,6 +325,9 @@ describe("lane classifier (S4)", () => {
 				"rigorous.minFile",
 			],
 			[DIRECTORY, "cannot read"],
+			// S4 revision 1 pins.
+			["null", ""],
+			['{"fast":null}', "fast"],
 		];
 		for (const [config, named] of broken) {
 			const { broken: detail, ...thresholds } = loadWith(config);
@@ -290,6 +335,23 @@ describe("lane classifier (S4)", () => {
 			expect.soft(thresholds, label).toEqual(DEFAULT_LANE_THRESHOLDS);
 			expect.soft(typeof detail, label).toBe("string");
 			expect.soft(detail, label).toContain(named);
+		}
+
+		// S4 revision 1: a wrong repository root is a caller bug, not a missing file.
+		const root = mkdtempSync(join(tmpdir(), "rpiv-lanes-"));
+		roots.push(root);
+		writeFileSync(join(root, "plain.txt"), "x");
+		for (const repoRoot of [
+			join(root, "does-not-exist"),
+			join(root, "plain.txt"),
+			undefined,
+		]) {
+			expect
+				.soft(() => loadLaneThresholds(repoRoot), String(repoRoot))
+				.toThrow(TypeError);
+			expect
+				.soft(() => loadLaneThresholds(repoRoot), String(repoRoot))
+				.toThrow("repoRoot");
 		}
 
 		const bad = loadWith("{not json");
@@ -375,11 +437,44 @@ describe("lane classifier (S4)", () => {
 			[{ ...file({}), slices: 0 }, "slices"],
 			[{ ...file({}), hubs: "src/a.ts" }, "hubs"],
 			[{ ...file({}), hubs: [1] }, "hubs"],
+			// S4 revision 1 pins.
+			[{ files: ["a.ts"] }, "files"],
+			[{ files: [null] }, "files"],
+			[{ ...file({}), slices: 1.5 }, "slices"],
 		];
 		for (const [input, field] of malformed) {
 			const label = JSON.stringify(input) ?? "undefined";
 			expect.soft(() => classifyLane(input), label).toThrow(TypeError);
 			expect.soft(() => classifyLane(input), label).toThrow(field);
+		}
+
+		// S4 revision 1 pin: an empty change still reports a broken config.
+		const emptyBroken = classifyLane({ files: [] }, loadWith("{not json"));
+		expect(emptyBroken.lane).toBe("normal");
+		expect(emptyBroken.reasons).toEqual(["no changed files"]);
+		expect(emptyBroken.diagnostics).toHaveLength(2);
+		expect(emptyBroken.diagnostics[0]).toMatch(/^broken config: /);
+		expect(emptyBroken.diagnostics[1]).toBe("no changed files");
+
+		// S4 revision 1: thresholds are validated.
+		const valid = {
+			files: [{ path: "src/a.ts", added: 10000, deleted: 0 }],
+			slices: 1,
+			hubs: [],
+		};
+		const nan = structuredClone(DEFAULT_LANE_THRESHOLDS);
+		nan.fast.maxLines = Number.NaN;
+		for (const [thresholds, named] of [
+			[null, "thresholds"],
+			[{}, "thresholds"],
+			[{ fast: { maxLines: 300 }, rigorous: { minFiles: 61 } }, "thresholds"],
+			[nan, "thresholds.fast.maxLines"],
+		]) {
+			const label = JSON.stringify(thresholds);
+			expect
+				.soft(() => classifyLane(valid, thresholds), label)
+				.toThrow(TypeError);
+			expect.soft(() => classifyLane(valid, thresholds), label).toThrow(named);
 		}
 	});
 });
