@@ -35,7 +35,7 @@ task({
 
 Before merging, validate each response's mode, scope, reviewed identity/contract bindings, outcome, diagnostics, and role output against the supplied packet and shared contract. Candidate files and contract bindings must still match the frozen target after inspection. Missing outcome/identity or malformed output is broken review, not an empty findings list. A changed target invalidates the review.
 
-The parent persists responses and their identities in the existing evidence/artifact location outside the frozen candidate; reviewers return text only. Collect all responses before writing review bookkeeping. If persistence would change a bound artifact, contract, or candidate input, follow the shared invalidation rule rather than silently mutating the reviewed target.
+The parent persists responses and their identities in the existing evidence/artifact location outside the frozen candidate; reviewers return text only. Collect all responses before writing review bookkeeping. After approval, store the review table and its triage in the evidence folder, not as a new section of the approved artifact, which the append-only check would treat as a change. If persistence would change a bound artifact, contract, or candidate input, follow the shared invalidation rule rather than silently mutating the reviewed target.
 
 Each pair member returns `plan-loc | codebase-loc | severity | dimension | finding | recommendation`. Merge confirmed rows into `## Plan Review (<review-step>)`, adding `source` (`code` or `coverage`) and `resolution` (blank until user triage). Keep inspection outcomes/diagnostics above the table, separate from defects. Preserve actual `codebase-loc` values from both sources.
 

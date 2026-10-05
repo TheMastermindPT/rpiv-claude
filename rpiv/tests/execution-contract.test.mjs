@@ -91,6 +91,19 @@ describe("candidate execution instructions", () => {
 		expect(hits).toEqual([]);
 	});
 
+	it("design, plan and the dispatch follow the approved-copy rule", () => {
+		const design = read("design/SKILL.md");
+		expect(design).toMatch(/approved copy/i);
+		for (const name of ["design", "plan"]) {
+			expect(joinWhitespace(read(`${name}/SKILL.md`))).toMatch(
+				/finaliz[^.]*reopens approval/i,
+			);
+		}
+		expect(joinWhitespace(read("_shared/artifact-review-dispatch.md"))).toMatch(
+			/after approval[^.]*evidence folder/i,
+		);
+	});
+
 	it("accepts a short approved input and stops for exact-revision acceptance", () => {
 		const source = read("implement/SKILL.md");
 		expect(source).toMatch(/approved (?:short )?brief/i);

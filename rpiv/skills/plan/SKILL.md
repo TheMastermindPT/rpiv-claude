@@ -93,7 +93,7 @@ Done when required intent reviews pass on the current projection and authoritati
 
 1. Verify links and hashes, behavior-ID coverage, dependency mappings, review evidence, and both phase counts.
 2. Preserve standing-decision ownership upstream. If an explicitly reopened decision is opted into promotion, read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/decision-ledger.md`; promote at its owner only with `scope: standing`, `key`, and `rule`, within authorized scope. Do not duplicate or automatically promote inherited decisions.
-3. Run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <plan-path> --finalizing --stamp`. Fix faults and rerun; retain `content_hash` as the final body identity. Re-record the body hash and re-review any changed intent.
+3. Run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <plan-path> --finalizing --stamp`. Fix faults and rerun; retain `content_hash` as the final body identity. A body change during finalization that the shared append-only check does not allow reopens approval. Re-record the body hash and re-review any changed intent.
 4. Flip `status: in-review` to `status: ready` only after required intent gates and finalization lint pass. Readiness describes reviewed planning intent; build approval and execution gates remain separate.
 5. Present the path, next slice, executable/unresolved counts, review outcome, and deferred scope. Offer user-invoked execution only when they want to build; never imply automatic commits, pushes, or merges.
 

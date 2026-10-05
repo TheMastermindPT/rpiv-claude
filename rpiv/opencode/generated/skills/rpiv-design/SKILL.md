@@ -91,13 +91,13 @@ Stabilize the brief and record its body hash and the referenced contracts' hashe
 3. Present verified findings to the user. Fix gaps or explicitly reopen the affected commitment; then re-record the body hash and rerun affected reviews. A changed contract cannot inherit approval for the old hash.
 4. Apply **States And Evidence**: unavailable, broken, failed, and passed remain distinct. Missing review or a blocker cannot be waived by filling a `resolution` cell. Hold the gate until the required evidence supports it.
 
-Done when the required intent reviews pass on the stabilized brief and the user confirms that intent. Candidate-mode review belongs to the later real source revision.
+Done when the required intent reviews pass on the stabilized brief and the user confirms that intent; on that approval, save its approved copy per the shared workflow. Candidate-mode review belongs to the later real source revision.
 
 ## 5. Finalize And Present
 
 1. Verify canonical references, intent review evidence, and next-slice completeness; keep deferred questions explicit.
 2. For opt-in standing decisions, read `$RPIV_PLUGIN_ROOT/skills/_shared/decision-ledger.md` and apply its promotion protocol only to entries tagged `scope: standing`, `key`, and `rule`, within authorized write scope. Feature-local choices and the shared TDD requirement are not automatic promotions.
-3. Run `node "$RPIV_PLUGIN_ROOT/skills/_shared/validate-artifact.mjs" <design-path> --finalizing --stamp`. Fix reported faults and rerun; a broken gate is not a pass. Preserve the stamped `content_hash` as the final body identity.
+3. Run `node "$RPIV_PLUGIN_ROOT/skills/_shared/validate-artifact.mjs" <design-path> --finalizing --stamp`. Fix reported faults and rerun; a broken gate is not a pass. Preserve the stamped `content_hash` as the final body identity. A body change during finalization that the shared append-only check does not allow reopens approval.
 4. Flip `status: in-review` to `status: ready` only after the required gates pass. If finalization changed reviewed intent, re-record the body hash and re-review before the flip.
 5. Present the path, architectural outcome, next-slice readiness, and deferred scope. `ready` means reviewed design intent, not permission to build or proof of feature completion.
 
