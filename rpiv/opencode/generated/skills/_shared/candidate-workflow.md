@@ -115,6 +115,12 @@ presenting the open findings and the choices; never start a third round unasked.
 The cap never turns unresolved findings or an incomplete inspection into
 acceptance.
 
+Each slice ends as exactly one commit on the feature branch. Observe and log
+each red and green, but do not commit intermediate states. Commit once the
+slice is green; review fixes amend that commit while it is unpushed, which gives
+a new candidate identity whose checks and reviews re-run. Never amend a pushed
+commit. The commit message carries the red and green evidence summary.
+
 ## Candidate Identity
 
 Each review receives the same packet, containing references rather than copied

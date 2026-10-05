@@ -45,6 +45,7 @@ const dispatchPath = new URL(
 	"../skills/_shared/artifact-review-dispatch.md",
 	import.meta.url,
 );
+const implementPath = new URL("../skills/implement/SKILL.md", import.meta.url);
 const workflowTexts = () => {
 	const source = readFileSync(workflow, "utf8");
 	return [source, adaptSupportMarkdown(source)].map(joined);
@@ -86,5 +87,22 @@ describe("lane rules", () => {
 		const dispatch = joined(readFileSync(dispatchPath, "utf8"));
 		expect(dispatch).toMatch(/After 2 fix rounds/i);
 		expect(dispatch).not.toMatch(/no fixed retry cap/i);
+	});
+
+	it("ends each slice as one commit amended only while unpushed", () => {
+		for (const text of workflowTexts()) {
+			for (const rule of [
+				/exactly one commit/i,
+				/do not commit intermediate/i,
+				/amend that commit while it is unpushed/i,
+				/Never amend a pushed commit/i,
+				/commit message carries the red and green evidence/i,
+			]) {
+				expect(text).toMatch(rule);
+			}
+		}
+		expect(joined(readFileSync(implementPath, "utf8"))).toMatch(
+			/exactly one commit/i,
+		);
 	});
 });

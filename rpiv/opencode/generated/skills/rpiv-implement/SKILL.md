@@ -43,7 +43,7 @@ Completion criterion: one approved contract, one identified active slice, and a 
 
 Follow the shared test contract one behavior at a time. An observed failing test must match its **Expected red** reason before the behavior's implementation is edited. Use the agreed public seam and oracle; compile/import errors and unrelated failures do not qualify. If the expected failure cannot be demonstrated, stop and resolve the contract mismatch with the human.
 
-Write the minimal implementation, run the focused test, and record green. Complete this red -> green pair before starting the next behavior. A documented non-behavioral exemption must satisfy the shared contract and actual project rules; existing implementation is not itself an exemption.
+Write the minimal implementation, run the focused test, and record green. Complete this red -> green pair before starting the next behavior. The slice ends as exactly one commit (shared **Lanes**); intermediate red and green states are logged, not committed. A documented non-behavioral exemption must satisfy the shared contract and actual project rules; existing implementation is not itself an exemption.
 
 Keep detailed evidence in a separate append-only record linked from `## TDD Evidence (implement)` in the owning artifact. Identify the slice, contract identity, behavior, test name/path, commands, observed failure and success, and evidence paths. Existing inline evidence stays historical; never rewrite or duplicate it. Record exemptions and their approved reasons. Preserve the chronological link from red through implementation to green; never fabricate historical red.
 
