@@ -7,7 +7,7 @@
 // Importable-only: no CLI, no isMain.
 // Importable: DEFAULT_LANE_THRESHOLDS, classifyLane, loadLaneThresholds, mergeLane.
 
-import { readFileSync, statSync } from "node:fs";
+import { lstatSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
 	isCiConfig,
@@ -130,6 +130,10 @@ const assertInput = (input) => {
     non-negative integer (S4 revision 1; precedent 09be34d, a NaN threshold). */
 const assertThresholds = (thresholds) => {
 	check(isPlainObject(thresholds), "thresholds must be an object");
+	check(
+		optional(thresholds.broken, (b) => typeof b === "string"),
+		"thresholds.broken must be a string",
+	);
 	for (const [group, keys] of Object.entries(DEFAULT_LANE_THRESHOLDS)) {
 		const value = thresholds[group];
 		check(isPlainObject(value), `thresholds.${group} must be an object`);
@@ -209,10 +213,14 @@ export const loadLaneThresholds = (repoRoot) => {
 		`repoRoot must name an existing directory: ${String(repoRoot)}`,
 	);
 	const defaults = structuredClone(DEFAULT_LANE_THRESHOLDS);
+	const configPath = join(repoRoot, CONFIG_FILE);
 	let text;
 	try {
-		text = readFileSync(join(repoRoot, CONFIG_FILE), "utf8");
+		text = readFileSync(configPath, "utf8");
 	} catch (error) {
+		// A link to a missing target exists: broken, not "no file" (S5 carry-over).
+		if (error.code === "ENOENT" && lstatSync(configPath, { throwIfNoEntry: false }))
+			return { ...defaults, broken: "dangling link" };
 		if (error.code === "ENOENT") return defaults;
 		return {
 			...defaults,

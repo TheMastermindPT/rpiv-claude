@@ -2,7 +2,13 @@
 // skills/_shared/lane.mjs (slice S4-classify-core, D16, of
 // .rpiv/artifacts/designs/2026-10-04_19-05-47_risk-lanes-short-cycles.md).
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -476,5 +482,28 @@ describe("lane classifier (S4)", () => {
 				.toThrow(TypeError);
 			expect.soft(() => classifyLane(valid, thresholds), label).toThrow(named);
 		}
+	});
+// S5 B41 (D17): the two S4 carry-overs.
+	it("treats a dangling config link as broken and rejects a non-string broken", () => {
+		const root = mkdtempSync(join(tmpdir(), "rpiv-lanes-"));
+		roots.push(root);
+		// A junction needs no privilege on Windows; Node ignores the type elsewhere.
+		symlinkSync(join(root, "missing"), join(root, CONFIG), "junction");
+		expect.soft(loadLaneThresholds(root)).toEqual({
+			...structuredClone(DEFAULT_LANE_THRESHOLDS),
+			broken: "dangling link",
+		});
+
+		const fastInput = {
+			files: [{ path: "src/a.ts", added: 1, deleted: 0 }],
+			slices: 1,
+			hubs: [],
+		};
+		const withBroken = (broken) => ({ ...DEFAULT_LANE_THRESHOLDS, broken });
+		expect.soft(() => classifyLane(fastInput, withBroken(5))).toThrow(TypeError);
+		expect
+			.soft(() => classifyLane(fastInput, withBroken(5)))
+			.toThrow("thresholds.broken");
+		expect.soft(classifyLane(fastInput, withBroken("x")).lane).toBe("normal");
 	});
 });
