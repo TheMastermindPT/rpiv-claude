@@ -19,8 +19,10 @@ import {
 	isCiConfig,
 	isContainerFile,
 	isEnvFile,
+	isGenerated,
 	isLockfile,
 	isManifest,
+	isMedia,
 	isMigration,
 	sensitiveWords,
 } from "../skills/_shared/source-vocab.mjs";
@@ -235,6 +237,22 @@ const git = (repo, ...args) =>
 
 /** review-range's category and manifest flag for a change to `file` alone. */
 function reviewRangeOf(file) {
+	const { kv, manifest } = reviewRangeRun(file);
+	return `${manifest.shards[0]?.category}/${kv.manifest_changed}`;
+}
+
+/** review-range's shard categories and excluded files for a change to `file` alone. */
+function reviewRangeSplitOf(file) {
+	const { manifest } = reviewRangeRun(file);
+	return {
+		categories: manifest.shards.map((shard) => shard.category),
+		excluded: manifest.excludedFiles,
+	};
+}
+
+/** review-range's header fields and changed-files manifest for a working-tree
+    change to `file` alone (force-added, so vendored paths are committed too). */
+function reviewRangeRun(file) {
 	const repo = mkdtempSync(join(tmpdir(), "rpiv-s3-"));
 	try {
 		git(repo, "init", "-q", "-b", "main");
@@ -243,7 +261,7 @@ function reviewRangeOf(file) {
 		mkdirSync(dirname(join(repo, file)), { recursive: true });
 		writeFileSync(join(repo, file), "v1\n");
 		writeFileSync(join(repo, "README.md"), "x\n");
-		git(repo, "add", ".");
+		git(repo, "add", "-f", ".");
 		git(repo, "commit", "-q", "-m", "init");
 		writeFileSync(join(repo, file), "v2\n");
 		const out = execFileSync("node", [REVIEW_RANGE, "working"], {
@@ -262,7 +280,7 @@ function reviewRangeOf(file) {
 		const manifest = JSON.parse(
 			readFileSync(resolve(repo, kv.changed_files_manifest), "utf8"),
 		);
-		return `${manifest.shards[0]?.category}/${kv.manifest_changed}`;
+		return { kv, manifest };
 	} finally {
 		rmSync(repo, { recursive: true, force: true });
 	}
@@ -395,6 +413,68 @@ describe("path vocabulary (S3)", () => {
 				)
 				.toEqual([]);
 			expect.soft(isContainerFile("compose.override.yml")).toBe(true);
+		},
+		TEST_TIMEOUT,
+	);
+
+	// S5 B35 (D17): review-range's GENERATED_PATH_RE and MEDIA_EXT, moved unchanged.
+	it(
+		"owns the generated and media vocabulary",
+		() => {
+			const generated = [
+				".rpiv/artifacts/designs/x.md",
+				"opencode/generated/skills/a.md",
+				"coverage/lcov.info",
+				"dist/a.js",
+				"pkg/build/out.js",
+				"node_modules/x/index.js",
+				"DIST/a.js",
+			];
+			expect.soft(mismatches(isGenerated, generated, true)).toEqual([]);
+			expect
+				.soft(
+					mismatches(
+						isGenerated,
+						["src/distance.ts", "builder/x.ts", "src/a.ts", "distribution.md"],
+						false,
+					),
+				)
+				.toEqual([]);
+			const media = [
+				..."avif bmp gif ico jpeg jpg mov mp3 mp4 pdf png svg webm webp woff woff2"
+					.split(" ")
+					.map((ext) => `a.${ext}`),
+				"img/A.PNG",
+			];
+			expect.soft(mismatches(isMedia, media, true)).toEqual([]);
+			expect
+				.soft(mismatches(isMedia, ["a.ts", "png", "a.png.ts", "a.tiff"], false))
+				.toEqual([]);
+			// Pins: review-range's exclusions as probed at bef8b72 (s5-brief-probe-rr.txt).
+			for (const file of [
+				"dist/a.js",
+				"DIST/a.js",
+				"pkg/build/out.js",
+				".rpiv/artifacts/x.md",
+				"opencode/generated/a.md",
+				"coverage/lcov.info",
+				"node_modules/x/i.js",
+				"img/logo.png",
+				"fonts/a.WOFF2",
+			]) {
+				expect
+					.soft(reviewRangeSplitOf(file), file)
+					.toEqual({ categories: [], excluded: [file] });
+			}
+			for (const [file, category] of [
+				["src/distance.ts", "source"],
+				["builder/x.ts", "source"],
+				["a.tiff", "other"],
+			]) {
+				expect
+					.soft(reviewRangeSplitOf(file), file)
+					.toEqual({ categories: [category], excluded: [] });
+			}
 		},
 		TEST_TIMEOUT,
 	);

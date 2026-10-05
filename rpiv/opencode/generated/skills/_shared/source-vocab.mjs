@@ -18,7 +18,7 @@
 // Importable-only: no CLI, no isMain.
 // Importable: SOURCE_EXT, CITE_EXT, extOf, isSource, isTest, isFixture, TEST_EXCLUDE_RE,
 // isManifest, isLockfile, isMigration, isCiConfig, isContainerFile, isEnvFile,
-// sensitiveWords.
+// sensitiveWords, isGenerated, isMedia.
 
 /** Extensions that count as reviewable source code (metrics, mutation, semantic). */
 export const SOURCE_EXT = new Set([
@@ -172,3 +172,18 @@ const pathTokens = (p) =>
 /** The sensitive words a path names, sorted and de-duplicated. */
 export const sensitiveWords = (p) =>
 	[...new Set(pathTokens(p).map((t) => SENSITIVE_TOKENS.get(t)).filter(Boolean))].sort();
+
+// Generated/vendored paths and media files (D17 of the risk-lanes design, S5):
+// review-range.mjs's former GENERATED_PATH_RE and MEDIA_EXT, moved unchanged so
+// review-range and the lane CLI drop the same files. metrics.mjs keeps its own,
+// different "generated" rule (D15 note).
+const GENERATED_PATH_RE =
+	/(^|\/)(\.rpiv\/artifacts|opencode\/generated|coverage|dist|build|node_modules)(\/|$)/i;
+const MEDIA_EXT = new Set([
+	"avif", "bmp", "gif", "ico", "jpeg", "jpg", "mov", "mp3",
+	"mp4", "pdf", "png", "svg", "webm", "webp", "woff", "woff2",
+]);
+/** A generated or vendored path (build output, coverage, dependencies, artifacts). */
+export const isGenerated = (p) => GENERATED_PATH_RE.test(p);
+/** A media file (image, video, audio, font, PDF). */
+export const isMedia = (p) => MEDIA_EXT.has(extOf(p));
