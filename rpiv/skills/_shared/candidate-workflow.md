@@ -25,16 +25,20 @@ The contract identity is the `content_hash` of the whole document body, as
 or decision on which the slice depends; a document without `content_hash` is
 identified by the sha256 of its bytes. There is no hash per section.
 
-Whoever records an approval saves the exact approved file as the approved copy,
-`.rpiv/evidence/<artifact-stem>/approved-<content_hash>.md`, named by the body
-hash of the approved text, and names that hash in the approval. A later version
-keeps the approval only when `git diff --no-index <approved copy> <artifact>`
+Whoever records an approval stamps the approved text with
+`validate-artifact.mjs --finalizing --stamp` before saving the exact file as the
+approved copy, `.rpiv/evidence/<artifact-stem>/approved-<content_hash>.md`, so
+its `content_hash` equals the hash in its name; the approval names that hash.
+The latest approved copy of a document governs; earlier copies stay history.
+A later version keeps the approval only when
+`git diff --no-index --ignore-cr-at-eol <approved copy> <artifact>`
 shows nothing but added lines inside `## Developer Context`,
 `## TDD Evidence (implement)` or `## Follow-up`, plus changed `status`,
 `last_updated`, `last_updated_by`, `last_updated_note` and `content_hash`
 frontmatter lines: this is the append-only check.
 Any other change reopens approval. A missing approved copy fails the check; it
-never passes by default.
+never passes by default. Exit 0 or 1 is a result; any other exit or an error
+message is a broken check, never a pass.
 An artifact's `content_hash` alone is not proof of code identity or of unchanged
 external references. Verify both when resuming or dispatching a reviewer.
 
@@ -115,7 +119,9 @@ just to obtain a snapshot without permission.
 
 Freeze writes while reviewers read. Compare the manifest/commit and contract
 hashes before and after review and again before acceptance. A mismatch makes
-the review stale, unless the only contract change passes the append-only check.
+the review stale, unless the candidate identity is unchanged and both the
+reviewed and the current contract version pass the append-only check against
+the same approved copy.
 If a complete identity cannot be captured or reproduced,
 block candidate review rather than report an approximate result as approved.
 
@@ -146,7 +152,9 @@ branch name. Preserve the chain so final validation can inspect the whole change
    coverage reviewers in `candidate` mode, against actual source, tests, and
    evidence. Keep reviewers read-only. Triage findings per the shared dispatch.
    Refactor only in this separate gate; rerun checks and obtain fresh candidate
-   reviews after any source, test, contract, or relevant configuration change.
+   reviews after any source, test, contract, or relevant configuration change;
+   a contract change that keeps reviews valid under the append-only check
+   (**Candidate Identity**) is not such a change.
    Refactor in measured steps. When CodeScene or another Code Health tool is
    available, record a baseline score for each touched file first. Then make one
    small behavior-preserving change at a time; rerun the relevant tests and

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 
 const root = new URL("../skills/", import.meta.url);
 const read = (path) => readFileSync(new URL(path, root), "utf8");
+// "Joined text": every run of whitespace as one space, so wrapped phrases match.
+const joinWhitespace = (text) => text.replace(/\s+/g, " ");
 
 // Prompt regressions: these inspect instructions, not runtime agent compliance.
 describe("candidate execution instructions", () => {
@@ -35,6 +37,31 @@ describe("candidate execution instructions", () => {
 		]) {
 			expect(source).toContain(heading);
 		}
+		const joined = joinWhitespace(source);
+		for (const phrase of [
+			/nothing but added lines/i,
+			/latest approved copy/i,
+			/--ignore-cr-at-eol/,
+			/broken check/i,
+			/candidate identity is unchanged/i,
+			/stamp[^.]*before saving/i,
+		]) {
+			expect(joined).toMatch(phrase);
+		}
+		for (const field of [
+			"status",
+			"last_updated",
+			"last_updated_by",
+			"last_updated_note",
+			"content_hash",
+		]) {
+			expect(joined).toContain(`\`${field}\``);
+		}
+		const slice = source.slice(
+			source.indexOf("## Slice Loop"),
+			source.indexOf("## Integration"),
+		);
+		expect(slice).toMatch(/append-only check/i);
 	});
 
 	it("no skill or agent describes a per-section contract hash", () => {
