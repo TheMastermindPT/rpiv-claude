@@ -69,8 +69,8 @@ Planning-only requests stay document-only. In particular, an invocation of
 `blueprint` is not itself permission to write application code. Ask when build
 authority is missing; offer to stop with the brief rather than manufacture it.
 
-For candidate work, default to a dedicated branch in a linked worktree. Before
-creating it, inspect repository root, current branch, status including untracked
+For candidate work, use the workspace the slice's lane requires (**Lanes**).
+Before creating a branch or worktree, inspect repository root, current branch, status including untracked
 files, existing worktrees, and the intended integration target. Agree the new
 path, branch, and exact starting commit. Verify its parent directory exists and
 the destination is unused. A user may explicitly select another workspace;
@@ -87,6 +87,27 @@ Use isolated test data, appropriate ports, and explicitly permitted effects.
 Do not run destructive migrations, deploy, or access real services merely because
 the code is isolated. A clone does not solve process-level permissions either.
 Commit, push, merge, cherry-pick, and cleanup only when explicitly authorized.
+
+## Lanes
+
+Every slice runs in one lane: `fast`, `normal` or `rigorous`. The active-slice
+brief records it as a `Lane:` line taken from `lane.mjs --paths` when the brief
+is written. Before candidate review, `lane.mjs --range <base>..<candidate>`
+re-checks it on the real diff; a re-check only raises the lane. A missing
+`Lane:` line or a broken lane call means `normal`, never `fast`.
+
+| Step | fast | normal | rigorous |
+| --- | --- | --- | --- |
+| Workspace | branch in the main working tree | linked worktree | linked worktree |
+| Intent review | no | no | yes |
+| slice-verifier | yes | yes | yes |
+| Code/coverage reviewer pair | no | no | yes |
+| Per-slice human acceptance | no | no | yes |
+
+A fast slice falls back to a linked worktree when the main working tree has
+uncommitted changes unrelated to the slice; never stash, move, or commit them.
+Run the deterministic checks (tests, types, lint, and CodeScene where available)
+before dispatching any review agent.
 
 ## Candidate Identity
 

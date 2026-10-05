@@ -38,3 +38,35 @@ describe("candidate workflow authority", () => {
 		}
 	});
 });
+
+// "Joined text": every run of whitespace as one space, so wrapped phrases match.
+const joined = (text) => text.replace(/\s+/g, " ");
+const workflowTexts = () => {
+	const source = readFileSync(workflow, "utf8");
+	return [source, adaptSupportMarkdown(source)].map(joined);
+};
+
+describe("lane rules", () => {
+	it("defines the lanes and what each one runs", () => {
+		for (const text of workflowTexts()) {
+			expect(text).toContain("## Lanes");
+			for (const rule of [
+				/`Lane:` line/,
+				/lane\.mjs --paths/,
+				/lane\.mjs --range/,
+				/only raises the lane/i,
+				/missing `Lane:` line or a broken lane call means `normal`, never `fast`/i,
+				/\| Workspace \| branch in the main working tree \| linked worktree \| linked worktree \|/,
+				/\| Intent review \| no \| no \| yes \|/,
+				/\| slice-verifier \| yes \| yes \| yes \|/,
+				/\| Code\/coverage reviewer pair \| no \| no \| yes \|/,
+				/\| Per-slice human acceptance \| no \| no \| yes \|/,
+				/falls back to a linked worktree when the main working tree has uncommitted changes/i,
+				/never stash/i,
+				/deterministic checks[^.]*before[^.]*review agent/i,
+			]) {
+				expect(text).toMatch(rule);
+			}
+		}
+	});
+});
