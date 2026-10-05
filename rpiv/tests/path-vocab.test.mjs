@@ -368,4 +368,34 @@ describe("path vocabulary (S3)", () => {
 	it("keeps the existing source vocabulary", () => {
 		expect(scriptResult("skills/_shared/source-vocab.test.mjs")).toBe("OK");
 	});
+
+	// S4 B34: the S3 residual test debt (s3-review-2-probe.txt) — pins only.
+	it(
+		"pins the S3 residual vocabulary cases",
+		() => {
+			expect.soft(reviewRangeOf("src/test/resources/pom.xml")).toBe("test/yes");
+			const words = {
+				"lib/crypto/hash.ts": ["crypto"],
+				"db/migration/x.ts": ["migration"],
+				"password.ts": ["password"],
+				"tls/cert.pem": ["cert"],
+				"src/HTTPSession.ts": ["session"],
+				"lib/URLs.ts": [],
+			};
+			for (const [path, want] of Object.entries(words)) {
+				expect.soft(sensitiveWords(path), path).toEqual(want);
+			}
+			expect
+				.soft(
+					mismatches(
+						isEnvFile,
+						[".env.production.sample", ".env.local.template"],
+						false,
+					),
+				)
+				.toEqual([]);
+			expect.soft(isContainerFile("compose.override.yml")).toBe(true);
+		},
+		TEST_TIMEOUT,
+	);
 });
