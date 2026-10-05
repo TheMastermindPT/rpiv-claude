@@ -84,7 +84,7 @@ Done when a reviewer can judge the next slice without reconstructing intent from
 
 ## 4. Review Intent
 
-Stabilize and pin the brief and referenced contracts using **Candidate Identity**; keep evidence outside the pinned content. Set `status: in-review`.
+Stabilize the brief and record its body hash and the referenced contracts' hashes using **Candidate Identity**; later evidence appends are governed by the append-only check. Set `status: in-review`.
 
 1. Dispatch `slice-verifier` with `mode=intent`, the exact `artifact_path` identity, and the next `slice_id`. It reviews commitments, seam/oracle sufficiency, dependencies, and verified upstream facts, not hypothetical implementation correctness.
 2. Dispatch independent `artifact-code-reviewer` and `artifact-coverage-reviewer` agents in parallel on that same intent identity. Read `$RPIV_PLUGIN_ROOT/skills/_shared/artifact-review-dispatch.md` for dispatch and evidence persistence.

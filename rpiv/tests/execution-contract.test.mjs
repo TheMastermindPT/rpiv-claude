@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const root = new URL("../skills/", import.meta.url);
@@ -35,6 +35,31 @@ describe("candidate execution instructions", () => {
 		]) {
 			expect(source).toContain(heading);
 		}
+	});
+
+	it("no skill or agent describes a per-section contract hash", () => {
+		const perSection = [
+			/normative[^.]*hash/i,
+			/\b(?:hash|pin(?:s|ned)?)\b[^.]*normative/i,
+			/section hash/i,
+			/\b(?:approved-contract|approval|required|missing) pin\b/i,
+			/pinned content/i,
+		];
+		const hits = [];
+		for (const dir of ["skills", "agents"]) {
+			const base = new URL(`../${dir}/`, import.meta.url);
+			for (const file of readdirSync(base, { recursive: true })) {
+				const path = file.replaceAll("\\", "/");
+				if (!path.endsWith(".md")) continue;
+				const lines = readFileSync(new URL(path, base), "utf8").split(/\r?\n/);
+				lines.forEach((line, index) => {
+					if (perSection.some((rule) => rule.test(line))) {
+						hits.push(`${dir}/${path}:${index + 1}`);
+					}
+				});
+			}
+		}
+		expect(hits).toEqual([]);
 	});
 
 	it("accepts a short approved input and stops for exact-revision acceptance", () => {

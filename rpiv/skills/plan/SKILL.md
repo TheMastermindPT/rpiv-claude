@@ -80,7 +80,7 @@ A planning-only request can leave build approval pending. Report that honestly; 
 
 ## 4. Review The Projection
 
-Stabilize and pin the plan, authoritative brief, and referenced contracts through **Candidate Identity**. Keep review evidence outside their pinned content and set `status: in-review`.
+Stabilize the plan, authoritative brief, and referenced contracts and record their hashes through **Candidate Identity**; later evidence appends are governed by the append-only check. Set `status: in-review`.
 
 1. Dispatch `slice-verifier` with `mode=intent`, the exact `artifact_path` identity, and each active `slice_id`. Review the projection against the canonical commitments and predecessor constraints.
 2. Dispatch independent `artifact-code-reviewer` and `artifact-coverage-reviewer` agents in parallel on the same stabilized intent. Read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/artifact-review-dispatch.md` for dispatch and persistence.

@@ -21,8 +21,8 @@ last_updated_by: {Author from Metadata}
 - Audit scope: {candidate slice | final combined integrated tree; exact included intent/slice IDs}
 - Review input: `mode=candidate`; `artifact_path`: {path}; `slice_id`: {ID}; `repository_path`: {absolute candidate workspace}; `base_commit`: {exact accepted predecessor base}; `candidate_revision`: {shared immutable revision identity}; `evidence_paths`: {paths}
 - Candidate representation: {explicitly authorized commit plus verified clean state, or complete immutable patch and included file digest manifest as defined by the shared workflow; verification evidence or blocker}
-- Approved contract identity: {pin for the actual approved normative sections, referenced document hashes, and approval record; append-only evidence excluded}
-- Document integrity: {content_hash checks and normative section hash comparisons; any missing pin or mismatch}
+- Approved contract identity: {approved body hash, approved copy path, referenced document hashes, and approval record}
+- Document integrity: {content_hash checks and the append-only check against the approved copy; any missing copy, failed check, or mismatch}
 - Original integration target: {target and recorded base, separate from the accepted predecessor base_commit}
 - Before/after candidate identity: {matching observations or drift diagnostic}
 
