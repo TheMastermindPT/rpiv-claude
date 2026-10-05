@@ -20,9 +20,21 @@ Expected outcomes come from that agreement, not from the candidate's output.
 
 A contract has one authoritative location. Plans reference its path, section,
 behavior IDs, and content hash; reviewers resolve those links before reviewing.
-The contract hash covers the approved normative sections and every referenced
-contract or decision on which the slice depends. Evidence and progress entries
-are separate, so appending a check result does not alter approved intent.
+The contract identity is the `content_hash` of the whole document body, as
+`validate-artifact.mjs` computes it, plus the hash of every referenced contract
+or decision on which the slice depends; a document without `content_hash` is
+identified by the sha256 of its bytes. There is no hash per section.
+
+Whoever records an approval saves the exact approved file as the approved copy,
+`.rpiv/evidence/<artifact-stem>/approved-<content_hash>.md`, named by the body
+hash of the approved text, and names that hash in the approval. A later version
+keeps the approval only when `git diff --no-index <approved copy> <artifact>`
+shows nothing but added lines inside `## Developer Context`,
+`## TDD Evidence (implement)` or `## Follow-up`, plus changed `status`,
+`last_updated`, `last_updated_by`, `last_updated_note` and `content_hash`
+frontmatter lines: this is the append-only check.
+Any other change reopens approval. A missing approved copy fails the check; it
+never passes by default.
 An artifact's `content_hash` alone is not proof of code identity or of unchanged
 external references. Verify both when resuming or dispatching a reviewer.
 
@@ -81,7 +93,8 @@ source. Reuse this schema in `artifact-review-dispatch.md` and the three agents:
 - `workflow_path`: parent-resolved absolute path to this shared workflow in the
   installed plugin. Supply it to every reviewer; an agent prompt does not
   establish its own filesystem location.
-- `artifact_path`: authoritative brief/plan and resolved contract hashes.
+- `artifact_path`: authoritative brief/plan, resolved contract hashes, and the
+  approved copy path.
 - `slice_id`: stable slice ID, or the explicitly scoped brief for intent review.
 - `repository_path`: the actual repository/worktree being inspected.
 - `base_commit`: exact predecessor commit; retain the original integration
@@ -102,7 +115,8 @@ just to obtain a snapshot without permission.
 
 Freeze writes while reviewers read. Compare the manifest/commit and contract
 hashes before and after review and again before acceptance. A mismatch makes
-the review stale. If a complete identity cannot be captured or reproduced,
+the review stale, unless the only contract change passes the append-only check.
+If a complete identity cannot be captured or reproduced,
 block candidate review rather than report an approximate result as approved.
 
 For a subsequent slice, its base is the exact accepted predecessor. If that

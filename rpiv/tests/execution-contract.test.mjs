@@ -14,6 +14,29 @@ describe("candidate execution instructions", () => {
 		expect(read("validate/SKILL.md")).toMatch(/read-only/i);
 	});
 
+	it("defines contract identity as the whole-document hash with an approved copy", () => {
+		const source = read("_shared/candidate-workflow.md");
+		for (const phrase of [
+			/There is no hash per section/,
+			/approved copy/i,
+			/approved-<content_hash>\.md/,
+			/git diff --no-index/,
+			/append-only check/i,
+			/Any other change reopens approval/,
+			/missing approved copy fails/i,
+			/stale(?:,| unless)[^.]*append-only check/i,
+		]) {
+			expect(source).toMatch(phrase);
+		}
+		for (const heading of [
+			"## Developer Context",
+			"## TDD Evidence (implement)",
+			"## Follow-up",
+		]) {
+			expect(source).toContain(heading);
+		}
+	});
+
 	it("accepts a short approved input and stops for exact-revision acceptance", () => {
 		const source = read("implement/SKILL.md");
 		expect(source).toMatch(/approved (?:short )?brief/i);
