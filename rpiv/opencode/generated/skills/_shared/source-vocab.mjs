@@ -10,8 +10,15 @@
 // re-exports them so its consumers (metrics, mutation, semantic, layer-rules)
 // keep their import path.
 //
+// It also owns the RISK vocabulary (D15 of the risk-lanes design, S3): dependency
+// manifests and lockfiles (the union of review-range.mjs's two former regexes),
+// migrations, CI config, container files, env files and sensitive path words —
+// so the lane classifier and review-range read one list instead of copies.
+//
 // Importable-only: no CLI, no isMain.
-// Importable: SOURCE_EXT, CITE_EXT, extOf, isSource, isTest, isFixture, TEST_EXCLUDE_RE.
+// Importable: SOURCE_EXT, CITE_EXT, extOf, isSource, isTest, isFixture, TEST_EXCLUDE_RE,
+// isManifest, isLockfile, isMigration, isCiConfig, isContainerFile, isEnvFile,
+// sensitiveWords.
 
 /** Extensions that count as reviewable source code (metrics, mutation, semantic). */
 export const SOURCE_EXT = new Set([
@@ -70,3 +77,90 @@ export const isFixture = (p) =>
 // Narrower than isTest ON PURPOSE: dependency-cruiser only cruises JS/TS, so the
 // non-JS conventions above would be dead weight in a generated config.
 export const TEST_EXCLUDE_RE = "\\.(test|spec)\\.[a-z]+$|(^|/)__tests__/";
+
+// ---- risk vocabulary (D15, S3) — scaffold, filled behavior by behavior ----------
+
+/** The file name of a path ("a/b/C.txt" → "C.txt"). */
+const baseOf = (p) => p.slice(p.replace(/\\/g, "/").lastIndexOf("/") + 1);
+
+// Dependency manifests and lockfiles: the union of review-range.mjs's MANIFEST_RE
+// (23 alternatives) and its strict subset MANIFEST_BASENAME_RE — no novelties.
+const MANIFEST_NAME_RE =
+	/^(package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|deno\.(json|jsonc|lock)|cargo\.(toml|lock)|go\.(mod|sum)|pyproject\.toml|requirements[^/]*\.txt|poetry\.lock|pipfile(\.lock)?|setup\.(py|cfg)|gemfile(\.lock)?|composer\.(json|lock)|pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|mix\.(exs|lock)|[^/]+\.csproj|packages\.config|paket\.(dependencies|lock))$/i;
+// The lockfile subset of that union.
+const LOCKFILE_NAME_RE =
+	/^(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|deno\.lock|cargo\.lock|go\.sum|poetry\.lock|pipfile\.lock|gemfile\.lock|composer\.lock|mix\.lock|paket\.lock)$/i;
+
+/** True for a dependency manifest or lockfile, in any directory, any case. */
+export const isManifest = (p) => MANIFEST_NAME_RE.test(baseOf(p));
+/** True for a dependency lockfile (a subset of isManifest). */
+export const isLockfile = (p) => LOCKFILE_NAME_RE.test(baseOf(p));
+/** A path with `/` separators, so one rule serves Windows paths too. */
+const slashed = (p) => p.replace(/\\/g, "/");
+
+/** A migration: a `migration(s)` directory or a `.sql` file — identical to
+    review-range.mjs's rule. */
+export const isMigration = (p) =>
+	/(^|\/)migrations?\//i.test(slashed(p)) || extOf(slashed(p)) === "sql";
+
+const CI_PATH_RE =
+	/(^|\/)(\.github\/workflows\/[^/]+\.ya?ml|\.gitlab-ci\.yml|\.circleci\/.+|azure-pipelines\.yml|Jenkinsfile|\.travis\.yml|bitbucket-pipelines\.yml|\.buildkite\/.+)$/;
+/** A CI pipeline definition. */
+export const isCiConfig = (p) => CI_PATH_RE.test(slashed(p));
+
+const CONTAINER_NAME_RE =
+	/^(dockerfile(\..+)?|.+\.dockerfile|containerfile|docker-compose[^/]*\.ya?ml|compose\.ya?ml|\.dockerignore)$/i;
+/** A container build or compose file. */
+export const isContainerFile = (p) => CONTAINER_NAME_RE.test(baseOf(p));
+
+// `.env`, `.env.<x>`, `<x>.env` — except the placeholder templates (developer
+// choice, D15).
+const ENV_NAME_RE = /^(\.env(\..+)?|.+\.env)$/i;
+const ENV_TEMPLATE_RE = /^\.env\.(example|sample|template)$/i;
+/** A real environment file (templates excluded). */
+export const isEnvFile = (p) => {
+	const base = baseOf(p);
+	return ENV_NAME_RE.test(base) && !ENV_TEMPLATE_RE.test(base);
+};
+// Sensitive path words (FR3 + developer additions, D15) and the other spellings
+// each one covers. A token matches a word or form exactly, or its plural (+s/+es)
+// — never a prefix: `author`, `tokenizer`, `schemaless`, `secretary` stay out.
+const SENSITIVE_FORMS = {
+	auth: ["authn", "authz", "authentication", "authorization", "authenticate", "authorize", "oauth"],
+	security: ["secure"],
+	crypto: ["crypt", "cryptography", "encrypt", "encryption", "decrypt"],
+	secret: [],
+	credential: ["creds"],
+	permission: ["perm", "perms"],
+	token: [],
+	payment: [],
+	migration: ["migrate"],
+	schema: [],
+	ipc: [],
+	preload: [],
+	password: ["passwd"],
+	session: [],
+	jwt: [],
+	cert: ["certificate"],
+	ssh: [],
+};
+
+// token -> the sensitive word it names.
+const SENSITIVE_TOKENS = new Map(
+	Object.entries(SENSITIVE_FORMS).flatMap(([word, forms]) =>
+		[word, ...forms].flatMap((form) =>
+			[form, `${form}s`, `${form}es`].map((token) => [token, word]),
+		),
+	),
+);
+
+/** Lower-cased words of a path: split at separators and camelCase boundaries
+    (`authService` → auth, service; `JWTToken` → jwt, token). */
+const pathTokens = (p) =>
+	(p.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+/g) ?? []).map((t) =>
+		t.toLowerCase(),
+	);
+
+/** The sensitive words a path names, sorted and de-duplicated. */
+export const sensitiveWords = (p) =>
+	[...new Set(pathTokens(p).map((t) => SENSITIVE_TOKENS.get(t)).filter(Boolean))].sort();
