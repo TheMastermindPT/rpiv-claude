@@ -429,6 +429,8 @@ describe("path vocabulary (S3)", () => {
 				"pkg/build/out.js",
 				"node_modules/x/index.js",
 				"DIST/a.js",
+				// The directory word at the end of the path (mutation hardening).
+				"pkg/dist",
 			];
 			expect.soft(mismatches(isGenerated, generated, true)).toEqual([]);
 			expect

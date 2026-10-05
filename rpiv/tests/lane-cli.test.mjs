@@ -198,10 +198,13 @@ describe("lane CLI (S5)", () => {
 			put(repo, "src/b.ts", lines(3));
 			git(repo, "add", "src/b.ts");
 			put(repo, "src/c.ts", "x\ny\nz\nw");
+			// An untracked file ending in a newline gets no extra line (mutation hardening).
+			put(repo, "src/d.ts", lines(2));
 			put(repo, "ignored.txt", lines(50));
 			expect.soft(working(repo), "tracked + untracked").toEqual(
-				printed("lane: normal", "reason: lines: 12 > 0", "diagnostic: hub signal unavailable"),
+				printed("lane: normal", "reason: lines: 14 > 0", "diagnostic: hub signal unavailable"),
 			);
+			rmSync(join(repo, "src/d.ts")); // keep the next case at five files
 			put(repo, "data/x.bin", Buffer.from([1, 0, 2]));
 			expect.soft(working(repo), "untracked binary").toEqual(
 				printed("lane: fast", "reason: within fast limits", "diagnostic: lines unknown", "diagnostic: hub signal unavailable"),
