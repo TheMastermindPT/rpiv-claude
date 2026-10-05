@@ -31,7 +31,7 @@ Read the input, its referenced normative sections, relevant project guidance, an
 
 ## 1. Verify and Prepare
 
-On start and resume, verify managed RPIV artifacts' recorded `content_hash` with `node "$RPIV_PLUGIN_ROOT/skills/_shared/validate-artifact.mjs" <absolute-artifact-path> --root <repository-path>` without `--stamp`. Verify referenced plain documents by their hash and run the shared append-only check against the approved copy, without requiring artifact frontmatter on every referenced document; appended evidence and progress do not reopen approval. A failed check, a missing approved copy, or a mismatch needs reconciliation and renewed approval, not a silent re-stamp.
+On start and resume, verify managed RPIV artifacts' recorded `content_hash` with `node "$RPIV_PLUGIN_ROOT/skills/_shared/validate-artifact.mjs" <absolute-artifact-path> --root <repository-path>` without `--stamp`. Verify referenced plain documents by their hash and run the shared append-only check against the approved copy, without requiring artifact frontmatter on every referenced document. A failed check, a missing approved copy, or a mismatch needs reconciliation and renewed approval, not a silent re-stamp.
 
 Reconcile the actual candidate, accepted predecessor, reviews, and evidence before selecting work. Existing checkmarks are claims to verify, not proof. Preserve the artifact status vocabulary `in-progress`, `in-review`, `ready`; document readiness is separate from slice acceptance and scope completion.
 

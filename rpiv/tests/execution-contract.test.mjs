@@ -5,6 +5,7 @@ const root = new URL("../skills/", import.meta.url);
 const read = (path) => readFileSync(new URL(path, root), "utf8");
 // "Joined text": every run of whitespace as one space, so wrapped phrases match.
 const joinWhitespace = (text) => text.replace(/\s+/g, " ");
+const paragraphs = (text) => text.split(/\r?\n\s*\r?\n/);
 
 // Prompt regressions: these inspect instructions, not runtime agent compliance.
 describe("candidate execution instructions", () => {
@@ -118,6 +119,20 @@ describe("candidate execution instructions", () => {
 			expect(source).toMatch(/validate-artifact\.mjs/);
 			expect(source).toMatch(/append-only check/i);
 			expect(source).toMatch(/approved copy/i);
+			const resume = paragraphs(source).find(
+				(paragraph) =>
+					/on (?:start and )?resume/i.test(paragraph) &&
+					paragraph.includes("content_hash"),
+			);
+			expect(resume).toMatch(/append-only check/i);
+			expect(resume).toMatch(/approved copy/i);
+			expect(resume).not.toMatch(/evidence and progress/i);
+			if (name === "validate") {
+				const reviews = paragraphs(source).find((paragraph) =>
+					paragraph.includes("Match every independent review"),
+				);
+				expect(reviews).toMatch(/append-only check/i);
+			}
 		},
 	);
 
