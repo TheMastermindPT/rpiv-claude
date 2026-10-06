@@ -82,6 +82,8 @@ A planning-only request can leave build approval pending. Report that honestly; 
 
 Stabilize the plan, authoritative brief, and referenced contracts and record their hashes through **Candidate Identity**; later evidence appends are governed by the append-only check. Set `status: in-review`.
 
+Plan reads the lane from the brief or design frontmatter (`normal` when absent). Intent review runs only in the rigorous lane (**Lanes** table), the lane plan exists for. In fast and normal, skip steps 1–2 and ask the user to confirm the projection; steps 3–4 still apply.
+
 1. Dispatch `slice-verifier` with `mode=intent`, the exact `artifact_path` identity, and each active `slice_id`. Review the projection against the canonical commitments and predecessor constraints.
 2. Dispatch independent `artifact-code-reviewer` and `artifact-coverage-reviewer` agents in parallel on the same stabilized intent. Read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/artifact-review-dispatch.md` for dispatch and persistence.
 3. Present verified findings for user triage. Fix scheduling faults here; change a contract only at its owner after explicitly reopening it. Re-record the body hash and rerun affected reviews after changes.

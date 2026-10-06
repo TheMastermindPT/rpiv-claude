@@ -12,7 +12,7 @@
 // hubs come only from a graph file (no analysis tool is run). A broken call prints
 // `lane: broken: <detail>` on stderr and exits 2, never a lane.
 //
-// Importable: DEFAULT_LANE_THRESHOLDS, classifyLane, loadLaneThresholds, mergeLane.
+// Importable: DEFAULT_LANE_THRESHOLDS, LANES, classifyLane, loadLaneThresholds, mergeLane.
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { lstatSync, readFileSync, statSync } from "node:fs";
@@ -36,7 +36,8 @@ export const DEFAULT_LANE_THRESHOLDS = Object.freeze({
 	rigorous: Object.freeze({ minFiles: 61 }),
 });
 
-const LANES = ["fast", "normal", "rigorous"];
+/** The lanes, lowest first — the one owner of the list (validate-artifact imports it). */
+export const LANES = Object.freeze(["fast", "normal", "rigorous"]);
 const higher = (a, b) => (LANES.indexOf(a) >= LANES.indexOf(b) ? a : b);
 
 const CONFIG_FILE = ".rpiv-lanes.json";

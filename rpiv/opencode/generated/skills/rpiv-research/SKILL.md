@@ -15,7 +15,7 @@ metadata:
 
 # Research
 
-You are tasked with answering structured research questions by spawning targeted analysis agents and synthesizing their findings into a comprehensive research document. This skill internally dispatches the `scope-tracer` agent to formulate trace-quality research questions, then answers them.
+You are tasked with answering structured research questions by spawning targeted analysis agents and synthesizing their findings into a comprehensive research document. This skill internally dispatches the `scope-tracer` agent to formulate trace-quality research questions, then answers them (except in the fast lane, Step 1.2a).
 
 ## Input
 
@@ -54,6 +54,8 @@ The final artifact feeds design.
    - Use the FRD's `## Recommended Approach` text (1-2 sentences naming the architectural shape) as the topic body for the next sub-step's scope-tracer prompt. The full discover artifact path stays in the input so scope-tracer's "read mentioned files first" rule picks up the file naturally for additional context.
    - Carry the FRD's Open Questions forward verbatim into the research artifact's Open Questions section in Step 4.
    - If the input is plain free-text or includes a non-discover path, skip this sub-step and proceed directly to scope-tracer dispatch with the input as the topic.
+
+2a. **Lane (`$RPIV_PLUGIN_ROOT/skills/_shared/candidate-workflow.md` **Lanes**).** Read the FRD's `lane:`; without an FRD the lane is `normal`. An FRD `lane:` that is not `fast`, `normal` or `rigorous` is broken: read it as `normal` and write `broken FRD lane: <value>` into `lane_reasons:` (Step 4), never silently. In the fast lane, dispatch one `codebase-analyzer` with 2–4 questions you write from the FRD's requirements and Recommended Approach, with no `scope-tracer` and no `precedent-locator`; skip 2b, 3 and the rest of Step 1, wait for it, then continue at Step 3 (the checkpoint still applies). The normal and rigorous lanes run every step below.
 
 2b. **Pre-index the codebase area (context-mode_ctx_index).** Before scope-tracer dispatch, index the codebase area relevant to the research topic into the FTS5 knowledge base. This makes the indexed content available to all downstream agents via `context-mode_ctx_search` — scope-tracer, codebase-analyzer, integration-scanner, and codebase-locator can all query the same index instead of re-reading files from disk. The content hash auto-flags staleness if files change during the session.
    - Derive the target directory from the topic: if the topic mentions a specific module/area (e.g., "auth system", "plugin loader"), index that directory. If the topic is broad, index the top-level `src/` (or equivalent) with a depth cap of 3.
@@ -248,6 +250,7 @@ Findings go into Precedents & Lessons. Otherwise skip and note "git history unav
    - `repository:` ← `repo:` label; `branch:` / `commit:` ← matching labels (already include `no-branch` / `no-commit` fallbacks).
    - `date:` / `last_updated:` ← `<iso>` (first tab-separated field on `now.mjs` line 1, offset verbatim).
    - Author: `author:` from the Metadata block (fallback: `unknown`).
+   - **Confirm the lane.** Run `lane.mjs --paths` over the files the findings name as likely to change: `node "$RPIV_PLUGIN_ROOT/skills/_shared/lane.mjs" --paths <files> --slices <slice estimate>`. The confirmed lane is the higher of the FRD's lane and this result (raise-only; a broken call keeps the FRD's lane, or `normal` without one, and its diagnostic goes into `lane_reasons:`). Write it as `lane:` and `lane_reasons:` (one inline list). If it raises a fast lane, the research is not done: run the skipped steps (Step 1.2b onward) before writing.
 
 2. **Write the research document** — this document is compressed context for a new session. Include everything the planner needs to make architectural decisions without re-researching:
 
@@ -261,6 +264,8 @@ Findings go into Precedents & Lessons. Otherwise skip and note "git history unav
    topic: "{User's Research Topic}"
    tags: [research, codebase, relevant-component-names]
    status: complete
+   lane: {fast | normal | rigorous — the confirmed lane from Step 4.1}
+   lane_reasons: {inline list of the lane reasons}
    last_updated: {Same ISO timestamp as `date:` above}
    last_updated_by: {`author:` from Metadata block}
    ---
@@ -357,6 +362,8 @@ Please review and let me know if you have follow-up questions.
 
 **Next step:** `/rpiv:design .rpiv/artifacts/research/{filename}.md` — shape the lean intent brief and the next slice's contract. Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop (a failed, broken, or missing gate) is pending.
 
+In the fast lane, the next step is `/rpiv:implement .rpiv/artifacts/research/{filename}.md` instead: design is skipped, and implement writes the slice contract and asks once.
+
 Use `/rpiv:plan` only when existing contracts need a separate dependency/scheduling view.
 
 ```
@@ -372,13 +379,13 @@ Use `/rpiv:plan` only when existing contracts need a separate dependency/schedul
 ## Important Notes
 
 - **Analysis only**: This skill answers questions. Question formulation is delegated to the scope-tracer subagent at Step 1.
-- **Single entry point**: Free-text research prompt. Argument substitution is handled by `rpiv-args`; scope-tracer runs in-band before analysis dispatch.
+- **Single entry point**: Free-text research prompt. Argument substitution is handled by `rpiv-args`; scope-tracer runs in-band before analysis dispatch, except in the fast lane (Step 1.2a).
 - **Chained from discover**: when the input includes a path to a `.rpiv/artifacts/discover/*.md` artifact, read it FULLY in Step 1 and translate each Decision into a `Q (discover: <title>) / A: <Chosen>` Developer Context entry. Pass the FRD's `Recommended Approach` text as the scope-tracer topic. Open Questions carry forward verbatim. The `argument-hint` stays free-text-only — discover artifact recognition is by path-mention, not by argument-hint widening.
 - **Grouped dispatch**: Related questions are batched per agent based on file overlap. Default agent: codebase-analyzer. This reduces token waste from redundant file reads and lets agents build cross-question context.
 - **Downstream compatible**: Research documents feed directly into design and plan — the same Code References / Integration Points / Architecture Insights sections they expect.
 - **task-message parsing**: scope-tracer emits Discovery Summary + numbered Questions inline in its final assistant message; parse the agent's final-message text (no file write).
 - **Critical ordering**: Follow the numbered steps exactly
-  - ALWAYS dispatch scope-tracer first (Step 1)
+  - ALWAYS dispatch scope-tracer first (Step 1), except in the fast lane (Step 1.2a)
   - ALWAYS analyze question overlap for grouping (Step 1)
   - ALWAYS wait for all agents to complete (Step 2)
   - ALWAYS run developer checkpoint before writing (Step 3)

@@ -25,6 +25,8 @@ Another skill may start this skill as its next step (its `**Next step:**` line);
 
 `$ARGUMENTS` accepts an approved short brief, design, slice, or plan, with an optional phase or slice selector. A full plan and a prior chained design are not prerequisites. Ask for the intended input when it is absent or ambiguous; agree and record its short behavioral contract through the shared workflow before source edits.
 
+A fast-lane research artifact (its `lane: fast`) arrives without a design. In the fast lane, write the slice's short brief with its contract (behaviors, seam, oracle, Expected red) as a design artifact under `.rpiv/artifacts/designs/` with `lane: fast` and the research as `parent`. In the fast lane, ask the developer to approve the behaviors and authorize the build in one question; save the approved copy on approval. That one question also covers creating the branch (name and starting commit); the approval hook still confirms the command itself. The rule that the human approves behavior before production code still holds.
+
 A named phase limits the work; it does not waive the one-slice loop if it contains several slices. With no selector, agree the next pending real slice. Later detail stays under `Deferred Work` until its turn. Never interpret an omitted selector as authorization to execute the whole backlog.
 
 Read the input, its referenced normative sections, relevant project guidance, and the current source. Historical implementation fences in shipped plans are historical proposals, not code truth. Resolve disagreements against approved intent and observed behavior; route changed intent or contracts through revise, not through silent implementation changes.

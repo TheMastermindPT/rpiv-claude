@@ -15,6 +15,8 @@ Read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/candidate-workflow.md` before proceed
 
 Design is document-only. Approval here approves architectural intent, not source writes, candidate acceptance, or integration.
 
+The fast lane skips design: research hands off to implement, which writes the slice contract and asks once.
+
 ## Metadata
 
 ```!
@@ -46,7 +48,7 @@ Done when the next slice has no unresolved material ambiguity; the rest is an ho
 
 ## 3. Write The Lean Brief
 
-Create the artifact with `status: in-progress`. Include `date`, `author`, `commit`, `branch`, `repository`, `topic`, `tags`, `last_updated`, and `last_updated_by`. Set `parent` only to an actual upstream artifact; omit it for direct user input. List other sources in References.
+Create the artifact with `status: in-progress`. Include `date`, `author`, `commit`, `branch`, `repository`, `topic`, `tags`, `last_updated`, and `last_updated_by`. Set `parent` only to an actual upstream artifact; omit it for direct user input. Write `lane:` and `lane_reasons:` inherited from the research or FRD (raise-only; with no upstream lane, write `lane: normal` with `lane_reasons: ["no upstream lane"]`), and raise them when the design reveals a sensitive area or more slices; the next slice's `Lane:` line follows **Lanes**. List other sources in References.
 
 Use these sections, keeping each fact in one authoritative place:
 
@@ -75,6 +77,8 @@ Done when a reviewer can judge the next slice without reconstructing intent from
 ## 4. Review Intent
 
 Stabilize the brief and record its body hash and the referenced contracts' hashes using **Candidate Identity**; later evidence appends are governed by the append-only check. Set `status: in-review`.
+
+Intent review runs only in the rigorous lane (**Lanes** table). In fast and normal, skip steps 1–2: present the stabilized brief, and on the user's confirmation of intent save its approved copy; steps 3–4 still govern any finding the user raises.
 
 1. Dispatch `slice-verifier` with `mode=intent`, the exact `artifact_path` identity, and the next `slice_id`. It reviews commitments, seam/oracle sufficiency, dependencies, and verified upstream facts, not hypothetical implementation correctness.
 2. Dispatch independent `artifact-code-reviewer` and `artifact-coverage-reviewer` agents in parallel on that same intent identity. Read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/artifact-review-dispatch.md` for dispatch and evidence persistence.

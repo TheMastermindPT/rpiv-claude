@@ -9,6 +9,8 @@ tags: [intent, frd, relevant-component-names]
 status: complete
 register: {plain | mixed | technical — the developer's fluency level the interview adapted to}
 consensus: {confirmed | partial — confirmed once the teach-back is accepted; partial if residual uncertainty was deferred}
+lane: {fast | normal | rigorous — the Step 3.5 estimate, raised by the interview; only ever raised later}
+lane_reasons: {inline list of the lane reasons, e.g. ["files: 7 > 5"]}
 last_updated: {Same ISO timestamp as `date:` above}
 last_updated_by: {`author:` from Metadata block}
 ---

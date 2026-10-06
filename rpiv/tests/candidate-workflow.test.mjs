@@ -52,7 +52,7 @@ describe("lane rules", () => {
 				/lane\.mjs --paths/,
 				/lane\.mjs --range/,
 				/only raises the lane/i,
-				/missing `Lane:` line or a broken lane call means `normal`, never `fast`/i,
+				/missing `Lane:` line, a missing feature lane, or a broken lane call means `normal`, never `fast`/i,
 				/\| Workspace \| branch in the main working tree \| linked worktree \| linked worktree \|/,
 				/\| Intent review \| no \| no \| yes \|/,
 				/\| slice-verifier \| yes \| yes \| yes \|/,

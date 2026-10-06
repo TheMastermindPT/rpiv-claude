@@ -35,7 +35,9 @@ A later version keeps the approval only when
 shows nothing but added lines inside `## Developer Context`,
 `## TDD Evidence (implement)` or `## Follow-up`, plus changed `status`,
 `last_updated`, `last_updated_by`, `last_updated_note` and `content_hash`
-frontmatter lines: this is the append-only check.
+frontmatter lines, and changed `lane` and `lane_reasons` lines that raise the
+lane with a `## Developer Context` entry recording the raise: this is the
+append-only check.
 Any other change reopens approval. A missing approved copy fails the check; it
 never passes by default. Exit 0 or 1 is a result; any other exit or an error
 message is a broken check, never a pass.
@@ -89,15 +91,26 @@ Do not run destructive migrations, deploy, or access real services merely becaus
 the code is isolated. A clone does not solve process-level permissions either.
 Commit, push, merge, cherry-pick, and cleanup only when explicitly authorized.
 
+Ask via `ask_user_question` before creating a branch or worktree or making a
+GitHub write, showing what will be created or sent. The approval hook then
+shows a second confirmation for the command itself; that one is enforced, so
+never try to avoid it (any bypass would make the hook trust the agent).
+
 ## Lanes
 
-Every slice runs in one lane: `fast`, `normal` or `rigorous`. The active-slice
-brief records it as a `Lane:` line taken from `lane.mjs --paths` when the brief
-is written. Before candidate review, `lane.mjs --range <base>..<candidate>`
+Every slice runs in one lane: `fast`, `normal` or `rigorous`. A feature's lane
+lives in the frontmatter of its discover, research and design artifacts as
+`lane:` with `lane_reasons:` (the classifier's reasons as one inline list);
+discover estimates it, research confirms it with `lane.mjs --paths`, design
+carries it, and each step only raises it. The active-slice brief records a
+`Lane:` line when the brief is written: the higher of the feature lane and
+`lane.mjs --paths` over the slice's planned files, so a slice never runs below
+its feature. Before candidate review, `lane.mjs --range <base>..<candidate>`
 re-checks it on the real diff; a re-check only raises the lane. Run the helper
-as `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/lane.mjs"`. A missing
-`Lane:` line or a broken lane call means `normal`, never `fast`; a broken call
-never lowers a recorded lane, and its `lane: broken:` diagnostic is kept.
+as `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/lane.mjs"`. A missing `Lane:`
+line, a missing feature lane, or a broken lane call means `normal`, never
+`fast`; a broken call never lowers a recorded lane, and its `lane: broken:`
+diagnostic is kept.
 A raise is recorded as an appended `## Developer Context` entry (the approved
 `Lane:` line stays); the remaining steps follow the raised lane, and steps the
 raised lane needed earlier (a linked worktree, intent review) are re-run or

@@ -12,6 +12,8 @@
 //
 // Checks (all ERRORS):
 //   - missing a required frontmatter field
+//   - a `lane` that is not fast, normal or rigorous, a lane without non-empty `lane_reasons`,
+//     or `lane_reasons` without a lane (no lane fields at all is valid)
 //   - `status: ready` but body still holds unfilled `{template tokens}` in prose
 //   - TODO / TBD / FIXME left in prose
 //   - an empty code fence
@@ -33,6 +35,7 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import { splitFrontmatter } from "./frontmatter.mjs";
 import { isMain } from "./is-main.mjs";
+import { LANES } from "./lane.mjs";
 
 // Universal core — every artifact template's frontmatter carries these.
 const CORE_REQUIRED = ["date", "author", "commit", "branch", "repository", "status"];
@@ -72,6 +75,18 @@ function fencedBlocks(body) {
 	return out;
 }
 
+/** Errors for the `lane` / `lane_reasons` frontmatter pair; absent fields are valid. */
+function laneErrors(fm) {
+	if (!Object.hasOwn(fm, "lane")) {
+		return Object.hasOwn(fm, "lane_reasons") ? ["lane_reasons without lane"] : [];
+	}
+	const lane = fm.lane.trim();
+	const errors = [];
+	if (!LANES.includes(lane)) errors.push(`invalid lane: ${lane} (expected fast, normal or rigorous)`);
+	if (/^(?:\[\s*\])?$/.test((fm.lane_reasons ?? "").trim())) errors.push(`missing lane_reasons for lane: ${lane}`);
+	return errors;
+}
+
 /** Normalized body hash — CRLF and trailing whitespace ignored so formatting churn is not flagged. */
 const bodyHash = (body) => createHash("sha256").update(body.replace(/\r\n/g, "\n").trimEnd()).digest("hex");
 
@@ -87,6 +102,10 @@ export function validateArtifact(artifactPath, root, { verifyHash = true, finali
 	for (const key of required) {
 		if (!fm[key] || fm[key].trim() === "") errors.push(`missing frontmatter field: ${key}`);
 	}
+
+	// 1b. Lane fields (candidate-workflow.md **Lanes**): optional, but when present `lane` is one
+	//     of the three lanes and carries its reasons. No lane at all reads as `normal` downstream.
+	errors.push(...laneErrors(fm));
 
 	// Finalization checks apply when the artifact is already `ready` OR is being flipped to ready
 	// now (--finalizing) — the flip gate must run BEFORE the status Edit, so it cannot rely on the

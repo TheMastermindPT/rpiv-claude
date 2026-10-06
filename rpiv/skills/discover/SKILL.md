@@ -25,7 +25,7 @@ Copy values verbatim — do not reformat the timezone offset.
 
 ## Flow
 
-1. Input → 2. Intent question → 2.5 Register read → 3. Codebase probe → 4. Lazy tree → 5. Interview loop → 5.5 Teach-back consensus → 6. Synthesize FRD → 7. Write artifact (+ optional tracker issue) → 8. Follow-ups
+1. Input → 2. Intent question → 2.5 Register read → 3. Codebase probe → 3.5 Lane estimate → 4. Lazy tree → 5. Interview loop → 5.5 Teach-back consensus → 6. Synthesize FRD → 7. Write artifact (+ optional tracker issue) → 8. Follow-ups
 
 The final artifact is research-compatible — its Decisions block is translated into research's Developer Context and inherited by design. Steps 2.5, the in-loop communication behaviors, and 5.5 are the two-way-understanding layer; they add no agents and never gate the pipeline contract.
 
@@ -139,6 +139,10 @@ Goal: ground the upcoming interview in concrete codebase evidence, with the prob
 
 5. **Empty results are not fatal.** If the probe returns thin/empty results (greenfield, no precedent), record "no codebase precedent" as evidence — `scope` interview questions still work (they don't need `file:line`), and `shape` questions will shift to ungrounded "pick A or B by convention" mode.
 
+### Step 3.5: Lane Estimate
+
+Estimate the feature's lane (`${CLAUDE_PLUGIN_ROOT}/skills/_shared/candidate-workflow.md` **Lanes**) before the interview, since it sets the interview's length, with a `lane.mjs --paths` call: run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/lane.mjs" --paths <files the probe names as likely to change> --slices <your slice estimate>`. A sensitive word in the request itself, as `sensitiveWords` in `source-vocab.mjs` names them (read that module; do not keep your own list), raises the lane to `rigorous`, and its weak words `token` or `schema` alone to `normal`; with no files named, the lane is `normal`. A broken call (`lane: broken:` on stderr) means `normal`, never `fast`; keep its diagnostic in `lane_reasons:`. Record the result as `lane:` and `lane_reasons:` in the FRD frontmatter (Step 6), the reasons as one inline list. The estimate only rises later: when the interview shows a larger scope or a sensitive area, raise the lane and continue the full interview.
+
 ### Step 4: Lazy Tree Setup + Pre-Resolution Confirmation
 
 Synthesize the **next layer** of questions internally before asking anything. Lazy expansion — build only root + immediate children at this stage, not the full tree. Each subsequent layer is built after its parent resolves.
@@ -182,6 +186,7 @@ Walk the lazy tree depth-first, parent before child. Expand the next layer (buil
 4. **Critical rules**:
    - Ask ONE question at a time. Wait for the answer before asking the next.
    - If a new evidence-based node surfaces mid-loop, batch-confirm it the way Step 4 does — never silently auto-record.
+   - **Fast lane.** In the fast lane, ask at most 3 questions in total, the intent question included (the Step 4 batch confirmation counts as one). Ask only what changes the build; record the rest as recommendations accepted by default, with their rationale. Then run a short teach-back (Step 5.5). If you need more questions, the feature is not fast: raise the lane and continue the full interview.
 
 5. **Classify each response**:
    - **Decision** ("yes, that recommendation is right" / "use option B"): Record in Decisions. Resolve the node. Expand its children if any. Continue.
@@ -215,6 +220,8 @@ Once the interview loop terminates (every branch has a Decision or a Deferral), 
 
 4. **Loop on correction, not on silence.** If the developer corrects a point, fold it back (re-running a narrow Step 3 probe or re-asking a dependent node only when the correction warrants it), then re-play only the changed part. Stop when the developer confirms the model matches — that confirmation is the consensus marker (`consensus: confirmed` in frontmatter).
 
+In the fast lane, run a short teach-back: a few lines of the agreed model and your residual uncertainty, in one `ask_user_question` call. It does not count toward the 3 questions, and it is never skipped.
+
 **This is NOT the banned rubber-stamp.** The forbidden question is the contentless "looks good / want to adjust?" at the very end. The teach-back is the opposite: it carries the full restated model, names your own uncertainty, and asks for correction on concrete points. A rubber-stamp proves nothing; a teach-back proves you understood and gives the developer the artifact in language they can check. Never replace the teach-back with "all good?", and never skip it because the feature "seems clear".
 
 ### Step 6: Synthesize FRD Body
@@ -238,7 +245,7 @@ Compile interview output into the FRD. The interview's logical order (problem �
 - **Shared Understanding** — the teach-back outcome from Step 5.5: a short restatement of the agreed model in the developer's words, the points they corrected during teach-back (what changed), and any residual uncertainty they confirmed as acceptable. This section is the consensus proof — it shows both sides agreed, not just that the developer answered questions.
 - **References** — input files, mentioned tickets, related artifacts.
 
-Frontmatter additions for template_version 2: `register:` (`plain` / `mixed` / `technical` — the final level from Step 2.5) and `consensus:` (`confirmed` once the Step 5.5 teach-back is accepted; `partial` if the developer deferred on residual uncertainty).
+Frontmatter additions for template_version 2: `register:` (`plain` / `mixed` / `technical` — the final level from Step 2.5) and `consensus:` (`confirmed` once the Step 5.5 teach-back is accepted; `partial` if the developer deferred on residual uncertainty). Lane fields: `lane:` and `lane_reasons:` from Step 3.5, raised by anything the interview found; `validate-artifact.mjs` rejects a value other than `fast`, `normal` or `rigorous`, and a lane without its reasons.
 
 ### Step 7: Write Artifact, Present, Chain
 
@@ -255,7 +262,7 @@ Frontmatter additions for template_version 2: `register:` (`plain` / `mixed` / `
 
 3. **Offer to publish to the issue tracker.** The FRD stays canonical; the issue is a pointer to it.
    - **Find the tracker** in the repo's own docs (e.g. `docs/agents/issue-tracker.md`, tracker mentions in `CLAUDE.md` / `AGENTS.md` / `CONTRIBUTING.md`) and follow their conventions (repo, labels, title, commands). None documented but `git remote -v` shows a GitHub remote → default to GitHub Issues via `gh`. If Step 1's input was an existing issue, offer to update it instead of creating a duplicate.
-   - **Show, then ask.** Present the exact title and body (Summary, Goals, Acceptance Criteria, the FRD path) and ask via `ask_user_question`: Publish / Edit first / Skip. Never publish without an explicit Publish.
+   - **Show, then ask.** Present the exact title and body (Summary, Goals, Acceptance Criteria, the FRD path) and ask via `ask_user_question`: Publish / Edit first / Skip. Never publish without an explicit Publish. The approval hook then shows a second confirmation for the `gh` command; tell the developer it follows, and never try to avoid it.
    - **On Publish**, run the documented command (default `gh issue create --title … --body-file …`), then Edit `issue: <url>` into the FRD frontmatter — `content_hash` covers the body only, so no re-stamp.
    - **Name the reason it did not publish, one distinct line each:** no tracker found (no docs, no GitHub remote) · `gh` not installed · `gh` not authenticated (`gh auth status` fails) · publish command failed (quote its error) · developer chose Skip. The FRD stays complete; never report an unpublished FRD as published.
 

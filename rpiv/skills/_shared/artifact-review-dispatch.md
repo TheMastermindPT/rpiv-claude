@@ -1,6 +1,6 @@
 # Independent Artifact Review
 
-Before dispatch or triage, read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/candidate-workflow.md`. It owns the common packet, frozen identities, referenced contracts, evidence validity, and readiness/acceptance rules. This file owns only dispatch of the independent code/coverage pair, their merged table, and user triage. The pair runs for slice candidate reviews where the slice's lane requires it (the shared **Lanes** table); intent reviews in design and plan keep their own rule until those skills gain lane rules. Preserve the public agent names and role boundaries.
+Before dispatch or triage, read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/candidate-workflow.md`. It owns the common packet, frozen identities, referenced contracts, evidence validity, and readiness/acceptance rules. This file owns only dispatch of the independent code/coverage pair, their merged table, and user triage. The pair runs for slice candidate reviews where the slice's lane requires it (the shared **Lanes** table); intent reviews in design and plan follow the same table (rigorous only). Preserve the public agent names and role boundaries.
 
 The caller supplies **write-step** (the existing artifact write), **review-step** (the review heading), and **triage-step** (where the user decides findings). Reuse the write-step's resolved artifact path; do not rebuild it from the current directory. Substitute these references below rather than assuming fixed step numbers.
 
