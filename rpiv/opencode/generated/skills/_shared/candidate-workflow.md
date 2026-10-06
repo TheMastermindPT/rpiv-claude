@@ -60,8 +60,9 @@ Keep these three decisions separate and record their exact scope:
 
 - **Build authorization:** permission to implement a specified contract in a
   named workspace, with bounded commands, effects, and continuation scope.
-- **Candidate acceptance:** the human accepts the exact reviewed result as a
-  predecessor for later slices. Passing tests is not this decision.
+- **Candidate acceptance:** the human accepts the exact reviewed result: each
+  slice in the rigorous lane, the combined result in fast and normal
+  (**Lanes**). Passing tests is not this decision.
 - **Integration authorization:** explicit permission to integrate a specified
   accepted candidate into a named target. Candidate acceptance alone grants none.
 
@@ -121,6 +122,13 @@ slice is green; review fixes amend that commit while it is unpushed, which gives
 a new candidate identity whose checks and reviews re-run. Never amend a pushed
 commit. The commit message carries the red and green evidence summary.
 
+In fast and normal, a slice whose gates pass becomes the predecessor for the
+next slice without a human stop, and the developer accepts the combined result
+once before integration. In the rigorous lane, the human accepts each slice.
+Every lane still stops for scope or contract changes, findings left after 2 fix
+rounds, missing authority, and required gates that are failed, broken, or
+unavailable.
+
 ## Candidate Identity
 
 Each review receives the same packet, containing references rather than copied
@@ -169,10 +177,11 @@ branch name. Preserve the chain so final validation can inspect the whole change
 1. Read current source, applicable guidance, approved intent, and predecessor
    evidence. Select the next bounded slice. Resolve its open behavior questions
    and get Build authorization if not already explicitly recorded for this scope.
-2. Run `slice-verifier` in `intent` mode against the proposed contract and real
-   predecessors. It checks feasibility, commitments, dependencies, and atomicity,
-   not implementation correctness. Stabilized briefs also receive the independent
-   reviewer pair through `artifact-review-dispatch.md`, in `intent` mode. Reuse a
+2. In the rigorous lane, run `slice-verifier` in `intent` mode against the
+   proposed contract and real predecessors. It checks feasibility, commitments,
+   dependencies, and atomicity, not implementation correctness. Stabilized briefs
+   also receive the independent reviewer pair through `artifact-review-dispatch.md`,
+   in `intent` mode. Fast and normal skip intent review (**Lanes**). Reuse a
    still-current intent review; do not repeat it just because the skill changed.
 3. Write one failing behavior test through the agreed seam. Run the smallest
    relevant command and observe the contract's Expected red failure. Setup errors,
@@ -181,9 +190,10 @@ branch name. Preserve the chain so final validation can inspect the whole change
    and rerun until the behavioral failure is observed. Write the smallest real
    implementation to get green, then repeat for the next behavior.
 4. Enter a **separate independent review/refactor gate** after green. Capture
-   the candidate identity. Dispatch `slice-verifier` and the independent code and
-   coverage reviewers in `candidate` mode, against actual source, tests, and
-   evidence. Keep reviewers read-only. Triage findings per the shared dispatch.
+   the candidate identity. After the deterministic checks, dispatch
+   `slice-verifier` in `candidate` mode in every lane, and the independent code
+   and coverage reviewers in `candidate` mode in the rigorous lane, against actual
+   source, tests, and evidence. Keep reviewers read-only. Triage findings per the shared dispatch.
    Refactor only in this separate gate; rerun checks and obtain fresh candidate
    reviews after any source, test, contract, or relevant configuration change;
    a contract change that keeps reviews valid under the append-only check
@@ -197,9 +207,12 @@ branch name. Preserve the chain so final validation can inspect the whole change
    rather than inventing them from a script name. Add deep review where required.
 6. Present the behavior now demonstrated, differences from agreed expectations,
    remaining uncertainty, findings/resolutions, and exact candidate identity.
-   Ask the human to accept, revise, or discard this candidate. A discard choice
-   is not blanket permission for destructive cleanup; preserve other work.
-7. After acceptance, make this exact candidate the next predecessor. Continue
+   In the rigorous lane, ask the human to accept, revise, or discard this
+   candidate; in fast and normal, keep this report for the combined acceptance
+   (**Lanes**). A discard choice is not blanket permission for destructive
+   cleanup; preserve other work.
+7. After acceptance (rigorous) or passing gates (fast, normal), make this exact
+   candidate the next predecessor. Continue
    only within recorded build authority. Detail the next slice just in time;
    scope/behavior/permissions or major decision changes need renewed approval.
    Stop on deferred blockers instead of filling them with guesses.

@@ -66,7 +66,7 @@ Record manual/runtime criteria as verified only with evidence; otherwise show th
 
 ## 3. Separate Acceptance and Integration
 
-Report technical validation and human acceptance separately. Passing tests or reviews is not human acceptance. Verify any acceptance refers to the exact contract and candidate revision; if absent, report awaiting acceptance and prevent advancement even if candidate technical validation passes.
+Report technical validation and human acceptance separately. Passing tests or reviews is not human acceptance. Verify any acceptance refers to the exact contract and candidate revision; if absent, report awaiting acceptance and prevent advancement even if candidate technical validation passes. Acceptance follows the slice's lane (shared **Lanes**): a rigorous slice without its own acceptance blocks advancement; in fast and normal, slices chain on passing gates and the human accepts the combined result once before integration.
 
 For final combined validation, verify separate integration authorization for the accepted candidates and target. Perform integrated-tree validation against all accepted slice contracts and combined project gates, with the resulting tree's exact identity recorded separately from each candidate. A pass for the last slice cannot prove the combined result. Validate never merges or grants consent; missing authorization, an unaccepted included candidate, or missing integrated proof blocks a final pass.
 
@@ -76,7 +76,7 @@ Read `templates/validation.md`. Create a fresh report under `.rpiv/artifacts/val
 
 Keep `status: in-progress | in-review | ready` as document lifecycle and `verdict: pass | fail` as technical proof for the declared scope. `status: ready` means the report is finalized, not that the candidate is accepted or the whole scope shipped. State workflow blockers separately from the verdict so a technically passing candidate can still await human acceptance or integration consent.
 
-Set `verdict: pass` only when the declared scope has a verified candidate, matching approved contract, complete TDD proof or valid exemptions, fresh independent reviews, passing required gates, and no action-required gaps. A final combined pass additionally requires verified acceptance, integration authorization, and integrated results for the full declared scope. All other cases are `verdict: fail`; name whether blocked, broken, or failed, without extending the verdict enum. Optional diagnostics retain their real state even when non-blocking.
+Set `verdict: pass` only when the declared scope has a verified candidate, matching approved contract, complete TDD proof or valid exemptions, fresh reviews the lane requires, passing required gates, and no action-required gaps. A final combined pass additionally requires verified acceptance, integration authorization, and integrated results for the full declared scope. All other cases are `verdict: fail`; name whether blocked, broken, or failed, without extending the verdict enum. Optional diagnostics retain their real state even when non-blocking.
 
 Finalize only the new report: run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <absolute-report-path> --root <repository-path> --finalizing --stamp`. Correct report-format defects only, then re-run the validator. Verify the final `content_hash` without `--stamp`. Input/source/test defects remain findings for their owning workflow.
 

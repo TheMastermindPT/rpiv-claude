@@ -108,7 +108,9 @@ describe("candidate execution instructions", () => {
 		const source = read("implement/SKILL.md");
 		expect(source).toMatch(/approved (?:short )?brief/i);
 		expect(source).toMatch(/allowed-tools:.*Agent.*ask_user_question/);
-		expect(source).toMatch(/human accepts the exact candidate revision/i);
+		expect(source).toMatch(
+			/In the rigorous lane, stop until the human accepts the exact candidate revision/i,
+		);
 		expect(source).not.toMatch(
 			/implement every phase|Trust that completed work is done|stop immediately after that phase's checks pass/i,
 		);

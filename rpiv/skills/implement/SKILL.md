@@ -1,6 +1,6 @@
 ---
 name: implement
-description: Execute one approved slice, prove its behavior, and pause for independent review and human acceptance before continuing.
+description: Execute approved slices, prove each behavior, review by lane, and stop for human acceptance per slice in the rigorous lane or once for the combined result in fast and normal.
 argument-hint: "[brief-design-slice-or-plan-path] [optional phase or slice]"
 allowed-tools: Read, Edit, Write, Bash(*), Glob, Grep, Agent, ask_user_question, mcp__codescene__code_health_review
 disable-model-invocation: true
@@ -28,9 +28,9 @@ On start and resume, verify managed RPIV artifacts' recorded `content_hash` with
 
 Reconcile the actual candidate, accepted predecessor, reviews, and evidence before selecting work. Existing checkmarks are claims to verify, not proof. Preserve the artifact status vocabulary `in-progress`, `in-review`, `ready`; document readiness is separate from slice acceptance and scope completion.
 
-Use the shared workspace setup for a dedicated branch and worktree for the active slice, preserving unrelated dirty work. Record the original integration target separately from the accepted predecessor base. If setup or identity cannot be verified, stop before changing implementation files.
+Use the shared workspace setup for the workspace the lane requires (shared **Lanes**), preserving unrelated dirty work. Record the original integration target separately from the accepted predecessor base. If setup or identity cannot be verified, stop before changing implementation files.
 
-Completion criterion: one approved contract, one identified active slice, and a verified isolated workspace. Missing behavioral proof requirements are a contract gap, not an implied TDD exemption.
+Completion criterion: one approved contract, one identified active slice with its lane, and a verified workspace for that lane. Missing behavioral proof requirements are a contract gap, not an implied TDD exemption.
 
 ## 2. Prove Each Behavior
 
@@ -44,7 +44,7 @@ Completion criterion: every in-scope behavior has its own observed expected red 
 
 ## 3. Separate Independent Review/Refactor Gate
 
-After minimal green, enter the separate independent review/refactor gate in the shared workflow. Build its exact review input with `mode=candidate`; use its candidate revision and contract identity rules, not a branch label or an ad hoc tracked diff. Dispatch the independent reviewers through `Agent` using the shared dispatch contract. Reviewers are read-only; your own inspection does not substitute for their review.
+After minimal green, enter the separate independent review/refactor gate in the shared workflow. Build its exact review input with `mode=candidate`; use its candidate revision and contract identity rules, not a branch label or an ad hoc tracked diff. After the deterministic checks, dispatch the reviewers the lane requires (shared **Lanes**) through `Agent` using the shared dispatch contract. Reviewers are read-only; your own inspection does not substitute for their review.
 
 Apply project-defined gates and the shared **Available Quality Checks** for test-quality lint, CodeScene, and mutation. Discover actual commands, scope, thresholds, and tool guidance; preserve availability-based checks unless an explicit permitted exception is recorded. Record absent tools as `unavailable` and failed invocations as `broken` with diagnostics. A required gate stays blocking in either case; never silently waive it.
 
@@ -56,7 +56,7 @@ Completion criterion: the frozen current revision has passing required checks an
 
 Present the exact candidate revision, contract identity, changed scope, red/green evidence, review findings, gate outcomes, and remaining work. Ask the human to accept this revision, request changes, or pause. Passing tests and reviewer approval do not supply human acceptance.
 
-Stop until the human accepts the exact candidate revision. Edits after that checkpoint invalidate acceptance for the changed revision and require new tests, reviews, and acceptance. Only then may an authorized next slice start from this accepted predecessor via the shared setup. A request for one slice ends here even when more work is pending.
+In the rigorous lane, stop until the human accepts the exact candidate revision. Edits after that checkpoint invalidate acceptance for the changed revision and require new tests, reviews, and acceptance. Only then may an authorized next slice start from this accepted predecessor via the shared setup. In fast and normal, a slice whose gates pass becomes the predecessor for the next authorized slice without a stop, and the human accepts the combined result once before integration. Every lane still stops at the shared **Lanes** stops. A request for one slice ends here even when more work is pending.
 
 Update only evidence-backed progress for this slice. Keep pending, deferred, and blocked scope visible; the active slice being done never marks the whole scope complete. When evidence or progress changes a document body, run the shared append-only check against the approved copy before finalizing its new `content_hash` with the artifact validator's `--finalizing --stamp`; retain the prior identity in the append-only audit trail. Contract edits belong to revise and require renewed approval.
 

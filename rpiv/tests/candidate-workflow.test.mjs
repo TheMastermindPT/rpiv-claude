@@ -37,6 +37,7 @@ const dispatchPath = new URL(
 	import.meta.url,
 );
 const implementPath = new URL("../skills/implement/SKILL.md", import.meta.url);
+const validatePath = new URL("../skills/validate/SKILL.md", import.meta.url);
 const workflowTexts = () => {
 	const source = readFileSync(workflow, "utf8");
 	return [source, adaptSupportMarkdown(source)].map(joined);
@@ -110,5 +111,30 @@ describe("lane rules", () => {
 			expect(text).toMatch(/at least 9\.0/);
 			expect(text).toMatch(/does not block on its own/i);
 		}
+	});
+
+	it("accepts per slice only in the rigorous lane", () => {
+		for (const text of workflowTexts()) {
+			expect(text).toMatch(
+				/In fast and normal, a slice whose gates pass becomes the predecessor for the next slice without a human stop/i,
+			);
+			expect(text).toMatch(
+				/accepts the combined result once before integration/i,
+			);
+			expect(text).toMatch(
+				/In the rigorous lane, the human accepts each slice/i,
+			);
+		}
+		const implement = joined(readFileSync(implementPath, "utf8"));
+		expect(implement).toMatch(
+			/In the rigorous lane, stop until the human accepts the exact candidate revision/i,
+		);
+		expect(implement).toMatch(
+			/accepts the combined result once before integration/i,
+		);
+		expect(implement).toMatch(/workspace the lane requires/i);
+		const validate = joined(readFileSync(validatePath, "utf8"));
+		expect(validate).toMatch(/rigorous slice[^.]*without[^.]*acceptance/i);
+		expect(validate).toMatch(/fast and normal[^.]*combined result/i);
 	});
 });
