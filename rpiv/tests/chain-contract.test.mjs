@@ -59,7 +59,7 @@ describe("one rpiv chain", () => {
 		["plan", "implement"],
 		["implement", "deep-review"],
 		["deep-review", "validate"],
-		["validate", "commit"],
+		["validate", "pr"],
 		["revise", "implement"],
 		["explore", "design"],
 	])(
