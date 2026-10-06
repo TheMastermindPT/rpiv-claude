@@ -2,7 +2,7 @@
 
 Read this before authoring or changing a slice's Test Contract. Keep the contract
 once in its authoritative brief; scheduling views link to its section and hash.
-This file owns the authoring format and discipline across design, blueprint,
+This file owns the authoring format and discipline across design,
 plan, and revise. Execution and review use `candidate-workflow.md`.
 
 **Before writing, think like a tester.** A Test Contract that only

@@ -19,7 +19,7 @@ metadata:
 
 READ `$RPIV_PLUGIN_ROOT/skills/_shared/candidate-workflow.md` before execution or resume. It owns the agreed brief and test contract, lane workspace setup and dirty-state preservation, candidate and contract identity, reviewer dispatch, and acceptance/integration gates. Follow that loop directly; a missing or broken shared workflow blocks execution.
 
-This skill is human-invoked. Other skills that supervise a candidate use the shared loop directly rather than invoking this skill.
+Another skill may start this skill as its next step (its `**Next step:**` line); this skill still agrees the brief, workspace, and build authorization with the developer before any source edit. Skills that supervise a candidate themselves use the shared loop directly.
 
 ## Input and Scope
 
@@ -72,4 +72,6 @@ Update only evidence-backed progress for this slice. Keep pending, deferred, and
 Slice acceptance is not integration permission. Request separate integration authorization for the exact accepted candidates and original target before any merge or equivalent integration action. Follow the shared integration gate, then require final combined integrated-tree validation against all accepted contracts, not merely the last slice's green checks.
 
 Report the artifact path, active slice and exact revision, evidence/review results, human acceptance, integration authorization and validation state, and remaining scope. If paused or blocked, name the missing evidence or decision. Offer revise for intent changes and a handoff for session pauses; neither passing checks nor a closing message authorizes commits, more slices, or integration.
+
+**Next step:** `/rpiv:deep-review <candidate-branch-or-range>` — review the change once the lane's acceptance is recorded. Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop (a failed, broken, or missing gate) is pending.
 

@@ -305,7 +305,7 @@ Root-caused threads tying multiple findings to ONE architectural decision. Drawn
 
 ## Consolidated polish plan
 
-{N} phases, ordered top-to-bottom. Each phase is blueprint-consumable; sizing is by agent-relevant signals (file count, finding count, blast-radius mix, coordination need) — never human-days.
+{N} phases, ordered top-to-bottom. Each phase is design-consumable; sizing is by agent-relevant signals (file count, finding count, blast-radius mix, coordination need) — never human-days.
 
 ### Phase 1 — {phase name}
 

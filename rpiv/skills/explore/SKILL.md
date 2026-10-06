@@ -339,9 +339,8 @@ Solutions document written to:
 
 💬 Follow-up: describe the change in chat to append a timestamped Follow-up section to this artifact. Re-run `/rpiv:explore` for a fresh artifact.
 
-**Next step:** `/rpiv:design .rpiv/artifacts/solutions/{filename}.md` — optionally refine architectural intent, or `/rpiv:blueprint .rpiv/artifacts/solutions/{filename}.md` to shape the next-slice brief and iterate on real candidates only with explicit bounded build and workspace approval. Planning stays document-only until that approval. A separate `/rpiv:plan` scheduling view is optional.
+**Next step:** `/rpiv:design .rpiv/artifacts/solutions/{filename}.md` — shape the chosen option into a lean intent brief. Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop (a failed, broken, or missing gate) is pending.
 
-> 🆕 Tip: start a fresh session with `/new` first — chained skills work best with a clean context window.
 ```
 
 ### Step 9: Handle Follow-ups

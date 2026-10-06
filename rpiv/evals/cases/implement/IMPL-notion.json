@@ -31,6 +31,6 @@
   "validated": {
     "baselineGreen": "14/14 pass on committed notion.ts",
     "stubRed": "14/14 fail on the fixture stub",
-    "pending": "Whether `claude -p \"/rpiv:implement <plan>\"` fires the skill headless (disable-model-invocation:true) — validate with one cheap run before trusting a full billed run; fall back to an explicit Skill-tool prompt if the slash form no-ops."
+    "pending": "Whether `claude -p \"/rpiv:implement <plan>\"` fires the skill headless (implement no longer sets disable-model-invocation) — validate with one cheap run before trusting a full billed run; fall back to an explicit Skill-tool prompt if the slash form no-ops."
   }
 }

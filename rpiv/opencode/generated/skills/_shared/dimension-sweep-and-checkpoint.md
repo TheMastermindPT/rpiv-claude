@@ -1,6 +1,6 @@
 # Dimension Sweep + Developer Checkpoint — shared ambiguity-resolution protocol
 
-Shared ambiguity assessment for design and blueprint. Read
+Shared ambiguity assessment for design. Read
 `$RPIV_PLUGIN_ROOT/skills/_shared/candidate-workflow.md` first. Resolve
 decisions that constrain the next slice or an irreversible commitment; retain
 later questions under Deferred Work with the condition that unlocks them.

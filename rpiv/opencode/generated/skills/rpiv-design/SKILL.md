@@ -1,6 +1,6 @@
 ---
 name: rpiv-design
-description: "Shape architectural intent and the next slice's behavioral contract in a lean design brief. Use for architecture, boundaries, or feature decomposition from a user request, brief, research, or solutions artifact. Produces documents only; use plan for scheduling existing contracts and blueprint for explicitly authorized candidate builds."
+description: "Shape architectural intent and the next slice's behavioral contract in a lean design brief. Use for architecture, boundaries, or feature decomposition from a user request, brief, research, or solutions artifact. Produces documents only; use plan for scheduling existing contracts and implement to build an agreed slice."
 compatibility: opencode
 metadata:
   source: rpiv
@@ -101,7 +101,9 @@ Done when the required intent reviews pass on the stabilized brief and the user 
 4. Flip `status: in-review` to `status: ready` only after the required gates pass. If finalization changed reviewed intent, re-record the body hash and re-review before the flip.
 5. Present the path, architectural outcome, next-slice readiness, and deferred scope. `ready` means reviewed design intent, not permission to build or proof of feature completion.
 
-Scheduling through `/rpiv:plan` is optional. A later build request can use the brief directly through the shared workflow; design never starts that build itself.
+**Next step:** `/rpiv:implement <design-path>` — build the agreed next slice; implement agrees the workspace and build authorization first. Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop (a failed, broken, or missing gate) is pending.
+
+Scheduling through `/rpiv:plan` is optional, for a rigorous multi-slice change.
 
 ## Follow-Ups
 

@@ -171,8 +171,8 @@ describe("OpenCode definition inventory", () => {
 		const definitions = buildOpenCodeDefinitions(ROOT);
 
 		expect(Object.keys(definitions.agents)).toHaveLength(20);
-		expect(definitions.skills).toHaveLength(20);
-		expect(Object.keys(definitions.commands)).toHaveLength(20);
+		expect(definitions.skills).toHaveLength(19);
+		expect(Object.keys(definitions.commands)).toHaveLength(19);
 		expect(definitions.commands["rpiv:plan"].template).toContain("rpiv-plan");
 		expect(definitions.commands["rpiv:plan"].template).toContain("$ARGUMENTS");
 	});
@@ -185,7 +185,7 @@ describe("OpenCode definition inventory", () => {
 
 		const result = generateOpenCodeSkills(ROOT, output);
 
-		expect(result).toEqual({ count: 20, output });
+		expect(result).toEqual({ count: 19, output });
 		const plan = readFileSync(join(output, "rpiv-plan", "SKILL.md"), "utf8");
 		expect(plan).toContain("name: rpiv-plan");
 		expect(plan).toContain("$RPIV_PLUGIN_ROOT");

@@ -21,7 +21,7 @@ A plan is an optional scheduling projection, not a second specification or a sou
 
 Read `$RPIV_PLUGIN_ROOT/skills/_shared/candidate-workflow.md` before proceeding. Apply **Intent And Brief**, **Candidate Identity**, and **States And Evidence**; **Workspace And Authority** and **Integration** separate later build and merge consent from planning approval.
 
-This skill writes documents only. It neither edits source nor silently invokes `/rpiv:implement`, which is user-invoked.
+This skill writes documents only. It never edits source; its `**Next step:**` names `/rpiv:implement`, which agrees the build with the developer before any source edit.
 
 ## Metadata
 
@@ -105,7 +105,9 @@ Done when required intent reviews pass on the current projection and authoritati
 2. Preserve standing-decision ownership upstream. If an explicitly reopened decision is opted into promotion, read `$RPIV_PLUGIN_ROOT/skills/_shared/decision-ledger.md`; promote at its owner only with `scope: standing`, `key`, and `rule`, within authorized scope. Do not duplicate or automatically promote inherited decisions.
 3. Run `node "$RPIV_PLUGIN_ROOT/skills/_shared/validate-artifact.mjs" <plan-path> --finalizing --stamp`. Fix faults and rerun; retain `content_hash` as the final body identity. A body change during finalization that the shared append-only check does not allow reopens approval. Re-record the body hash and re-review any changed intent.
 4. Flip `status: in-review` to `status: ready` only after required intent gates and finalization lint pass. Readiness describes reviewed planning intent; build approval and execution gates remain separate.
-5. Present the path, next slice, executable/unresolved counts, review outcome, and deferred scope. Offer user-invoked execution only when they want to build; never imply automatic commits, pushes, or merges.
+5. Present the path, next slice, executable/unresolved counts, review outcome, and deferred scope. Never imply automatic commits, pushes, or merges.
+
+**Next step:** `/rpiv:implement <plan-path>` — build the next slice; implement agrees the workspace and build authorization first. Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop (a failed, broken, or missing gate) is pending.
 
 ## Follow-Ups
 

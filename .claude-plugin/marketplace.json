@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "rpiv",
-      "description": "RPIV development workflow: skills (research, design, plan, implement, validate, blueprint, explore, code-review, commit, changelog, handoffs, test-case + guidance tooling) plus the 16 read-only analysis subagents they spawn.",
+      "description": "RPIV development workflow: skills (research, design, plan, implement, validate, explore, code-review, commit, changelog, handoffs, test-case + guidance tooling) plus the 16 read-only analysis subagents they spawn.",
       "source": "./rpiv",
       "category": "workflow"
     }

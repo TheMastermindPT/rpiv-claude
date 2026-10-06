@@ -82,7 +82,7 @@ C. Synthesize
    -> 12. Present & chain -> 13. Follow-ups
 ```
 
-The final artifact is blueprint-consumable per phase.
+The final artifact is design-consumable per phase.
 
 **References (progressive disclosure — read each file at the step its pointer names, never earlier; resolve paths against this skill's directory, i.e. `${CLAUDE_PLUGIN_ROOT}/skills/architectural-review/`):** `references/metrics-blocks.md` (Step 2.1, after metrics.mjs) · `references/tool-ingestion.md` (Step 2.2, before any external tool runs) · `references/standing-decisions.md` (Step 2.4; applied at Steps 6 and 7.4) · `references/likec4-model.md` (Steps 4.5 & 11, only when a System Model exists) · `references/slop-map.md` (Step 5a, map assembly) · `references/wave2-lenses.md` (Step 5d, only when Wave 2 dispatches) · `references/dimension-sweep.md` (Step 7.2, first layer) · `references/drift-fingerprints.md` (Step 8, only when a prior review exists).
 
@@ -479,7 +479,7 @@ Also write the **Slop Inventory by lens** tables (D/C/G/A/T/L/M/S/Tc) from the a
 
 ### Step 11: Consolidated Polish Plan + Risk Rollup
 
-Phases are agent-driven (handed to `blueprint` -> `implement`); size by signals blueprint acts on (file count, finding count, blast-radius mix, coordination), never human-days.
+Phases are agent-driven (handed to `design` -> `implement`); size by signals design and implement act on (file count, finding count, blast-radius mix, coordination), never human-days.
 
 1. **Topo-sort — deterministic, NO hand-derivation.** Run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/store.mjs" query --plan --artifact <artifact path>`. Its `---plan-order---` block IS the topo order over the accepted findings (dependency-free first; a `CYCLE-BROKEN` flag marks any `dependsOn` cycle — resolve the cycle or note it in the phase body), and `---plan-rank---` is the base `severity × blast-radius / effort` ranking (weights documented in the block's header line).
 2. **Group by leverage:** Foundation (no deps, low risk) / Vocabulary (renames) / Locality (moves) / Structural (file splits, dir restructures) / Behavioural (shape conversions, dispatchers) / Public-API (additive surface, downstream coordination).
@@ -504,7 +504,7 @@ Phases are agent-driven (handed to `blueprint` -> `implement`); size by signals 
    node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/store.mjs" finalize --artifact <artifact path> --health-score <healthy|drifting|degraded> --root .
    ```
 
-   It gates (every finding triaged; the verdict is a real enum value, never `pending`; no evidence citation went ambiguous since insert; the rebuilt `phases:` frontmatter n-set matches the body's `### Phase N —` headings and every entry carries `n` + `title` — a wrong hand-rebuild is refused, not shipped), writes `health_score:`, flips `status: ready` in both the artifact and review.json, and stamps `content_hash:` as the LAST frontmatter field — AR artifacts now carry the same staleness pin research/design/blueprint stamp at their flips. Non-zero exit names the failed gate; resolve and re-run.
+   It gates (every finding triaged; the verdict is a real enum value, never `pending`; no evidence citation went ambiguous since insert; the rebuilt `phases:` frontmatter n-set matches the body's `### Phase N —` headings and every entry carries `n` + `title` — a wrong hand-rebuild is refused, not shipped), writes `health_score:`, flips `status: ready` in both the artifact and review.json, and stamps `content_hash:` as the LAST frontmatter field — AR artifacts now carry the same staleness pin research/design stamp at their flips. Non-zero exit names the failed gate; resolve and re-run.
 
 ### Step 12: Present and Chain
 
@@ -526,11 +526,11 @@ Fix these first:
 2. {ID} — `file:line` — {headline}
 3. {ID} — `file:line` — {headline}
 
-The artifact is blueprint-consumable per phase:
-- `/rpiv:blueprint .rpiv/artifacts/architecture-reviews/{filename}.md` then "Implement Phase 1: {phase name}".
+The artifact is design-consumable per phase:
+- `/rpiv:design .rpiv/artifacts/architecture-reviews/{filename}.md "Phase 1: {phase name}"`, then `/rpiv:implement` on the resulting brief.
 - Repeat per phase.
 
-> Tip: start a fresh session with `/new` before each blueprint invocation — chained skills work best with a clean context window.
+> Tip: run `/clear` before each design invocation — chained skills work best with a clean context window.
 ```
 
 ### Step 13: Handle Follow-ups
@@ -595,9 +595,9 @@ Spawn agents in parallel only when searching for different things. Wave 1 lenses
   - ALWAYS read every file in a layer (7.1) BEFORE the dimension sweep (7.2); ALWAYS triage via `ask_user_question` (7.4) — never auto-accept; ALWAYS `store add` immediately after each outcome (7.5) — hand-Edits inside sentinel regions are forbidden.
   - ALWAYS produce the Drift Delta (Step 8) when a prior review exists. Use content-hash fingerprints (survive renames). Re-verify `Resolved` rows at HEAD — a falsely-claimed fix must not hide a regression.
   - NEVER skip the per-layer tally (7.6) — it is the visible progress marker.
-  - NEVER edit source files during the review — the artifact is the product; implementation is blueprint's job.
+  - NEVER edit source files during the review — the artifact is the product; implementation is the job of design and implement.
 - **LikeC4 emission is additive and non-blocking** — the model project lives beside the artifact (own `likec4.config.json`, never in the target source tree, never merged into the repo's own LikeC4 project), Step 11 only appends (phase tags, `extend` fates, end-state/phase views), and CLI unavailability degrades to a one-line note — never a checkpoint.
 - **Linter ground-truth is portable, not hard-wired** — detect scripts from the manifest; degrade gracefully when absent. Never assume a specific repo's `npm run` names.
 - **Frontmatter consistency**: snake_case multi-word fields; preserve `verification` / `drift` / `slop_by_lens` keys verbatim (`artifacts-locator` greps them). `slop_by_lens` now carries `missing_abstraction`, `state_flow`, `temporal_coupling`, `low_cohesion`, `feature_envy`, and `failure_propagation`; the synthesis counts live in `interactions` and `clusters_discovered`.
 - **Status invariants**: `in-progress` during Steps 1-10; flips to `ready` only via `store finalize` at Step 11 confirmation (which also stamps `content_hash`).
-- **The artifact is blueprint-consumable per phase** — per-phase blueprint invocations are the supported chaining pattern.
+- **The artifact is design-consumable per phase** — per-phase design then implement invocations are the supported chaining pattern.

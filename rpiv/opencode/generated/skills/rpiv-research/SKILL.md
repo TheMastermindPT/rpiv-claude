@@ -37,7 +37,7 @@ Copy values verbatim — do not reformat the timezone offset.
 
 1. Input → 2. Dispatch agents → 3. Synthesize & checkpoint → 4. Write doc → 5. Present & chain → 6. Follow-ups
 
-The final artifact feeds design or blueprint.
+The final artifact feeds design.
 
 ## Steps
 
@@ -339,7 +339,7 @@ Findings go into Precedents & Lessons. Otherwise skip and note "git history unav
 
 3. **Finalization lint**: after the document is fully written, run
    `node "$RPIV_PLUGIN_ROOT/skills/_shared/validate-artifact.mjs" <the research artifact path> --finalizing --stamp`.
-   If it exits non-zero, FIX the reported errors (Edit the artifact) and re-run — the research doc is not final until the lint passes. `--finalizing` runs the frontmatter-schema and no-unfilled-template-token checks even though research uses `status: complete` (not `ready`); this is the same gate `discover` applies to the FRD. On success it stamps `content_hash:` into the frontmatter — this MUST be the last body-affecting action, since the hash pins the finalized body so downstream `design`/`blueprint` can detect an artifact edited after finalization. Research owns no `## Decisions` with `scope: standing`, so there is no decision-ledger promotion step (unlike design/plan).
+   If it exits non-zero, FIX the reported errors (Edit the artifact) and re-run — the research doc is not final until the lint passes. `--finalizing` runs the frontmatter-schema and no-unfilled-template-token checks even though research uses `status: complete` (not `ready`); this is the same gate `discover` applies to the FRD. On success it stamps `content_hash:` into the frontmatter — this MUST be the last body-affecting action, since the hash pins the finalized body so downstream `design` can detect an artifact edited after finalization. Research owns no `## Decisions` with `scope: standing`, so there is no decision-ledger promotion step (unlike design/plan).
 
 ### Step 5: Present and Chain
 
@@ -355,13 +355,10 @@ Please review and let me know if you have follow-up questions.
 
 💬 Follow-up: describe the change in chat to append a timestamped Follow-up section to this artifact. Re-run `/rpiv:research` for a fresh artifact.
 
-**Next step (choose one):**
-- `/rpiv:design .rpiv/artifacts/research/{filename}.md` — optional architectural refinement into a lean intent brief; a separate plan is not required before an approved slice can be built.
-- `/rpiv:blueprint .rpiv/artifacts/research/{filename}.md` — shape the next-slice brief, then develop real candidates only with explicit bounded build and workspace approval. Planning-only requests stay document-only.
+**Next step:** `/rpiv:design .rpiv/artifacts/research/{filename}.md` — shape the lean intent brief and the next slice's contract. Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop (a failed, broken, or missing gate) is pending.
 
 Use `/rpiv:plan` only when existing contracts need a separate dependency/scheduling view.
 
-> 🆕 Tip: start a fresh session with `/new` first — chained skills work best with a clean context window.
 ```
 
 ### Step 6: Handle Follow-ups
@@ -386,7 +383,7 @@ Use `/rpiv:plan` only when existing contracts need a separate dependency/schedul
   - ALWAYS wait for all agents to complete (Step 2)
   - ALWAYS run developer checkpoint before writing (Step 3)
   - ALWAYS gather metadata before writing (Step 4)
-  - ALWAYS run the finalization lint + stamp after writing the document (Step 4) — the `content_hash:` stamp must be the last body-affecting action so downstream design/blueprint can detect post-finalization edits
+  - ALWAYS run the finalization lint + stamp after writing the document (Step 4) — the `content_hash:` stamp must be the last body-affecting action so downstream design can detect post-finalization edits
   - NEVER write the document with placeholder values
 - **Frontmatter consistency**: Always include frontmatter, use snake_case fields
 

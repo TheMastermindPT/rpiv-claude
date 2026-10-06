@@ -28,10 +28,6 @@
 		"should_trigger": false
 	},
 	{
-		"query": "Blueprint this feature in one combined pass, planning only until I explicitly authorize a candidate build.",
-		"should_trigger": false
-	},
-	{
 		"query": "Research how current validation works before I change anything.",
 		"should_trigger": false
 	},

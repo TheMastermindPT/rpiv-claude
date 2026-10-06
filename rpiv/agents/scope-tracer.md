@@ -118,7 +118,7 @@ Swept the plugin loader and lifecycle anchors across `src/plugins/`. Key files f
 ## What NOT to Do
 
 - **Don't answer the questions** — you trace the scope, the questions stay open for downstream consumers
-- **Don't make recommendations** — no "we should…", no architectural advice; that's `design` / `blueprint` territory
+- **Don't make recommendations** — no "we should…", no architectural advice; that's `design` / `plan` territory
 - **Don't read more than 10 files in Step 4** — context budget is real; rank ruthlessly
 - **Don't synthesize generic titles** — every question must cite >=3 specific files / functions / types; vague themes are too thin
 - **Don't include .rpiv/artifacts/ docs as numbered questions** — surface them in the Discovery Summary; numbered questions are about live code paths

@@ -71,5 +71,7 @@ Set `verdict: pass` only when the declared scope has a verified candidate, match
 
 Finalize only the new report: run `node "$RPIV_PLUGIN_ROOT/skills/_shared/validate-artifact.mjs" <absolute-report-path> --root <repository-path> --finalizing --stamp`. Correct report-format defects only, then re-run the validator. Verify the final `content_hash` without `--stamp`. Input/source/test defects remain findings for their owning workflow.
 
-Return the report path, scoped verdict and blockers, human acceptance and integration state, and remaining scope. Local fixes return to implement for tests and fresh reviews; intent changes return to revise. No automatic commit or integration next step follows a pass.
+Return the report path, scoped verdict and blockers, human acceptance and integration state, and remaining scope. Local fixes return to implement for tests and fresh reviews; intent changes return to revise. A pass starts no commit or integration by itself.
+
+**Next step:** `/rpiv:commit` — commit any remaining approved changes; the PR and its summary follow and always need the developer's approval. Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop (a failed, broken, or missing gate) is pending.
 

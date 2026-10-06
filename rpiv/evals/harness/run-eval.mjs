@@ -60,7 +60,7 @@ function main() {
 	const rundir = resolve(args.rundir);
 	const model = args.model ?? caseSpec.model ?? "fable";
 	// --worktree overrides the case's pinned worktree — used to fan parallel runs across
-	// multiple clean worktrees at the SAME ref (e.g. plan + blueprint both write .rpiv/
+	// multiple clean worktrees at the SAME ref (e.g. two plan runs both write .rpiv/
 	// artifacts/plans/, so they cannot share one worktree). The override must point at a
 	// worktree checked out at the case's `ref`, or grading resolves against the wrong tree.
 	const worktree = args.worktree ?? caseSpec.worktree;
@@ -76,7 +76,7 @@ function main() {
 	// needs a research artifact to read, plan needs a design artifact). `from` is relative
 	// to the case's own dir; `to` is relative to the worktree. Seeding runs AFTER clean, and
 	// `clean` must only list the skill's OWN output dir — never the seeded dir — so the seed
-	// survives. Without this, design/plan/blueprint evals have no upstream input to consume.
+	// survives. Without this, design/plan evals have no upstream input to consume.
 	for (const s of caseSpec.seed ?? []) {
 		const src = resolve(dirname(casePath), s.from);
 		const dst = join(worktree, s.to);

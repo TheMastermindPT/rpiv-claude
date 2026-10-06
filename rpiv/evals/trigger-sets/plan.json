@@ -36,10 +36,6 @@
 		"should_trigger": false
 	},
 	{
-		"query": "Blueprint this from a request: combine intent shaping and bounded candidate iteration.",
-		"should_trigger": false
-	},
-	{
 		"query": "Compare approaches to rate limiting before choosing one.",
 		"should_trigger": false
 	},

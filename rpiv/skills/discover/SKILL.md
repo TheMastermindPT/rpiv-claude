@@ -199,7 +199,7 @@ Walk the lazy tree depth-first, parent before child. Expand the next layer (buil
    - (b) the developer's own words appear in Problem/Goals (not paraphrased agent prose), AND
    - (c) no Decision is `Recommendation accepted` without at least one Rationale clause beyond `agreed`.
 
-   Do not invent questions to pad the interview. Do NOT ask a final "looks good / want to adjust" rubber-stamp question — chain forward to research is automatic at Step 7.
+   Do not invent questions to pad the interview. Do NOT ask a final "looks good / want to adjust" rubber-stamp question — Step 7 names the next step to research.
 
 **Total agent budget across the skill**: 2 (Step 3 initial probe) + N×1 (Step 5 corrections, typically 0-2) = 2-4 agent dispatches per FRD. The communication behaviors (Step 5 / 3.5) and the teach-back (Step 5.5) add **zero** agents.
 
@@ -273,16 +273,14 @@ Frontmatter additions for template_version 2: `register:` (`plain` / `mixed` / `
 
    💬 Follow-up: discover writes a fresh FRD per call — re-invoke `/rpiv:discover` to iterate (the prior FRD stays unchanged on disk).
 
-   **Next step:** `/rpiv:research .rpiv/artifacts/discover/<YYYY-MM-DD_HH-MM-SS>_<topic>.md` — ground the intent in codebase reality.
-
-   > 🆕 Tip: start a fresh session with `/new` first — chained skills work best with a clean context window.
+   **Next step:** `/rpiv:research .rpiv/artifacts/discover/<YYYY-MM-DD_HH-MM-SS>_<topic>.md` — ground the intent in codebase reality. Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop (a failed, broken, or missing gate) is pending.
    ```
 
 ### Step 8: Handle Follow-ups
 
 - **Fresh artifact per call, no in-place append.** Discover deliberately writes a NEW timestamp-distinct FRD on every invocation — there is no `## Follow-up` append mode. The prior FRD stays unchanged on disk.
 - **Iterate by re-invoking.** Re-run `/rpiv:discover [path-to-prior-FRD]` (or `/rpiv:discover <free-text>`) to produce a fresh FRD informed by the prior one.
-- **No rubber-stamp question.** NEVER ask a final "looks good / want to adjust" question — chain forward to research is automatic at Step 7.
+- **No rubber-stamp question.** NEVER ask a final "looks good / want to adjust" question — Step 7 names the next step to research.
 - **Manual edits are allowed.** If the developer wants a one-off correction without re-running the full interview, they can Edit the FRD directly — the skill does not own follow-up surface area beyond fresh-artifact-per-call.
 
 ## Important Notes

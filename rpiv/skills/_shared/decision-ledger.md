@@ -1,6 +1,6 @@
 # Decision-ledger protocol
 
-Shared by `discover`, `design`, and `blueprint`. Run this at finalization, after the artifact's
+Shared by `discover` and `design`. Run this at finalization, after the artifact's
 `## Decisions` section is settled and before flipping `status` to its terminal value.
 `architectural-review` reuses Steps 2-3 when the developer records a rejected finding as a
 standing decision (`skills/architectural-review/references/standing-decisions.md`); Step 1's
@@ -21,7 +21,7 @@ Scan the artifact's `## Decisions` for entries that carry a `scope: standing` li
   Do NOT ask a question and do NOT block — promotion is opt-in, never auto-prompted.
 - **No decisions at all** — do nothing and continue.
 
-The standing TDD decision that `design`/`blueprint` include verbatim (`### TDD Standard (standing)`)
+The standing TDD decision that `design` includes verbatim (`### TDD Standard (standing)`)
 is enforced structurally by the pipeline — slice-verifier's commitments audit flags per-slice
 violations — and is deliberately NOT promoted to the ledger. Do NOT tag, promote, or re-write it.
 Only tag genuinely new standing decisions.

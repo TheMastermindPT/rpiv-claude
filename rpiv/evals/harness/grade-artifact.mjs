@@ -194,7 +194,7 @@ function currentReviewProblems(spec) {
 // ---------- sibling review.json (store-backed grading) ----------
 // recall/absence/max_findings field-assert over the sibling review.json WHEN it exists;
 // else the existing markdown grep (a per-artifact FALLBACK, never a dual-run). null for
-// non-store artifacts (research/design/plan/blueprint/deep-review, and agent-output).
+// non-store artifacts (research/design/plan/deep-review, and agent-output).
 const storePath = artifact ? deriveStorePath(artifact) : null;
 const store =
 	storePath && existsSync(storePath)

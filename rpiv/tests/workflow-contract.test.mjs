@@ -7,7 +7,7 @@ const read = (path) => readFileSync(new URL(path, root), "utf8");
 
 // These guard the shipped instructions, not an agent's runtime compliance.
 describe("lean planning contract", () => {
-	it.each(["design", "plan", "blueprint"])(
+	it.each(["design", "plan"])(
 		"%s keeps implementation in source rather than duplicating it in artifacts",
 		(name) => {
 			const source = read(`skills/${name}/SKILL.md`);
@@ -19,7 +19,7 @@ describe("lean planning contract", () => {
 		},
 	);
 
-	it.each(["design", "plan", "blueprint", "implement", "revise", "validate"])(
+	it.each(["design", "plan", "implement", "revise", "validate"])(
 		"%s exposes the same workflow contract to Claude and OpenCode",
 		(name) => {
 			const source = read(`skills/${name}/SKILL.md`);

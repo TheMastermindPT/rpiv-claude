@@ -67,5 +67,7 @@ Where the slice's lane requires intent review (shared **Lanes**), dispatch indep
 
 Before finalizing a revised artifact, use `node "$RPIV_PLUGIN_ROOT/skills/_shared/validate-artifact.mjs" <absolute-artifact-path> --root <repository-path> --finalizing --stamp` after reconciling the old identity and preserving history. Verify the new `content_hash` without `--stamp`. This document hash is not a candidate approval and does not replace the human approval of the revised contract.
 
+**Next step:** `/rpiv:implement <artifact-path>` — resume the authorized active slice after contract approval. Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop (a failed, broken, or missing gate) is pending.
+
 Report the artifact path, changed intent IDs, active slice, deferred work, invalidated proof, and approval state. Resume only the authorized active slice through the shared loop after contract approval; then require observed expected red, minimal green, separate independent review/refactor, and the human acceptance its lane requires. The next slice, integration consent, and final combined validation remain separate checkpoints.
 

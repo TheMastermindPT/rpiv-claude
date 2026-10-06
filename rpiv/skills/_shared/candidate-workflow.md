@@ -67,7 +67,7 @@ Keep these three decisions separate and record their exact scope:
   accepted candidate into a named target. Candidate acceptance alone grants none.
 
 Planning-only requests stay document-only. In particular, an invocation of
-`blueprint` is not itself permission to write application code. Ask when build
+`design` or `plan` is not itself permission to write application code. Ask when build
 authority is missing; offer to stop with the brief rather than manufacture it.
 
 For candidate work, use the workspace the slice's lane requires (**Lanes**).

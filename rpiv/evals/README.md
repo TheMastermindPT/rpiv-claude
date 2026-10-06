@@ -1,6 +1,6 @@
 # rpiv skill + agent evals (git-anchored, executable)
 
-Real-project evals for review skills/agents and document-only design, blueprint,
+Real-project evals for review skills/agents and document-only design
 and plan cases. This harness replaced an earlier stub eval set whose
 fixtures never existed and whose assertions were prose ("the evals are theater",
 handoff 2026-07-08). The design principle: **an assertion either executes or it
@@ -39,7 +39,6 @@ evals/
     entity-mapper/      EM-1..2 (.json + rendered .prompt.md)
     interaction-sweeper/ IS-1..2
     design/             DS-1 (lean design from an approved scenario brief)
-    blueprint/          BP-1 (PLANNING ONLY, no candidate build authority)
     plan/               PL-1 (optional scheduling projection, canonical links)
     slice-verifier/     SV-1..2 (current three-row intent recall/restraint)
     artifact-code-reviewer/ ACR-1..2 (current intent recall/restraint)
@@ -91,7 +90,7 @@ the grader. Cost tiers: agent cases are cheap
   parent protocol, not grading answers or the alternative scenario. Do not read old
   outputs or alternate fixtures left by another run. Use fresh isolated fixtures
   for explicitly authorized runs; this unchanged runner is not an isolation guard.
-- DS-1/BP-1/PL-1 provide bounded intent-only answers, never blanket autopilot
+- DS-1/PL-1 provide bounded intent-only answers, never blanket autopilot
   checkpoint/triage approval. New questions or failed/missing reviews stay blocked.
   Legacy checkpoint riders are not current build or integration authorization.
 - `node_modules` is junctioned from the main GymApp checkout (arch-review ingests the
@@ -143,11 +142,10 @@ Their prompts/manifests and original frozen inputs are retained, not active defa
 Do not mix legacy metrics with the current contract or format the frozen inputs.
 
 DS-1 expects lean Intent/Architecture/Next Slice/Test Contracts/Deferred Work headings.
-BP-1 explicitly selects planning only, with no executable Phase projection and zero
-phase counters. PL-1 projects one active phase from a brief without requiring a
+PL-1 projects one active phase from a brief without requiring a
 design; contracts stay at their owner, and build approval pending leaves its
-unresolved count at one. Both plan-path outputs distinguish intent readiness from
-build authority. No case requires implementation bodies or a 1:1 slice mapping.
+unresolved count at one. Its output distinguishes intent readiness from build
+authority. No case requires implementation bodies or a 1:1 slice mapping.
 
 Semantic (grader model, second stage): does the matched finding actually describe the
 known defect; does an IS-1 compound reproduce the IX-1/IX-5-shaped groupings. Semantic
