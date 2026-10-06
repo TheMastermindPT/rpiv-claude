@@ -79,13 +79,23 @@ describe("lane rules", () => {
 		for (const text of [claude, opencode]) {
 			expect(text).toMatch(/After 2 fix rounds, stop and ask the developer/i);
 			expect(text).toMatch(/never start a third round/i);
+			expect(text).toMatch(/never turns unresolved findings/i);
+			expect(text).toMatch(
+				/accept fixes made after the last round without a further review/i,
+			);
 		}
 		// The OpenCode adapter renames the ask tool (opencode/adapter.mjs).
-		expect(claude).toMatch(/ask_user_question/);
-		expect(opencode).toMatch(/`question`/);
+		expect(claude).toMatch(
+			/stop and ask the developer with `ask_user_question`/,
+		);
+		expect(opencode).toMatch(/stop and ask the developer with `question`/);
 		const dispatch = joined(readFileSync(dispatchPath, "utf8"));
 		expect(dispatch).toMatch(/After 2 fix rounds/i);
 		expect(dispatch).not.toMatch(/no fixed retry cap/i);
+		expect(dispatch).toMatch(/never converts unresolved findings/i);
+		expect(dispatch).toMatch(
+			/pair runs for slice candidate reviews where the slice's lane requires it/i,
+		);
 	});
 
 	it("ends each slice as one commit amended only while unpushed", () => {

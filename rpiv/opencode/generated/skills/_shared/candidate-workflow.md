@@ -123,7 +123,8 @@ A fix round is one review of the candidate followed by its fixes, in any lane.
 After 2 fix rounds, stop and ask the developer with `question`,
 presenting the open findings and the choices; never start a third round unasked.
 The cap never turns unresolved findings or an incomplete inspection into
-acceptance.
+acceptance. At that stop the developer may accept fixes made after the last round
+without a further review; record the unreviewed delta as residual risk.
 
 Each slice ends as exactly one commit on the feature branch. Observe and log
 each red and green, but do not commit intermediate states. Commit once the
