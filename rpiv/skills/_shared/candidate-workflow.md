@@ -94,8 +94,17 @@ Commit, push, merge, cherry-pick, and cleanup only when explicitly authorized.
 Every slice runs in one lane: `fast`, `normal` or `rigorous`. The active-slice
 brief records it as a `Lane:` line taken from `lane.mjs --paths` when the brief
 is written. Before candidate review, `lane.mjs --range <base>..<candidate>`
-re-checks it on the real diff; a re-check only raises the lane. A missing
-`Lane:` line or a broken lane call means `normal`, never `fast`.
+re-checks it on the real diff; a re-check only raises the lane. Run the helper
+as `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/lane.mjs"`. A missing
+`Lane:` line or a broken lane call means `normal`, never `fast`; a broken call
+never lowers a recorded lane, and its `lane: broken:` diagnostic is kept.
+A raise is recorded as an appended `## Developer Context` entry (the approved
+`Lane:` line stays); the remaining steps follow the raised lane, and steps the
+raised lane needed earlier (a linked worktree, intent review) are re-run or
+recorded as residual risk by the developer's decision.
+
+Wherever rpiv says accepted predecessor, fast and normal mean the gate-passed
+predecessor; the rigorous lane means the human-accepted one.
 
 | Step | fast | normal | rigorous |
 | --- | --- | --- | --- |
@@ -108,7 +117,7 @@ re-checks it on the real diff; a re-check only raises the lane. A missing
 A fast slice falls back to a linked worktree when the main working tree has
 uncommitted changes unrelated to the slice; never stash, move, or commit them.
 Run the deterministic checks (tests, types, lint, and CodeScene where available)
-before dispatching any review agent.
+before dispatching any candidate-mode review agent.
 
 A fix round is one review of the candidate followed by its fixes, in any lane.
 After 2 fix rounds, stop and ask the developer with `ask_user_question`,
@@ -166,7 +175,8 @@ the same approved copy.
 If a complete identity cannot be captured or reproduced,
 block candidate review rather than report an approximate result as approved.
 
-For a subsequent slice, its base is the exact accepted predecessor. If that
+For a subsequent slice, its base is the exact accepted predecessor (as
+**Lanes** defines it per lane). If that
 predecessor is an uncommitted snapshot, record its digest in addition to the
 underlying `base_commit`, retain the frozen contents, and supply the incremental
 diff plus full candidate snapshot. A new worktree cannot inherit those edits by

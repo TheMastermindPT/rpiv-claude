@@ -61,6 +61,13 @@ describe("lane rules", () => {
 				/falls back to a linked worktree when the main working tree has uncommitted changes/i,
 				/never stash/i,
 				/deterministic checks[^.]*before[^.]*review agent/i,
+				/skills\/_shared\/lane\.mjs/,
+				/broken call never lowers a recorded lane/i,
+				/`lane: broken:` diagnostic is kept/i,
+				/A raise is recorded as an appended `## Developer Context` entry/i,
+				/remaining steps follow the raised lane/i,
+				/before dispatching any candidate-mode review agent/i,
+				/wherever rpiv says accepted predecessor, fast and normal mean the gate-passed predecessor/i,
 			]) {
 				expect(text).toMatch(rule);
 			}
