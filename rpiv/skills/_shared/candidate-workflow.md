@@ -126,6 +126,7 @@ predecessor; the rigorous lane means the human-accepted one.
 | slice-verifier | yes | yes | yes |
 | Code/coverage reviewer pair | no | no | yes |
 | Per-slice human acceptance | no | no | yes |
+| Deep-review depth | light | full | rigorous |
 
 A fast slice falls back to a linked worktree when the main working tree has
 uncommitted changes unrelated to the slice; never stash, move, or commit them.
@@ -138,6 +139,12 @@ presenting the open findings and the choices; never start a third round unasked.
 The cap never turns unresolved findings or an incomplete inspection into
 acceptance. At that stop the developer may accept fixes made after the last round
 without a further review; record the unreviewed delta as residual risk.
+
+The chain is implement → deep-review → validate: deep-review runs before validate,
+at the depth the table names, so validate certifies the final code once.
+Deep-review fixes are separate fix commits, one per fix round, that never amend
+a slice commit. Deep-review has its own cap: after 1 fix round with the review
+still blocked, stop and ask the developer with `ask_user_question`.
 
 When commits are authorized, each slice ends as exactly one commit on the
 feature branch. Without commit authority, the slice ends as one frozen snapshot
@@ -153,8 +160,8 @@ commit is allowed. The commit message carries the red and green evidence summary
 In fast and normal, a slice whose gates pass becomes the predecessor for the
 next slice without a human stop, and the developer accepts the combined result
 once before integration. In the rigorous lane, the human accepts each slice.
-Every lane still stops for scope or contract changes, findings left after 2 fix
-rounds, missing authority, and required gates that are missing, failed, broken,
+Every lane still stops for scope or contract changes, findings left after the fix-round cap (2 for slice reviews, 1 for
+deep-review), missing authority, and required gates that are missing, failed, broken,
 unavailable, pending, or stale (**States And Evidence**).
 
 ## Candidate Identity

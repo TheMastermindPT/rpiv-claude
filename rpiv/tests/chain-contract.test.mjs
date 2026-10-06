@@ -58,6 +58,7 @@ describe("one rpiv chain", () => {
 		["design", "implement"],
 		["plan", "implement"],
 		["implement", "deep-review"],
+		["deep-review", "validate"],
 		["validate", "commit"],
 		["revise", "implement"],
 		["explore", "design"],
@@ -70,8 +71,4 @@ describe("one rpiv chain", () => {
 			expect(lines[0]).toMatch(/run `\/clear` first, then this command/i);
 		},
 	);
-
-	it("deep-review keeps one next step until S13 routes it", () => {
-		expect(nextStepLines("deep-review")).toHaveLength(1);
-	});
 });

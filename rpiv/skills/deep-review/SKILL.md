@@ -1,7 +1,7 @@
 ---
 name: deep-review
 description: "Conduct comprehensive code reviews of pending changes, a branch, or a PR using parallel specialist agents that audit the diff, compare against peer code, and verify every claim before reporting it. Use whenever the user asks to 'review this', wants pending changes, a PR, a branch, or a diff reviewed, or asks for a code review — even a quick one. Produces review documents in .rpiv/artifacts/reviews/."
-argument-hint: "[scope]"
+argument-hint: "[scope] [lane=<lane>] [design=<design-path>]"
 shell-timeout: 10
 contract:
   produces:
@@ -32,7 +32,7 @@ Review changes across **Quality**, **Security**, **Dependencies** lenses with op
 
 ## Input
 
-`$ARGUMENTS` — scope: `commit` | `staged` | `working` | a commit hash | `A..B` range | PR branch name. Empty defaults to feature-branch-vs-default-branch (first-parent).
+`$ARGUMENTS` — scope: `commit` | `staged` | `working` | a commit hash | `A..B` range | PR branch name. Empty defaults to feature-branch-vs-default-branch (first-parent). An optional trailing `lane=<lane>` token (`fast`, `normal` or `rigorous`; implement's next-step line passes it) is removed before scope resolution and sets the review depth at Step 1.6. An optional `design=<design-path>` token (the approved brief or design the reviewed slices implement; implement passes it too) is removed the same way and is carried into the Step 8 next step.
 
 ## Metadata
 
@@ -106,9 +106,16 @@ Every Wave-2 agent prompt contains EXACTLY `Known Context:` + the Discovery Map 
    - `HasGatingPredicate` = a shard patch adds or modifies a **status/enum-comparison predicate** (`Status == X`, `Status is X or Y`, `X.Contains(Status)`, pattern-match on a discriminator) OR introduces a new value into an enum referenced by existing gating predicates. NOT merely the presence of `if (!x) return`.
    - `ReviewType` = one of `commit | pr | staged | working`.
 
+6. **Set the review depth from the lane.** Run `lane.mjs --range <range>` for the `first-parent` and `explicit-range` strategies, or `lane.mjs --working` for `working-tree` (as `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/lane.mjs" …`). The lane is the higher of the passed `lane=<lane>` token and `lane.mjs` (raise-only, as `mergeLane`), so a review never runs below the slice it reviews. A token that is not a lane is broken: read it as `normal` and record `broken passed lane: <value>`; keep a `lane: broken:` line from `lane.mjs` the same way. A missing or broken lane means `normal` (full depth), never `fast`. Depth: `fast` → light, `normal` → full, `rigorous` → rigorous (the **Lanes** table in `skills/_shared/candidate-workflow.md`). Record the depth, the lane and its reasons under `## Reconciliation Notes`.
+   - **Light** — In the fast lane (light), dispatch no `integration-scanner`, no `precedent-locator`, no Security lens, no sink-candidate sweep and no Wave-3 agent. The review is Step 1, the deterministic pre-wave gates, one Quality `diff-analyst` per shard (it carries the documented-standards surface) and the Step 6 claim-verifier. Wave-1 lenses gated on input data (Dependencies, CVE, Peer-Mirror, Spec conformance) still run when their gate fires. Record each skipped part as `skipped (fast lane)`, never as `unavailable`.
+   - **Full** — every step as written below.
+   - **Rigorous** — full, plus: In the rigorous lane, Security runs on every shard, test and docs shards included, and the interaction sweep (4b) and the gap-finder (4c) run whenever 2 or more files changed. The lenses that need input data stay data-gated (Dependencies, CVE, Peer-Mirror, Predicate-Trace, Spec conformance): with no input there is nothing for them to review.
+
+   The deterministic pre-wave gates run in every lane, and claim verification runs in every lane (Step 6).
+
 ### Step 2: Dispatch Wave-1 — Integration + Precedents + Deps/CVE + Peer-Mirror
 
-**Pre-Wave-1 deterministic gates run before agent dispatch.** Create the capability snapshot once:
+**Pre-Wave-1 deterministic gates run before agent dispatch.** At light depth (fast lane) this step dispatches only the input-gated Wave-1 lenses (Step 1.6). Create the capability snapshot once:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/skills/deep-review/_helpers/review-preflight.mjs" "."
@@ -122,7 +129,7 @@ Spawn ALL of the following in parallel at T=0 in a **single message with multipl
 - subagent_type: `rpiv:integration-scanner`
 - Prompt: "Read `{changed_files_manifest}` and map inbound references, outbound dependencies, and infrastructure wiring for every path in `changedFiles`. Flag auth-boundary crossings and config/DI/event registration touching these paths. Do not analyse code quality; connections only, in your standard output format."
 
-**Agent — Precedents** (always): use the `precedent-locator` prompt defined in Step 3 below — dispatch it here, not in Wave-2. Give it `{changed_files_manifest}`, not a pasted file list.
+**Agent — Precedents** (full and rigorous depth; not dispatched in the fast lane): use the `precedent-locator` prompt defined in Step 3 below — dispatch it here, not in Wave-2. Give it `{changed_files_manifest}`, not a pasted file list.
 
 **Agent — Dependencies** (only when `ManifestChanged`): use the `codebase-analyzer` Dependencies prompt defined in Step 3 below — dispatch here. Input it needs: touched manifest paths + `LockstepSelfReview` flag.
 
@@ -140,7 +147,7 @@ While these agents run, the orchestrator produces the rest of the Discovery Map 
 - Commit-message context (if applicable)
 - **Project standards** — the target repo's prose rules (agent instructions, standing decisions/ADRs, domain vocabulary) extracted per §Project standards in `references/discovery-map.md`, minus rules configured tooling already enforces
 
-**Wait for `integration-scanner`, the peer-mirror agent, and every sink-candidate shard sweep (when dispatched)** before Wave-2. Digest their results into the Discovery Map. Precedents / Dependencies / CVE continue in the background; **Precedents MUST be awaited before Step 5 begins**. Dependencies / CVE also merge at Step 5 but may arrive later.
+**Wait for `integration-scanner`, the peer-mirror agent, and every sink-candidate shard sweep (when dispatched)** before Wave-2. Digest their results into the Discovery Map. Precedents / Dependencies / CVE continue in the background; **Precedents MUST be awaited before Step 5 begins** (except in the fast lane, where it is not dispatched). Dependencies / CVE also merge at Step 5 but may arrive later.
 
 **Pre-index the dependency neighborhood (ctx_index)** — only when preflight reports Context Mode configured. Run AFTER integration-scanner returns, BEFORE Wave-2 dispatch. The Quality lens's Surface 3 (blast radius) and Surface 8 (cross-layer drift) depend on reading files outside ChangedFiles — inbound consumers, peer aggregates, upstream guards. Pre-index the outbound dependency files of ChangedFiles so lens agents query `ctx_search` instead of issuing Read calls:
   - Collect the union of files referenced by integration-scanner's `Outbound deps` and `Inbound refs` rows
@@ -161,7 +168,7 @@ Read `references/discovery-map.md` NOW — it holds the exact map template, the 
 
 ### Step 3: Dispatch Wave-2 — Quality + Security Lenses
 
-Dispatch all shard lenses in one parallel wave. Spawn one Quality `diff-analyst` per ReviewPatch. Spawn one Security `diff-analyst` per ReviewPatch whose shard category is `mixed`, `source`, `migration`, `config`, `manifest`, or `other`; docs-only and test-only shards skip Security. Each agent receives the Discovery Map and its own patch path. Precedents / Dependencies / CVE are already running from Wave-1.
+Dispatch all shard lenses in one parallel wave. Spawn one Quality `diff-analyst` per ReviewPatch. Spawn one Security `diff-analyst` per ReviewPatch whose shard category is `mixed`, `source`, `migration`, `config`, `manifest`, or `other`; docs-only and test-only shards skip Security (in the rigorous lane Security runs on every shard; in the fast lane no Security lens runs). Each agent receives the Discovery Map and its own patch path. Precedents / Dependencies / CVE are already running from Wave-1.
 
 **Wave-2 context isolation (LOAD-BEARING — violations cause silent quality collapse)**: Each Wave-2 agent receives EXACTLY two things, nothing else: (1) the Discovery Map and (2) its resolved shard patch path.
 
@@ -239,6 +246,8 @@ When the gate fires:
 
 ### Step 4: Dispatch Wave-3 — Predicate-Trace + Interaction Sweep + Gap-Finder
 
+At light depth (fast lane) skip all of Step 4 and record `Wave-3: skipped (fast lane)`.
+
 Once Wave-2 (Quality + Security) completes, dispatch 4a and 4b as parallel agents **in a single message**; compute 4c inline (orchestrator-side set arithmetic — no agent). They do NOT consume each other's output:
 
 - **Interaction Sweep (4b)** receives Quality's `Predicate-set coherence` table directly as its predicate-row source. Quality's table already flags mismatches — Predicate-Trace (4a) only *elaborates* them through consumers. The sweeper's built-in kinds don't need 4a at all; the caller-supplied kinds `stranded-state`, `false-promise`, and `co-tenant-filter-gap` operate on the same rows 4a would trace.
@@ -255,7 +264,7 @@ Do NOT wait — 4b (Interaction Sweep) dispatches in the same message as 4a; 4c 
 
 #### Step 4b: Interaction Sweep
 
-**Gate**: SKIP this sub-step (do not dispatch 4b) when EITHER `len(ChangedFiles) < 2` OR the Quality lens returned fewer than 4 total observations across all files. Emergent interactions need surface area; tiny diffs cannot structurally produce them.
+**Gate**: SKIP this sub-step (do not dispatch 4b) when EITHER `len(ChangedFiles) < 2` OR the Quality lens returned fewer than 4 total observations across all files (in the rigorous lane only the `len(ChangedFiles) < 2` condition applies). Emergent interactions need surface area; tiny diffs cannot structurally produce them.
 
 Otherwise spawn ONE `interaction-sweeper` in parallel with 4a:
   ```
@@ -296,11 +305,11 @@ No agent dispatch. Compute inline while 4a / 4b run:
 
    Risk-bearing behavior class (diff introduces one of): state mutation | I/O (DB/network/file) | error path | conditional on mutable state | concurrent/shared-state access | public API surface change. Maximum **5** gap findings; stop once reached. Citation contract applies.
 
-**Wait for ALL of 4a / 4b AND the Precedents agent from Wave-1 to complete** before proceeding to Step 5 (Reconciliation). Precedents is a **hard gate** — severity weighting in Step 5 reads its follow-up-within-30-days counts. Dependencies / CVE (when dispatched) also merge in here but are not individually hard-gated; wait for them too unless they clearly exceed the review SLA, in which case omit `## Dependencies` and note it in the artifact. 4c has no wait — it completes synchronously with the orchestrator.
+**Wait for ALL of 4a / 4b AND the Precedents agent from Wave-1 to complete** before proceeding to Step 5 (Reconciliation). Precedents is a **hard gate** (except in the fast lane, where it is not dispatched) — severity weighting in Step 5 reads its follow-up-within-30-days counts. Dependencies / CVE (when dispatched) also merge in here but are not individually hard-gated; wait for them too unless they clearly exceed the review SLA, in which case omit `## Dependencies` and note it in the artifact. 4c has no wait — it completes synchronously with the orchestrator.
 
 ### Step 5: Reconcile Findings
 
-**Barrier**: Step 5 MUST NOT begin until the Precedents agent has returned. Severity weighting depends on historical follow-up counts; starting reconciliation without them produces mis-weighted severities that the verification pass (Step 6) cannot correct.
+**Barrier**: Step 5 MUST NOT begin until the Precedents agent has returned — except in the fast lane, where Precedents is not dispatched, Step 5 does no precedent weighting, and the review records `precedents: skipped (fast lane)`. Severity weighting depends on historical follow-up counts; starting reconciliation without them produces mis-weighted severities that the verification pass (Step 6) cannot correct.
 
 **Resolution integrity check** (load-bearing): when Precedents returns a commit that claims to resolve or supersede a current finding, run `git merge-base --is-ancestor <precedent-hash> <TIP>` before accepting the resolution.
   - Ancestor: the precedent IS in the reviewed branch; mark the finding `resolved-by: <hash>` and demote its severity to 💭 (kept for context).
@@ -368,7 +377,7 @@ Before writing the artifact, spawn ONE `claim-verifier` whose sole job is to gro
 
 Carry every verifier result into Step 7. Verified and Weakened findings remain active. Falsified findings remain in the store with `verify:"Falsified"` and `status:"withdrawn"`; rendering omits them from the body but preserves the audit count. Set review metadata to `status: ready` and `review_status: complete`; `merge_status` is derived from remaining critical + important findings.
 
-**Do not skip this step** — it is the only mechanism that stops confident-but-unread lens assertions from reaching the artifact.
+**Do not skip this step** — claim verification runs in every lane; it is the only mechanism that stops confident-but-unread lens assertions from reaching the artifact.
 
 ### Step 7: Write the Review Document
 
@@ -378,7 +387,7 @@ Carry every verifier result into Step 7. Verified and Weakened findings remain a
    - `date:` ← `<iso>` (first tab-separated field on line 1 of the Metadata block above, offset verbatim).
    - Reviewer: `author:` from the Metadata block (fallback: `unknown`).
 
-2. **Create the write-once review store.** Create the target `.md` as an empty placeholder, then initialize it with review metadata (date/author/repository/branch/commit/review_type/scope/scope_strategy/in_scope_files_count/status/review_status) and pre-rendered trailing sections (Pattern/Impact/Precedents/Recommendation):
+2. **Create the write-once review store.** Create the target `.md` as an empty placeholder, then initialize it with review metadata (date/author/repository/branch/commit/review_type/scope/scope_strategy/in_scope_files_count/status/review_status) and pre-rendered trailing sections (Reconciliation Notes/Pattern/Impact/Precedents/Recommendation):
    ```bash
    node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/store.mjs" init --review --artifact <review.md> --root . < <review-init.json>
    ```
@@ -425,6 +434,8 @@ Carry every verifier result into Step 7. Verified and Weakened findings remain a
 
 ### Step 8: Present Summary
 
+Before presenting, count the fix commits on the branch that name a review artifact (implement's fix-commit messages name the review and its fix round). With 1 fix round already made and the review still `Merge: blocked`, present the Fix step as the stop below, not as a new round.
+
 ```
 Review written to:
 `.rpiv/artifacts/reviews/{filename}.md`
@@ -435,6 +446,7 @@ Verification: {V} verified · {W} weakened · {F} falsified (dropped)
 Advisor:      {adjudicated | inline}
 Spec:         {Spec Conformance status line}
 Review:       complete · Merge: {blocked | clear} · {B} blockers (🔴 + 🟡)
+Depth:        {light | full | rigorous} ({lane} lane)
 
 Top items:
 1. {ID} — `file:line` — {headline}
@@ -447,9 +459,9 @@ Ask follow-ups, or chain forward.
 
 💬 Follow-up: describe the question in chat to append a timestamped Follow-up section. Retired IDs stay retired; re-run `/rpiv:deep-review` for a fresh review.
 
-**Next step:** `/rpiv:design "Address findings from .rpiv/artifacts/reviews/{filename}.md"` — run the design phase over the review document to produce a fix plan.
+**Fix step:** when `Merge: blocked`, run `/clear`, then `/rpiv:implement <review-path>` — implement turns the verified 🔴 and 🟡 findings into fix commits on the branch, then deep-review runs again on the branch. After 1 fix round with the review still `Merge: blocked`, stop and ask the developer with `ask_user_question` (open findings and choices); never start a second fix round unasked.
 
-> 🆕 Tip: start a fresh session with `/new` first — chained skills work best with a clean context window.
+**Next step:** `/rpiv:validate <design-path> <reviewed-range>` — once the review is `Merge: clear`, validate certifies the final code against the approved contract (`<design-path>` from the `design=` token; without a `design=` token, validate asks for the contract). Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop is pending.
 ```
 
 ### Step 9: Handle Follow-ups
@@ -466,11 +478,12 @@ Ask follow-ups, or chain forward.
 
 ## Important Notes
 
+- **Read-only review**: deep-review stays read-only — it never edits code; findings become fix commits on the branch through `/rpiv:implement <review-path>`, one fix round at most before the developer decides (Step 8). Fix rounds are counted from the fix commits on the branch, whose messages name the review artifact and its fix round.
 - **Frontmatter**: `allowed-tools` is intentionally omitted — the skill inherits `Agent`, `ask_user_question`, `advisor`, `Write`, `web_search`, `todo`. Do NOT re-add the line.
 - **Security-lens precision stance**: prefer false negatives. Evidence must carry `confidence ≥ 8`; 🔴 requires an explicit source→sink trace. Missing hardening without a traced sink is NOT a finding.
 - **Load-bearing invariants** (each is enforced in the cited step; this is the do-not-break checklist):
-  - Wave-1 fans out at T=0; integration-scanner + peer-mirror gate Wave-2; Precedents is a **hard gate on Step 5** (drives severity weighting); Dependencies + CVE soft-gate Step 5 (Steps 2, 5).
-  - Wave-3: 4a + 4b dispatch in parallel after Wave-2, 4c is inline arithmetic; wait for 4a/4b + Precedents before Step 5. 4b evaluates the `stranded-state` / `false-promise` / `co-tenant-filter-gap` kinds whenever Quality returns ≥2 mismatched predicate rows (Step 4). Q/S finding IDs are assigned at Wave-2 completion, before Wave-3 (Step 3).
+  - Wave-1 fans out at T=0; integration-scanner (not in the fast lane) + peer-mirror gate Wave-2; Precedents is a **hard gate on Step 5** (drives severity weighting; not dispatched in the fast lane); Dependencies + CVE soft-gate Step 5 (Steps 2, 5).
+  - Wave-3: 4a + 4b dispatch in parallel after Wave-2 (not in the fast lane), 4c is inline arithmetic; wait for 4a/4b + Precedents before Step 5. 4b evaluates the `stranded-state` / `false-promise` / `co-tenant-filter-gap` kinds whenever Quality returns ≥2 mismatched predicate rows (Step 4). Q/S finding IDs are assigned at Wave-2 completion, before Wave-3 (Step 3).
   - Manifest shards cover every reviewable file exactly once. Their patches use `-U30` (never `-U0`; `-U10` fallback >1MB); findings organise per file, not per hunk (Step 1, lenses).
   - **Wave-2 isolation**: lens prompts carry Discovery Map + one shard patch path ONLY — no Wave-1 raw output. Violation → narrativisation (~5× speedup, hallucinated/mis-cited findings) (Step 3).
   - Step 6 verification runs between reconcile and write — never skip it; it also validates `resolved-by` via `git merge-base --is-ancestor` (Step 6).
@@ -479,14 +492,14 @@ Ask follow-ups, or chain forward.
   - **References are load-bearing**: read each `references/*.md` at the step its pointer names (see Conventions); the placeholders `{{QUALITY_SURFACES}}` / `{{SECURITY_SINKS}}` must NEVER reach a dispatched prompt — substitute the reference file's contents verbatim (leading `<!-- -->` comment stripped), never a paraphrase (Steps 2, 3, 5).
 - **Row-only specialists** at narrativisation-prone sites: `diff-analyst` (Wave-2 Q+S + Step 4a predicate-trace — judgment tier, row output), `diff-auditor` (Wave-1 sink sweep — mechanical recall tier), `peer-comparator` (Wave-1 PM), `interaction-sweeper` (Step 4b — IX-block output), `claim-verifier` (Step 6). See `.rpiv/guidance/agents/architecture.md`.
 - **Agent roles**:
-  - `integration-scanner` (Wave-1) — inbound/outbound refs, auth-boundary crossings.
-  - `precedent-locator` (Wave-1) — git history + `.rpiv/artifacts/`.
+  - `integration-scanner` (Wave-1) — not in the fast lane; inbound/outbound refs, auth-boundary crossings.
+  - `precedent-locator` (Wave-1; not in the fast lane) — git history + `.rpiv/artifacts/`.
   - `codebase-analyzer` ×1 (Wave-1, `ManifestChanged`) — dependencies parse.
   - `web-search-researcher` (Wave-1, `ManifestChanged`) — CVE/advisory lookups with LINKS.
   - `peer-comparator` ×1 (Wave-1, gated on `len(PeerPairs) > 0`) — peer-mirror check; tags Mirrored/Missing/Diverged/Intentionally-absent.
   - `diff-analyst` ×1 (Wave-1, gated on a resolved linked issue) — spec conformance vs the external issue (unranked section, never findings).
   - `diff-auditor` × eligible shard (Wave-1, gated on opengrep absent) — mechanical sink-candidate sweep; rows digest into the Discovery Map.
-  - `diff-analyst` × review shards (Wave-2) — one Quality per shard plus Security for security-relevant shard categories.
+  - `diff-analyst` × review shards (Wave-2) — one Quality per shard plus Security for security-relevant shard categories (every shard in the rigorous lane; none in the fast lane).
   - `diff-analyst` ×1 (Step 4a, gated) — predicate-trace (review-scope table).
   - `interaction-sweeper` ×1 (Step 4b, gated) — interaction sweep (`IX-<n>` blocks adopted as `I<n>` findings).
   - *(Step 4c, gated)* — gap-finder runs inline in the orchestrator (set arithmetic over coverage map; no agent).
