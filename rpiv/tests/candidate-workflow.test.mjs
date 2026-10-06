@@ -131,6 +131,9 @@ describe("lane rules", () => {
 			}
 			expect(text).toMatch(/at least 9\.0/);
 			expect(text).toMatch(/does not block on its own/i);
+			expect(text).toMatch(
+				/small behavior-preserving steps and rerun the relevant tests after each/i,
+			);
 		}
 	});
 
