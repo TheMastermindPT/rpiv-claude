@@ -52,7 +52,7 @@ last_updated_by: {Author from Metadata}
 
 ### Human Acceptance
 
-{Exact accepted contract and candidate revision, human decision evidence, or awaiting acceptance. Technical pass is not acceptance or permission to advance.}
+{Exact accepted contract and candidate revision, human decision evidence, or awaiting acceptance. Technical pass is not acceptance. Record the acceptance the lane requires: each slice in rigorous, the combined result in fast and normal (shared **Lanes**).}
 
 ### Integration Authorization and Validation
 

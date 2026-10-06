@@ -171,4 +171,23 @@ describe("lane rules", () => {
 		expect(validate).toMatch(/acceptance the slice's lane requires is absent/i);
 		expect(validate).toMatch(/included rigorous slice without its acceptance/i);
 	});
+
+	it("revise and the validation template follow the lane", () => {
+		const revise = joined(
+			readFileSync(
+				new URL("../skills/revise/SKILL.md", import.meta.url),
+				"utf8",
+			),
+		);
+		expect(revise).not.toMatch(/exact-revision human acceptance/i);
+		expect(revise).toMatch(/reviews and acceptance its lane requires/i);
+		const template = joined(
+			readFileSync(
+				new URL("../skills/validate/templates/validation.md", import.meta.url),
+				"utf8",
+			),
+		);
+		expect(template).not.toMatch(/permission to advance/i);
+		expect(template).toMatch(/acceptance the lane requires/i);
+	});
 });
