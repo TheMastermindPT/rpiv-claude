@@ -47,6 +47,8 @@ Use the strongest checkable oracle. Justify any genuinely nondeterministic
 expected value; do not weaken exact behavior to shape/presence assertions.
 Check the current source so Expected red is plausible. If behavior already
 exists, record that fact and refine the missing behavior instead of inventing red.
+A test that must already pass before its slice (a pin guarding kept behavior)
+states `Expected red: none — pin`; validate does not re-prove it.
 List automated commands and observable manual criteria separately under
 `### Success Criteria:`. A success-criteria reference is not evidence of a pass.
 
