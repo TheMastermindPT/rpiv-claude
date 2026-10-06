@@ -106,6 +106,10 @@ describe("lane rules", () => {
 				/amend that commit while it is unpushed/i,
 				/Never amend a pushed commit/i,
 				/commit message carries the red and green evidence/i,
+				/When commits are authorized, each slice ends as exactly one commit/i,
+				/Without commit authority[^.]*frozen snapshot/i,
+				/parent commit plus a digest of its complete working-tree patch/i,
+				/fix after the slice commit was pushed is a stop/i,
 			]) {
 				expect(text).toMatch(rule);
 			}

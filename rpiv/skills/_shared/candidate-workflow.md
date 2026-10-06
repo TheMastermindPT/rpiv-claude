@@ -126,11 +126,16 @@ The cap never turns unresolved findings or an incomplete inspection into
 acceptance. At that stop the developer may accept fixes made after the last round
 without a further review; record the unreviewed delta as residual risk.
 
-Each slice ends as exactly one commit on the feature branch. Observe and log
-each red and green, but do not commit intermediate states. Commit once the
-slice is green; review fixes amend that commit while it is unpushed, which gives
-a new candidate identity whose checks and reviews re-run. Never amend a pushed
-commit. The commit message carries the red and green evidence summary.
+When commits are authorized, each slice ends as exactly one commit on the
+feature branch. Without commit authority, the slice ends as one frozen snapshot
+(**Candidate Identity**). Observe and log each red and green, but do not commit
+intermediate states; an uncommitted red or green state is identified by its
+parent commit plus a digest of its complete working-tree patch, untracked files
+included, recorded in its log. Commit once the slice is green; review fixes
+amend that commit while it is unpushed, which gives a new candidate identity
+whose checks and reviews re-run. Never amend a pushed commit: a fix after the
+slice commit was pushed is a stop, and the developer decides whether a follow-up
+commit is allowed. The commit message carries the red and green evidence summary.
 
 In fast and normal, a slice whose gates pass becomes the predecessor for the
 next slice without a human stop, and the developer accepts the combined result
@@ -294,7 +299,8 @@ no mandatory blocker or proof gap remains. Preserve the original findings and
 record clearance separately; do not relabel their historical outcome as clean.
 
 Link evidence once from the brief; keep logs/source out of it. Record red then
-green at their actual intermediate identities, and final verification at the
+green at their actual intermediate identities (for an uncommitted state, the
+identity **Lanes** defines), and final verification at the
 reviewed candidate. Preserve prior results and decisions as history. Later fixes
 produce new evidence and reviews; do not rewrite earlier failures into passes.
 Validation reports facts and remediation needs without editing implementation.
