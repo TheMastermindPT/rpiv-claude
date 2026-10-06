@@ -17,7 +17,7 @@ metadata:
 
 ## Read First
 
-READ `$RPIV_PLUGIN_ROOT/skills/_shared/candidate-workflow.md` before execution or resume. It owns the agreed brief and test contract, isolated workspace setup and dirty-state preservation, candidate and contract identity, reviewer dispatch, and acceptance/integration gates. Follow that loop directly; a missing or broken shared workflow blocks execution.
+READ `$RPIV_PLUGIN_ROOT/skills/_shared/candidate-workflow.md` before execution or resume. It owns the agreed brief and test contract, lane workspace setup and dirty-state preservation, candidate and contract identity, reviewer dispatch, and acceptance/integration gates. Follow that loop directly; a missing or broken shared workflow blocks execution.
 
 This skill is human-invoked. Other skills that supervise a candidate use the shared loop directly rather than invoking this skill.
 
@@ -61,7 +61,7 @@ Completion criterion: the frozen current revision has passing required checks an
 
 ## 4. Human Checkpoint
 
-Present the exact candidate revision, contract identity, changed scope, red/green evidence, review findings, gate outcomes, and remaining work. Ask the human to accept this revision, request changes, or pause. Passing tests and reviewer approval do not supply human acceptance.
+Present the exact candidate revision, contract identity, changed scope, red/green evidence, review findings, gate outcomes, and remaining work. In the rigorous lane, ask the human to accept this revision, request changes, or pause; in fast and normal, keep this report for the combined acceptance. Passing tests and reviewer approval do not supply human acceptance.
 
 In the rigorous lane, stop until the human accepts the exact candidate revision. Edits after that checkpoint invalidate acceptance for the changed revision and require new tests, reviews, and acceptance. Only then may an authorized next slice start from this accepted predecessor via the shared setup. In fast and normal, a slice whose gates pass becomes the predecessor for the next authorized slice without a stop, and the human accepts the combined result once before integration. Every lane still stops at the shared **Lanes** stops. A request for one slice ends here even when more work is pending.
 

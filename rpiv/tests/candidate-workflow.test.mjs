@@ -148,6 +148,10 @@ describe("lane rules", () => {
 			expect(text).toMatch(
 				/In the rigorous lane, the human accepts each slice/i,
 			);
+			expect(text).toMatch(/Every lane still stops for/i);
+			expect(text).toMatch(
+				/missing, failed, broken, unavailable, pending, or stale/i,
+			);
 		}
 		const implement = joined(readFileSync(implementPath, "utf8"));
 		expect(implement).toMatch(
@@ -157,8 +161,14 @@ describe("lane rules", () => {
 			/accepts the combined result once before integration/i,
 		);
 		expect(implement).toMatch(/workspace the lane requires/i);
+		expect(implement).toContain("lane workspace setup");
+		const asks = implement.match(/[^.]*ask the human to accept[^.]*\./gi) ?? [];
+		expect(asks.filter((sentence) => !/rigorous/i.test(sentence))).toEqual([]);
 		const validate = joined(readFileSync(validatePath, "utf8"));
 		expect(validate).toMatch(/rigorous slice[^.]*without[^.]*acceptance/i);
 		expect(validate).toMatch(/fast and normal[^.]*combined result/i);
+		expect(validate).not.toMatch(/if absent, report awaiting acceptance/i);
+		expect(validate).toMatch(/acceptance the slice's lane requires is absent/i);
+		expect(validate).toMatch(/included rigorous slice without its acceptance/i);
 	});
 });

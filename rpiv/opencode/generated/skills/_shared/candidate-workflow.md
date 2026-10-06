@@ -141,8 +141,8 @@ In fast and normal, a slice whose gates pass becomes the predecessor for the
 next slice without a human stop, and the developer accepts the combined result
 once before integration. In the rigorous lane, the human accepts each slice.
 Every lane still stops for scope or contract changes, findings left after 2 fix
-rounds, missing authority, and required gates that are failed, broken, or
-unavailable.
+rounds, missing authority, and required gates that are missing, failed, broken,
+unavailable, pending, or stale (**States And Evidence**).
 
 ## Candidate Identity
 
