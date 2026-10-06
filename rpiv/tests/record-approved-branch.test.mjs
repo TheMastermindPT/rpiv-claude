@@ -425,10 +425,15 @@ describe("record-approved-branch hook", () => {
 		const base = JSON.parse(
 			git(ROOT, "show", `${S1_ACCEPTED}:./hooks/hooks.json`),
 		).hooks;
-		const others = {
-			...hooks,
-			PostToolUse: hooks.PostToolUse.filter((e) => e !== entry),
-		};
+		// S15 (D24) adds the cycle-event entries; they are pinned by
+		// tests/cycle-log.test.mjs, so they are left out here.
+		const isCycleEntry = (e) =>
+			e.hooks.some((h) => h.command.includes("record-cycle-event.mjs"));
+		const others = {};
+		for (const [event, list] of Object.entries(hooks)) {
+			const kept = list.filter((e) => e !== entry && !isCycleEntry(e));
+			if (kept.length > 0) others[event] = kept;
+		}
 		expect(others).toEqual(base);
 		// S2 revision 1: the entry-point guard must not silence the hook,
 		// however its path is spelled.

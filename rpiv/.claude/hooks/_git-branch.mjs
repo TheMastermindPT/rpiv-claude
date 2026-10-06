@@ -15,17 +15,24 @@ export function limitGitTime(ms) {
 	deadline = Date.now() + ms;
 }
 
-/** Runs git in `dir`: `{ status, out }`, or `{ error }` when git could not run. */
+/** Runs git in `dir`: `{ status, out, err }`, or `{ error }` when git could not
+    run. git's messages are in English (`LC_ALL=C`) so callers can read them
+    (S15 revision 2, D24). */
 export function runGit(dir, args) {
 	const left = deadline - Date.now();
 	if (left <= 0) return { error: "git queries took too long" };
 	const res = spawnSync("git", ["-C", dir, ...args], {
 		encoding: "utf-8",
+		env: { ...process.env, LC_ALL: "C" },
 		timeout: Math.min(GIT_TIMEOUT_MS, left),
 		windowsHide: true,
 	});
 	if (res.error) return { error: res.error.message };
-	return { status: res.status, out: (res.stdout ?? "").trim() };
+	return {
+		status: res.status,
+		out: (res.stdout ?? "").trim(),
+		err: (res.stderr ?? "").trim(),
+	};
 }
 
 const gitFailed = (error) => `git could not run (${error})`;
