@@ -19,7 +19,7 @@ Review changes across **Quality**, **Security**, **Dependencies** lenses with op
 
 ## Input
 
-`$ARGUMENTS` — scope: `commit` | `staged` | `working` | a commit hash | `A..B` range | PR branch name. Empty defaults to feature-branch-vs-default-branch (first-parent). An optional trailing `lane=<lane>` token (`fast`, `normal` or `rigorous`; implement's next-step line passes it) is removed before scope resolution and sets the review depth at Step 1.6. An optional `design=<design-path>` token (the approved brief or design the reviewed slices implement; implement passes it too) is removed the same way and is carried into the Step 8 next step.
+`$ARGUMENTS` — scope: `commit` | `staged` | `working` | a commit hash | `A..B` range | PR branch name. Empty defaults to feature-branch-vs-default-branch (first-parent). Deep-review and validate run once over the whole feature's range after its last authorized slice (rigorous: after that slice's human acceptance). An optional trailing `lane=<lane>` token (`fast`, `normal` or `rigorous`; implement's next-step line passes it) is removed before scope resolution and sets the review depth at Step 1.6. An optional `design=<design-path>` token (the approved brief or design the reviewed slices implement; implement passes it too) is removed the same way and is carried into the Step 8 next step.
 
 ## Metadata
 

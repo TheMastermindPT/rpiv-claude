@@ -155,10 +155,40 @@ describe("deep-review findings become fix commits", () => {
 		expect(next[0]).toContain(
 			"`/rpiv:deep-review <candidate-branch-or-range> lane=<lane> design=<design-path>`",
 		);
-		expect(next[0]).toMatch(/once the slice's gates pass/i);
+		expect(next[0]).not.toMatch(/once the slice's gates pass/i);
 		expect(implementJoined).not.toMatch(
 			/once the lane's acceptance is recorded/i,
 		);
+	});
+
+	it("implement, deep-review and validate state one review timing", () => {
+		// S21-review-timing-wording, B114 (D30): one sentence, verbatim, in all three.
+		const SENTENCE =
+			"Deep-review and validate run once over the whole feature's range after its last authorized slice (rigorous: after that slice's human acceptance).";
+		const occurrences = (text) => joined(text).split(SENTENCE).length - 1;
+		const nextStep = (text) =>
+			linesOf(text).filter((line) => /^\s*\*\*Next step:\*\*/.test(line));
+		const validate = read("skills/validate/SKILL.md");
+		for (const text of [implement, deepReview, validate]) {
+			expect.soft(occurrences(text)).toBe(1);
+		}
+		const implementNext = nextStep(implement);
+		expect(implementNext).toHaveLength(1);
+		expect(implementNext[0]).toContain(SENTENCE);
+		expect(implementNext[0]).toContain(
+			"`/rpiv:deep-review <candidate-branch-or-range> lane=<lane> design=<design-path>`",
+		);
+		expect(implementNext[0]).not.toMatch(/once the slice's gates pass/i);
+		expect(nextStep(validate)[0]).toContain(SENTENCE);
+		const scope = deepReviewLines.find((line) =>
+			line.startsWith("`$ARGUMENTS` — scope:"),
+		);
+		expect(scope).toContain(SENTENCE);
+		for (const skill of ["implement", "deep-review", "validate"]) {
+			expect
+				.soft(read(`opencode/generated/skills/rpiv-${skill}/SKILL.md`))
+				.toContain(SENTENCE);
+		}
 	});
 
 	it.each([
