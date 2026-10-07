@@ -427,8 +427,11 @@ describe("record-approved-branch hook", () => {
 		).hooks;
 		// S15 (D24) adds the cycle-event entries; they are pinned by
 		// tests/cycle-log.test.mjs, so they are left out here.
+		// Later slices' entries are pinned by their own tests too (S17:
+		// chain-handoff-restore.mjs).
+		const LATER = ["record-cycle-event.mjs", "chain-handoff-restore.mjs"];
 		const isCycleEntry = (e) =>
-			e.hooks.some((h) => h.command.includes("record-cycle-event.mjs"));
+			e.hooks.some((h) => LATER.some((name) => h.command.includes(name)));
 		const others = {};
 		for (const [event, list] of Object.entries(hooks)) {
 			const kept = list.filter((e) => e !== entry && !isCycleEntry(e));

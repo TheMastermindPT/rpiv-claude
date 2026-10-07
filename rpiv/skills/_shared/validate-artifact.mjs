@@ -113,6 +113,9 @@ function laneErrors(fm) {
 /** Normalized body hash — CRLF and trailing whitespace ignored so formatting churn is not flagged. */
 const bodyHash = (body) => createHash("sha256").update(body.replace(/\r\n/g, "\n").trimEnd()).digest("hex");
 
+/** The `content_hash` an artifact's text has (its body's hash), as a stamp writes it (S17). */
+export const contentHashOf = (text) => bodyHash(splitFrontmatter(text).body);
+
 export function validateArtifact(artifactPath, root, { verifyHash = true, finalizing = false } = {}) {
 	const errors = [];
 	if (!existsSync(artifactPath)) return { errors: [`file not found: ${artifactPath}`] };

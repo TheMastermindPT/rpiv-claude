@@ -71,4 +71,22 @@ describe("one rpiv chain", () => {
 			expect(lines[0]).toMatch(/run `\/clear` first, then this command/i);
 		},
 	);
+
+	it("pipeline skills write a handoff and the clear hook is registered", () => {
+		// S17 (D37): the stage that ends writes the handoff the clear hook shows once.
+		for (const skill of ["discover", "research", "design", "plan", "implement", "deep-review", "validate"]) {
+			const [line] = nextStepLines(skill);
+			expect(line, skill).toContain('handoff.mjs" write --next');
+			expect(line, skill).toContain("unless a stop is pending");
+			expect(read(`opencode/generated/skills/rpiv-${skill}/SKILL.md`), skill).toContain("handoff.mjs");
+		}
+		const sessionStart = JSON.parse(read("hooks/hooks.json")).hooks.SessionStart;
+		const clear = sessionStart.filter((entry) => entry.matcher === "clear");
+		expect(clear).toHaveLength(1);
+		expect(clear[0].hooks).toHaveLength(1);
+		expect(clear[0].hooks[0].command).toContain(".claude/hooks/chain-handoff-restore.mjs");
+		const compact = sessionStart.filter((entry) => entry.matcher === "compact");
+		expect(compact).toHaveLength(1);
+		expect(compact[0].hooks[0].command).toContain("session-state-restore.mjs");
+	});
 });

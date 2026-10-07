@@ -1,5 +1,5 @@
 {
-  "description": "rpiv lifecycle hooks: session bootstrap/restore, read-only enforcement and auto-approval for rpiv agents, approval prompts before outward actions (git push, branch/worktree creation, GitHub writes) and before commits off an approved branch, recording of approved branches, cycle metrics (stages, developer decisions, agent dispatches), artifact validation and fence-duplication detection on Write, agent model/output checks, compaction state preservation.",
+  "description": "rpiv lifecycle hooks: session bootstrap/restore, read-only enforcement and auto-approval for rpiv agents, approval prompts before outward actions (git push, branch/worktree creation, GitHub writes) and before commits off an approved branch, recording of approved branches, cycle metrics (stages, developer decisions, agent dispatches), artifact validation and fence-duplication detection on Write, agent model/output checks, compaction state preservation, and the chain handoff shown once after /clear.",
   "hooks": {
     "SessionStart": [
       {
@@ -18,6 +18,16 @@
           {
             "type": "command",
             "command": "node \"${CLAUDE_PLUGIN_ROOT}/.claude/hooks/session-state-restore.mjs\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/.claude/hooks/chain-handoff-restore.mjs\"",
             "timeout": 10
           }
         ]

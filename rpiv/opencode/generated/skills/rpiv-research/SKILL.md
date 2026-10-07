@@ -360,7 +360,7 @@ Please review and let me know if you have follow-up questions.
 
 💬 Follow-up: describe the change in chat to append a timestamped Follow-up section to this artifact. Re-run `/rpiv:research` for a fresh artifact.
 
-**Next step:** `/rpiv:design .rpiv/artifacts/research/{filename}.md` — shape the lean intent brief and the next slice's contract. Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop (a failed, broken, or missing gate) is pending.
+**Next step:** `/rpiv:design .rpiv/artifacts/research/{filename}.md` — shape the lean intent brief and the next slice's contract. Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop (a failed, broken, or missing gate) is pending. Before ending, unless a stop is pending, write the handoff for that command: `node "$RPIV_PLUGIN_ROOT/skills/_shared/handoff.mjs" write --next "<the command>" [--artifact <path>] [--slice <id>] [--lane <lane>] [--decision "<open decision>"]...`; after `/clear`, Claude Code shows it once.
 
 In the fast lane, the next step is `/rpiv:implement .rpiv/artifacts/research/{filename}.md` instead: design is skipped, and implement writes the slice contract and asks once.
 

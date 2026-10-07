@@ -105,7 +105,7 @@ Done when the required intent reviews pass on the stabilized brief and the user 
 4. Flip `status: in-review` to `status: ready` only after the required gates pass. If finalization changed reviewed intent, re-record the body hash and re-review before the flip.
 5. Present the path, architectural outcome, next-slice readiness, and deferred scope. `ready` means reviewed design intent, not permission to build or proof of feature completion.
 
-**Next step:** `/rpiv:implement <design-path>` — build the agreed next slice; implement agrees the workspace and build authorization first. Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop (a failed, broken, or missing gate) is pending.
+**Next step:** `/rpiv:implement <design-path>` — build the agreed next slice; implement agrees the workspace and build authorization first. Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop (a failed, broken, or missing gate) is pending. Before ending, unless a stop is pending, write the handoff for that command: `node "$RPIV_PLUGIN_ROOT/skills/_shared/handoff.mjs" write --next "<the command>" [--artifact <path>] [--slice <id>] [--lane <lane>] [--decision "<open decision>"]...`; after `/clear`, Claude Code shows it once.
 
 Scheduling through `/rpiv:plan` is optional, for a rigorous multi-slice change.
 

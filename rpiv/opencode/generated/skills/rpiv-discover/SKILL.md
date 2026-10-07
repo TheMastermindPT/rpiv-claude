@@ -290,7 +290,7 @@ Frontmatter additions for template_version 2: `register:` (`plain` / `mixed` / `
 
    💬 Follow-up: discover writes a fresh FRD per call — re-invoke `/rpiv:discover` to iterate (the prior FRD stays unchanged on disk).
 
-   **Next step:** `/rpiv:research .rpiv/artifacts/discover/<YYYY-MM-DD_HH-MM-SS>_<topic>.md` — ground the intent in codebase reality. Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop (a failed, broken, or missing gate) is pending.
+   **Next step:** `/rpiv:research .rpiv/artifacts/discover/<YYYY-MM-DD_HH-MM-SS>_<topic>.md` — ground the intent in codebase reality. Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop (a failed, broken, or missing gate) is pending. Before ending, unless a stop is pending, write the handoff for that command: `node "$RPIV_PLUGIN_ROOT/skills/_shared/handoff.mjs" write --next "<the command>" [--artifact <path>] [--slice <id>] [--lane <lane>] [--decision "<open decision>"]...`; after `/clear`, Claude Code shows it once.
    ```
 
 ### Step 8: Handle Follow-ups

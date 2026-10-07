@@ -481,11 +481,18 @@ describe("S15 hook registration", () => {
 	const isCycleEntry = (entry) =>
 		entry.hooks.some((h) => h.command.includes("record-cycle-event.mjs"));
 
-	/** `hooks` without the cycle-event entries (and events left empty). */
+	// Hooks registered by later slices, each pinned by its own slice's tests
+	// (S17: chain-handoff.test.mjs / chain-contract.test.mjs).
+	const LATER_HOOKS = ["chain-handoff-restore.mjs"];
+	const isLaterEntry = (entry) =>
+		entry.hooks.some((h) => LATER_HOOKS.some((name) => h.command.includes(name)));
+
+	/** `hooks` without the cycle-event entries and later slices' entries (and
+	    events left empty). */
 	function withoutCycleEntries(hooks) {
 		const out = {};
 		for (const [event, entries] of Object.entries(hooks)) {
-			const kept = entries.filter((e) => !isCycleEntry(e));
+			const kept = entries.filter((e) => !isCycleEntry(e) && !isLaterEntry(e));
 			if (kept.length > 0) out[event] = kept;
 		}
 		return out;

@@ -450,7 +450,7 @@ Ask follow-ups, or chain forward.
 
 **Fix step:** when `Merge: blocked`, run `/clear`, then `/rpiv:implement <review-path>` — implement turns the verified 🔴 and 🟡 findings into fix commits on the branch, then deep-review runs again on the branch. After 1 fix round with the review still `Merge: blocked`, stop and ask the developer with `question` (open findings and choices); never start a second fix round unasked.
 
-**Next step:** `/rpiv:validate <design-path> <reviewed-range>` — once the review is `Merge: clear`, validate certifies the final code against the approved contract (`<design-path>` from the `design=` token; without a `design=` token, validate asks for the contract). Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop is pending.
+**Next step:** `/rpiv:validate <design-path> <reviewed-range>` — once the review is `Merge: clear`, validate certifies the final code against the approved contract (`<design-path>` from the `design=` token; without a `design=` token, validate asks for the contract). Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop is pending. Before ending, unless a stop is pending, write the handoff for that command: `node "$RPIV_PLUGIN_ROOT/skills/_shared/handoff.mjs" write --next "<the command>" [--artifact <path>] [--slice <id>] [--lane <lane>] [--decision "<open decision>"]...`; after `/clear`, Claude Code shows it once.
 ```
 
 ### Step 9: Handle Follow-ups
