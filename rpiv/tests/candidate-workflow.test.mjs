@@ -137,6 +137,40 @@ describe("lane rules", () => {
 		}
 	});
 
+	it("mutation runs once after the last review round", () => {
+		// D35, verbatim (S24).
+		const RUN_ONCE =
+			"Mutation runs once, on the final candidate after the last review round's fixes or after the developer ends reviews; a run on an earlier candidate never counts for a later one.";
+		const REUSE =
+			"Validate reuses a recorded mutation run only when it ran on the revision being validated; otherwise it runs mutation once on that revision.";
+		const count = (text, phrase) => text.split(phrase).length - 1;
+		for (const text of workflowTexts()) {
+			expect(count(text, RUN_ONCE)).toBe(1);
+			const checks = text.indexOf("Available Quality Checks");
+			const integration = text.indexOf("## Integration");
+			expect(text.indexOf(RUN_ONCE)).toBeGreaterThan(checks);
+			expect(text.indexOf(RUN_ONCE)).toBeLessThan(integration);
+			expect(text).toContain(
+				"Run the deterministic checks (tests, types, lint, and CodeScene where available) before dispatching any candidate-mode review agent.",
+			);
+		}
+		const implement = joined(readFileSync(implementPath, "utf8"));
+		const section3 = implement.slice(implement.indexOf("## 3."), implement.indexOf("## 4."));
+		expect(section3).toContain(RUN_ONCE);
+		const validate = joined(readFileSync(validatePath, "utf8"));
+		expect(validate).toContain(RUN_ONCE);
+		expect(validate).toContain(REUSE);
+		for (const skill of ["implement", "validate"]) {
+			const generated = joined(
+				readFileSync(new URL(`../opencode/generated/skills/rpiv-${skill}/SKILL.md`, import.meta.url), "utf8"),
+			);
+			expect(generated, skill).toContain(RUN_ONCE);
+		}
+		expect(
+			joined(readFileSync(new URL("../opencode/generated/skills/rpiv-validate/SKILL.md", import.meta.url), "utf8")),
+		).toContain(REUSE);
+	});
+
 	it("accepts per slice only in the rigorous lane", () => {
 		for (const text of workflowTexts()) {
 			expect(text).toMatch(

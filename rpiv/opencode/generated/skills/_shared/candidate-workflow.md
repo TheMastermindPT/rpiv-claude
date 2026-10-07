@@ -268,7 +268,9 @@ project policy or a recorded accepted regression says otherwise; that target
 is advisory and does not block on its own. Discover and
 run an applicable mutation command for behavior-changing work when available;
 verify its actual scope and arguments, not merely its script name. Wholly
-non-behavioral work needs no mutation run. In validate, these are read-only
+non-behavioral work needs no mutation run. Mutation runs once, on the final
+candidate after the last review round's fixes or after the developer ends
+reviews; a run on an earlier candidate never counts for a later one. In validate, these are read-only
 checks: findings go back to implement, never to an automatic source/test edit.
 Absent tools remain unavailable; broken invocations retain diagnostics and block
 their required check. An optional unavailable tool is not a successful check.
