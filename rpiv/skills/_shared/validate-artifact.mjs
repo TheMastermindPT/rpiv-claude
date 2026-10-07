@@ -17,6 +17,8 @@
 //   - `status: ready` but body still holds unfilled `{template tokens}` in prose
 //   - TODO / TBD / FIXME left in prose
 //   - an empty code fence
+//   - with --finalizing, in designs and plans only (D26): a code fence over 10 inner lines, and
+//     an unterminated code fence
 //   - a `parent:` that points at a file that does not exist
 //   - a `content_hash:` that no longer matches the body (a ready artifact edited after finalization)
 //
@@ -33,6 +35,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 
+import { parseFences } from "./fences.mjs";
 import { splitFrontmatter } from "./frontmatter.mjs";
 import { isMain } from "./is-main.mjs";
 import { LANES } from "./lane.mjs";
@@ -61,18 +64,38 @@ function artifactKind(artifactPath) {
 	return /(?:^|\/)test-cases\//.test(p) ? "test-cases" : "";
 }
 
-/** Remove fenced ```blocks``` and `inline code` so prose scans don't false-positive on code. */
-function stripCode(body) {
-	return body.replace(/```[\s\S]*?```/g, "").replace(/`[^`\n]*`/g, "");
+/** An inline code span on one line: a backtick run closed by the next run of the same length. */
+const CODE_SPAN = /(?<!`)(`+)(?!`).*?(?<!`)\1(?!`)/g;
+
+/**
+ * Remove closed fenced blocks and `inline code` so prose scans don't false-positive on code.
+ * An unclosed fence is kept as prose, so it can never hide a TODO or token (D26).
+ */
+function stripCode(body, fences) {
+	const fenced = new Set(fences.flatMap(({ start, end }) => Array.from({ length: end - start + 1 }, (_, i) => start + i)));
+	return body
+		.split(/\r?\n/)
+		.filter((_, i) => !fenced.has(i + 1))
+		.join("\n")
+		.replace(CODE_SPAN, "");
 }
 
-/** All fenced code blocks as { lang, inner } for empty-fence detection. */
-function fencedBlocks(body) {
-	const out = [];
-	const re = /```([^\n]*)\n([\s\S]*?)```/g;
-	let m;
-	while ((m = re.exec(body)) !== null) out.push({ lang: m[1].trim(), inner: m[2] });
-	return out;
+/** Kinds whose fences are size-limited at finalization (D26), and the limit in inner lines. */
+const FENCE_RULE_KINDS = new Set(["designs", "plans"]);
+const MAX_FENCE_LINES = 10;
+
+/** Finalization fence errors for `body`, with line numbers counted in the whole file `text`. */
+function fenceRuleErrors(text, body) {
+	const offset = text.slice(0, text.length - body.length).split("\n").length - 1;
+	const { fences, unterminated } = parseFences(body);
+	const errors = [];
+	for (const { start, lines } of fences) {
+		if (lines.length > MAX_FENCE_LINES) {
+			errors.push(`code fence over ${MAX_FENCE_LINES} lines at line ${start + offset}: ${lines.length} lines`);
+		}
+	}
+	if (unterminated) errors.push(`unterminated code fence at line ${unterminated.start + offset}`);
+	return errors;
 }
 
 /** Errors for the `lane` / `lane_reasons` frontmatter pair; absent fields are valid. */
@@ -112,11 +135,12 @@ export function validateArtifact(artifactPath, root, { verifyHash = true, finali
 	// status field alone. A plain in-progress draft (no --finalizing) is exempt, so tokens are fine
 	// mid-authoring.
 	const finalizingOrReady = fm.status === "ready" || finalizing;
-	const prose = stripCode(body);
+	const { fences } = parseFences(body);
+	const prose = stripCode(body, fences);
 
 	// 2. Unfilled template tokens in prose. `$`-prefixed braces are JS template-literal
-	// syntax quoted from source code (a nested backtick inside an inline code span breaks
-	// stripCode's span regex and leaks e.g. `${region}` into "prose") — artifact
+	// syntax quoted from source code (a stray backtick of the span's own run length inside an
+	// inline code span still breaks CODE_SPAN's pairing and leaks e.g. `${region}` into "prose") — artifact
 	// placeholders are never $-prefixed, so exclude them. Slash-adjacent braces are URL /
 	// route templates quoted from the code under review (`/v1/databases/{id}/query`), not
 	// artifact placeholders — exclude them too (zero-false-positive beats recall here;
@@ -131,8 +155,15 @@ export function validateArtifact(artifactPath, root, { verifyHash = true, finali
 	for (const p of new Set(placeholders)) errors.push(`placeholder left in prose: ${p}`);
 
 	// 4. Empty code fences.
-	for (const { lang, inner } of fencedBlocks(body)) {
-		if (inner.trim() === "") errors.push(`empty code fence${lang ? ` (\`\`\`${lang})` : ""}`);
+	for (const { info, lines } of fences) {
+		if (lines.join("\n").trim() === "") errors.push(`empty code fence${info ? ` (\`\`\`${info})` : ""}`);
+	}
+
+	// 4b. Fence size at finalization (D26): designs and plans hold decisions, not code, so a
+	//     fence over 10 inner lines belongs in the repository. Only under --finalizing, never
+	//     because `status: ready` — older artifacts stay valid until re-finalized.
+	if (finalizing && FENCE_RULE_KINDS.has(artifactKind(artifactPath))) {
+		errors.push(...fenceRuleErrors(text, body));
 	}
 
 	// 5. Parent artifact exists (only when a parent is declared and is a real path, not a token).

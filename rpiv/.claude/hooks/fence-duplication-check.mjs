@@ -6,7 +6,9 @@
 // each to a temp file, and runs jscpd/cpd over (fences + repo source).
 //
 // Two filters are what make the signal usable. Measured against this repo's six real
-// plan/design artifacts (81 fences): 123 raw clones -> 3 true findings.
+// plan/design artifacts (81 fences, counted by the old exactly-3-backtick parser): 123 raw
+// clones -> 3 true findings. Re-checked at the move to the shared parser (S6): the same six
+// artifacts hold 74 cpd-language fences and the hook's output is unchanged on every one.
 //
 //   1. Only fence<->repo clones are a "this plan re-emits existing code" claim.
 //      fence<->fence (the plan repeating itself) and repo<->repo (duplication that was
@@ -36,6 +38,8 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
+
+import { parseFences } from "../../skills/_shared/fences.mjs";
 
 // ---- constants -----------------------------------------------------------------
 
@@ -131,52 +135,49 @@ function cleanPath(s) {
 
 /**
  * Walk the markdown once, pairing each code fence with the file it claims to target.
- * `start` is the 1-based line of the fence's opening ``` marker.
+ * Fences come from the shared parser (skills/_shared/fences.mjs, D26), so 4-backtick fences,
+ * info strings with attributes and CRLF read the same as everywhere else in rpiv.
+ * `start` is the 1-based line of the fence's opening marker.
  * Returns { fences, unterminated } where unterminated is that marker's line, or 0.
  */
 function extractFences(text) {
+  const { fences: parsed, unterminated } = parseFences(text);
+  const byStart = new Map(parsed.map((f) => [f.start, f]));
   const lines = text.split(/\r?\n/);
+  // Lines from an unclosed opener on are all fence content: no heading or File line there.
+  const stop = unterminated ? unterminated.start - 1 : lines.length;
   const fences = [];
   let declaredFile = null; // from `**File**: <path>`
   let heading = ""; // nearest heading, used as fallback
-  let open = null;
-  let buf = [];
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    if (open === null) {
-      // A new heading starts a new section: the previous section's File line no longer
-      // applies. Designs carry the path in the heading itself, hence the fallback.
-      if (/^#{1,6}\s/.test(line)) {
-        heading = line.replace(/^#+\s*/, "").trim();
-        declaredFile = null;
-      } else if (/^\s*\*\*File\*\*\s*:/i.test(line)) {
-        declaredFile = cleanPath(line.slice(line.indexOf(":") + 1));
-      }
-
-      const m = line.match(/^```([a-zA-Z0-9_+#-]*)\s*$/);
-      if (m) {
-        open = {
-          lang: m[1].toLowerCase(),
-          start: i + 1,
+  for (let i = 0; i < stop; i++) {
+    const fence = byStart.get(i + 1);
+    if (fence) {
+      if (Object.hasOwn(LANGS, fence.lang)) {
+        fences.push({
+          lang: fence.lang,
+          start: fence.start,
           target: declaredFile || cleanPath(heading),
-        };
-        buf = [];
+          spec: LANGS[fence.lang],
+          code: fence.lines.join("\n"),
+        });
       }
+      i = fence.end - 1;
       continue;
     }
 
-    if (/^```\s*$/.test(line)) {
-      const spec = LANGS[open.lang];
-      if (spec) fences.push({ ...open, spec, code: buf.join("\n") });
-      open = null;
-      continue;
+    // A new heading starts a new section: the previous section's File line no longer
+    // applies. Designs carry the path in the heading itself, hence the fallback.
+    const line = lines[i];
+    if (/^#{1,6}\s/.test(line)) {
+      heading = line.replace(/^#+\s*/, "").trim();
+      declaredFile = null;
+    } else if (/^\s*\*\*File\*\*\s*:/i.test(line)) {
+      declaredFile = cleanPath(line.slice(line.indexOf(":") + 1));
     }
-    buf.push(line);
   }
 
-  return { fences, unterminated: open === null ? 0 : open.start };
+  return { fences, unterminated: unterminated ? unterminated.start : 0 };
 }
 
 // ---- cpd discovery -------------------------------------------------------------
