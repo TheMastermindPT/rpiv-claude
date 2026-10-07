@@ -25,7 +25,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { JEV_ENDPOINT, JEV_MODEL, readKey } from "./jev-gate.mjs";
+import { askJev, JEV_ENDPOINT, JEV_MODEL, readKey } from "./jev-client.mjs";
 import { requireProbability } from "./jev-contracts.mjs";
 
 export const OK_BAR = 0.7;
@@ -176,33 +176,29 @@ export async function judgePair({
 	timeoutMs = 15_000,
 }) {
 	try {
-		const res = await fetchImpl(endpoint, {
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${key}`,
-				"Content-Type": "application/json",
+		const reply = await askJev({
+			key,
+			model: JEV_MODEL,
+			state: {
+				[check.aLabels[0]]: pair.a,
+				[check.bLabels[0]]: pair.b,
 			},
-			body: JSON.stringify({
-				model: JEV_MODEL,
-				state: {
-					[check.aLabels[0]]: pair.a,
-					[check.bLabels[0]]: pair.b,
-				},
-				questions: {
-					consistent: {
-						type: "noul",
-						instructions: check.instructions,
-						criteria: {
-							true: check.trueCriteria,
-							false: check.falseCriteria,
-						},
+			questions: {
+				consistent: {
+					type: "noul",
+					instructions: check.instructions,
+					criteria: {
+						true: check.trueCriteria,
+						false: check.falseCriteria,
 					},
 				},
-			}),
-			signal: AbortSignal.timeout(timeoutMs),
+			},
+			fetchImpl,
+			endpoint,
+			timeoutMs,
 		});
-		if (!res.ok) throw new Error(`HTTP ${res.status} from Jev endpoint`);
-		const p = requireProbability((await res.json())?.answers?.consistent?.noul);
+		if (reply.status !== "ok") throw new Error(reply.reason);
+		const p = requireProbability(reply.body?.answers?.consistent?.noul);
 		const verdict = pairVerdict(p);
 		return { id: pair.id, p, verdict };
 	} catch (err) {

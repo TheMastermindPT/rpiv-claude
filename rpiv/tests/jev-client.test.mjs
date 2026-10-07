@@ -11,6 +11,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import * as client from "../scripts/jev-client.mjs";
 import * as gate from "../scripts/jev-gate.mjs";
+import { CHECKS, judgePair } from "../scripts/jev-pair-judge.mjs";
 import { judgeFinding } from "../scripts/jev-rel-audit.mjs";
 import { lintRow, ROW_LINTS } from "../scripts/jev-row-lint.mjs";
 
@@ -146,6 +147,7 @@ const MIGRATED = [
 	"scripts/jev-gate.mjs",
 	"scripts/jev-row-lint.mjs",
 	"scripts/jev-rel-audit.mjs",
+	"scripts/jev-pair-judge.mjs",
 ];
 
 describe("S7 callers send through the client (B102)", () => {
@@ -194,5 +196,15 @@ describe("S7 callers keep their broken shapes (B104)", () => {
 			fetchImpl: http503,
 		});
 		expect(r).toEqual({ id: "I1", broken: HTTP_503 });
+	});
+
+	it("each caller reports an HTTP failure in its own broken shape: pair-judge", async () => {
+		const r = await judgePair({
+			check: CHECKS.scope,
+			pair: { id: "P1", a: "x", b: "y" },
+			key: "k",
+			fetchImpl: http503,
+		});
+		expect(r).toEqual({ id: "P1", broken: HTTP_503 });
 	});
 });
