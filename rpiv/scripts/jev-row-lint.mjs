@@ -24,8 +24,9 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { askJev, JEV_ENDPOINT, JEV_MODEL, readKey } from "./jev-client.mjs";
 import { findingId, requireProbability } from "./jev-contracts.mjs";
-import { appendLog, JEV_ENDPOINT, JEV_MODEL, readKey } from "./jev-gate.mjs";
+import { appendLog } from "./jev-gate.mjs";
 
 const PLUGIN_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
@@ -298,31 +299,26 @@ async function callConsistent({
 		code,
 		constituents,
 	});
-	const res = await fetchImpl(endpoint, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${key}`,
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-			model,
-			state,
-			questions: {
-				consistent: {
-					type: "noul",
-					instructions: config.question.instructions,
-					criteria: {
-						true: config.question.trueCriteria,
-						false: config.question.falseCriteria,
-					},
+	const reply = await askJev({
+		key,
+		state,
+		questions: {
+			consistent: {
+				type: "noul",
+				instructions: config.question.instructions,
+				criteria: {
+					true: config.question.trueCriteria,
+					false: config.question.falseCriteria,
 				},
 			},
-		}),
-		signal: AbortSignal.timeout(timeoutMs),
+		},
+		fetchImpl,
+		endpoint,
+		model,
+		timeoutMs,
 	});
-	if (!res.ok) throw new Error(`HTTP ${res.status} from Jev endpoint`);
-	const body = await res.json();
-	return requireProbability(body?.answers?.consistent?.noul);
+	if (reply.status !== "ok") throw new Error(reply.reason);
+	return requireProbability(reply.body?.answers?.consistent?.noul);
 }
 
 /**

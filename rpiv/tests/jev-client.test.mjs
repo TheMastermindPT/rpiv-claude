@@ -11,6 +11,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import * as client from "../scripts/jev-client.mjs";
 import * as gate from "../scripts/jev-gate.mjs";
+import { lintRow, ROW_LINTS } from "../scripts/jev-row-lint.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const tmp = mkdtempSync(join(tmpdir(), "jev-client-"));
@@ -140,7 +141,7 @@ describe("S7 Jev client (B98–B101)", () => {
 });
 
 // Grows by one file per S7 commit (D27): each listed caller sends through the client only.
-const MIGRATED = ["scripts/jev-gate.mjs"];
+const MIGRATED = ["scripts/jev-gate.mjs", "scripts/jev-row-lint.mjs"];
 
 describe("S7 callers send through the client (B102)", () => {
 	it.each(MIGRATED)(
@@ -167,5 +168,16 @@ describe("S7 callers keep their broken shapes (B104)", () => {
 		});
 		expect(r).toMatchObject({ verdict: "broken", exitCode: 2 });
 		expect(r.reasons).toContain(HTTP_503);
+	});
+
+	it("each caller reports an HTTP failure in its own broken shape: row-lint", async () => {
+		const r = await lintRow({
+			row: { id: "Q1", tag: "Verified", text: "src/a.mjs:12 matches" },
+			config: ROW_LINTS["claim-verifier"],
+			contract: "quote matches at the cited file:line",
+			key: "k",
+			fetchImpl: http503,
+		});
+		expect(r).toMatchObject({ id: "Q1", tag: "Verified", broken: HTTP_503 });
 	});
 });
