@@ -187,6 +187,12 @@ const runHook = (hook, event) => {
 	);
 	writeFileSync(join(agents, "no-model-agent.md"), "---\neffort: high\n---\n");
 	writeFileSync(join(agents, "claim-verifier.md"), "---\neffort: high\n---\n");
+	// A real file one level up, so `rpiv:../ro-agent` would reach it without the safety check
+	// (pin added after S28 mutation, developer choice).
+	writeFileSync(
+		join(cwd, "ro-agent.md"),
+		"---\ntools: Read\neffort: high\n---\n",
+	);
 	const r = spawnSync(process.execPath, [hook], {
 		cwd,
 		input: JSON.stringify(event),
@@ -271,5 +277,17 @@ describe("S28 revision 2: prefixed agents in every hook (B109–B112)", () => {
 				});
 			}
 		}
+	});
+});
+
+// Pins added after S28 mutation (developer choice "Add tests + fix, unreviewed").
+describe("S28 mutation pins", () => {
+	it("strips only a leading rpiv: prefix", async () => {
+		const { bareAgentName } = await import("../.claude/hooks/_shared.mjs");
+		expect(bareAgentName("rpiv:ro-agent")).toBe("ro-agent");
+		expect(bareAgentName("ro-agent")).toBe("ro-agent");
+		expect(bareAgentName("xrpiv:ro-agent")).toBe("xrpiv:ro-agent");
+		expect(bareAgentName("other:rpiv:ro-agent")).toBe("other:rpiv:ro-agent");
+		expect(bareAgentName(5)).toBe(5);
 	});
 });

@@ -10,6 +10,7 @@ import {
 	rmSync,
 	writeFileSync,
 } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -157,6 +158,59 @@ describe("S7 review fixes", () => {
 		expect(r.status).toBe("broken");
 		expect(typeof r.reason).toBe("string");
 		expect(calls).toHaveLength(0);
+	});
+});
+
+// Pins added after S7 mutation (developer choice "Add tests + fix, unreviewed").
+describe("S7 mutation pins", () => {
+	it("names the key's type when it is not a string", async () => {
+		const { fetchImpl } = recording(() => okJson({}));
+		expect(await client.askJev({ key: 123, ...request, fetchImpl })).toEqual({
+			status: "broken",
+			reason: "Jev key is not a string (number)",
+		});
+	});
+
+	it("reports a rejection with no value as broken", async () => {
+		expect(
+			await client.askJev({
+				key: "k",
+				...request,
+				fetchImpl: () => Promise.reject(undefined),
+			}),
+		).toEqual({ status: "broken", reason: "undefined" });
+	});
+
+	it("measures latency as elapsed time", async () => {
+		const slow = () =>
+			new Promise((resolve) => setTimeout(() => resolve(okJson({})), 30));
+		const before = performance.now();
+		const r = await client.askJev({ key: "k", ...request, fetchImpl: slow });
+		const elapsed = performance.now() - before;
+		expect(r.latencyMs).toBeGreaterThanOrEqual(20);
+		expect(r.latencyMs).toBeLessThanOrEqual(Math.ceil(elapsed) + 1);
+	});
+
+	it("reads only a line that starts with the key name", () => {
+		const envFile = join(tmp, "anchored.env");
+		writeFileSync(envFile, "XTYPESAFE_API_KEY=bad\n");
+		expect(client.readKey({ env: {}, envFile })).toBe(null);
+	});
+
+	it("reads .env in the current folder by default", () => {
+		const cwd = mkdtempSync(join(tmp, "cwd-"));
+		writeFileSync(join(cwd, ".env"), "TYPESAFE_API_KEY=fromdefault\n");
+		const url = new URL("../scripts/jev-client.mjs", import.meta.url).href;
+		const r = spawnSync(
+			process.execPath,
+			[
+				"--input-type=module",
+				"-e",
+				`import { readKey } from ${JSON.stringify(url)}; process.stdout.write(String(readKey({ env: {} })));`,
+			],
+			{ cwd, encoding: "utf-8" },
+		);
+		expect(r.stdout).toBe("fromdefault");
 	});
 
 	it("gives the no-key text one owner under scripts/ and evals/ (W3)", () => {
