@@ -20,7 +20,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { JEV_MODEL, readKey } from "../../scripts/jev-gate.mjs";
+import { askJev, JEV_MODEL, readKey } from "../../scripts/jev-client.mjs";
 import { findingId, requireProbability } from "../../scripts/jev-contracts.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -116,38 +116,31 @@ async function judgeRecall({
 	timeoutMs,
 }) {
 	try {
-		const res = await fetchImpl("https://api.typesafe.ai/v1/systemone", {
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${key}`,
-				"Content-Type": "application/json",
+		const reply = await askJev({
+			key,
+			model: JEV_MODEL,
+			state: {
+				ground_truth_note: groundTruthNote,
+				recall_item: `${item.id} — ${item.note ?? ""}`,
+				candidate_finding: candidate.text,
 			},
-			body: JSON.stringify({
-				model: JEV_MODEL,
-				state: {
-					ground_truth_note: groundTruthNote,
-					recall_item: `${item.id} — ${item.note ?? ""}`,
-					candidate_finding: candidate.text,
-				},
-				questions: {
-					describes_defect: {
-						type: "noul",
-						instructions:
-							"Does the candidate finding describe the defect this recall item targets?",
-						criteria: {
-							true: "the finding names the specific defect the recall item describes (per the ground-truth note)",
-							false:
-								"the finding cites the location but describes something different from the targeted defect",
-						},
+			questions: {
+				describes_defect: {
+					type: "noul",
+					instructions:
+						"Does the candidate finding describe the defect this recall item targets?",
+					criteria: {
+						true: "the finding names the specific defect the recall item describes (per the ground-truth note)",
+						false:
+							"the finding cites the location but describes something different from the targeted defect",
 					},
 				},
-			}),
-			signal: AbortSignal.timeout(timeoutMs),
+			},
+			fetchImpl,
+			timeoutMs,
 		});
-		if (!res.ok) throw new Error(`HTTP ${res.status}`);
-		const p = requireProbability(
-			(await res.json())?.answers?.describes_defect?.noul,
-		);
+		if (reply.status !== "ok") throw new Error(reply.reason);
+		const p = requireProbability(reply.body?.answers?.describes_defect?.noul);
 		const verdict = recallVerdict(p);
 		return { id: item.id, candidate: candidate.id, p, verdict };
 	} catch (err) {

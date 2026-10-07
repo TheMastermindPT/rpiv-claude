@@ -3,7 +3,13 @@
 // .rpiv/artifacts/designs/2026-10-04_19-05-47_risk-lanes-short-cycles.md).
 // No network: every call goes through an injected fetchImpl.
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +17,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import * as client from "../scripts/jev-client.mjs";
 import * as gate from "../scripts/jev-gate.mjs";
+import { semanticGrade } from "../evals/harness/jev-semantic-grade.mjs";
 import { CHECKS, judgePair } from "../scripts/jev-pair-judge.mjs";
 import { judgeFinding } from "../scripts/jev-rel-audit.mjs";
 import { lintRow, ROW_LINTS } from "../scripts/jev-row-lint.mjs";
@@ -148,6 +155,7 @@ const MIGRATED = [
 	"scripts/jev-row-lint.mjs",
 	"scripts/jev-rel-audit.mjs",
 	"scripts/jev-pair-judge.mjs",
+	"evals/harness/jev-semantic-grade.mjs",
 ];
 
 describe("S7 callers send through the client (B102)", () => {
@@ -163,6 +171,19 @@ describe("S7 callers send through the client (B102)", () => {
 			expect(source).not.toContain("Bearer ");
 		},
 	);
+
+	it("leaves jev-client.mjs the only file under scripts/ and evals/ with its own request timeout", () => {
+		const owners = ["scripts", "evals"]
+			.flatMap((dir) =>
+				readdirSync(join(ROOT, dir), { recursive: true })
+					.filter((f) => String(f).endsWith(".mjs"))
+					.map((f) => `${dir}/${String(f).replaceAll("\\", "/")}`),
+			)
+			.filter((f) =>
+				readFileSync(join(ROOT, f), "utf-8").includes("AbortSignal.timeout("),
+			);
+		expect(owners).toEqual(["scripts/jev-client.mjs"]);
+	});
 });
 
 describe("S7 callers keep their broken shapes (B104)", () => {
@@ -206,5 +227,27 @@ describe("S7 callers keep their broken shapes (B104)", () => {
 			fetchImpl: http503,
 		});
 		expect(r).toEqual({ id: "P1", broken: HTTP_503 });
+	});
+
+	it("each caller reports an HTTP failure in its own broken shape: semantic-grade", async () => {
+		const { results } = await semanticGrade({
+			recallItems: [
+				{
+					id: "R1",
+					note: "n",
+					files: [{ path: "lib/a.ts", line: 10, radius: 5 }],
+				},
+			],
+			artifactText:
+				"### Q1 Severity\n\n**Where**\n`lib/a.ts:10`\n\n**Why**\nA defect.\n",
+			key: "k",
+			fetchImpl: http503,
+		});
+		expect(results[0]).toMatchObject({
+			id: "R1",
+			verdict: "broken",
+			p: null,
+			note: HTTP_503,
+		});
 	});
 });
