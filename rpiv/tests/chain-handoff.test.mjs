@@ -5,7 +5,7 @@
 // .claude/hooks/chain-handoff-restore.mjs, spawned in throwaway repositories.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -310,3 +310,145 @@ function PIN() {
 	expect(readFileSync(file, "utf8")).toMatch(new RegExp(`^content_hash: ${stamped}$`, "m"));
 	expect(contentHashOf(ARTIFACT)).toBe(stamped);
 }
+
+const RETIRE = join(ROOT, ".claude", "hooks", "chain-handoff-retire.mjs");
+const CHAIN_STAGES = ["discover", "research", "design", "plan", "implement", "deep-review", "validate", "pr"];
+
+/** The retire hook run for `event` (an object, or raw stdin text) in `cwd`. */
+function retire(cwd, event) {
+	const res = spawnSync(process.execPath, [RETIRE], {
+		cwd,
+		input: typeof event === "string" ? event : JSON.stringify(event),
+		encoding: "utf-8",
+		timeout: 30_000,
+		env: { ...process.env, GIT_CEILING_DIRECTORIES: TMP },
+	});
+	return { status: res.status, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
+}
+
+const typed = (name, cwd) => ({ hook_event_name: "UserPromptExpansion", command_name: name, cwd });
+const started = (skill, cwd) => ({ hook_event_name: "PostToolUse", tool_name: "Skill", tool_input: { skill }, cwd });
+const supersededPath = (dir) => `${gitDir(dir)}/rpiv/handoff.superseded.json`;
+
+/** The retire hook's context for an answer, checking its event name. */
+function retireContext(stdout, eventName) {
+	const out = JSON.parse(stdout);
+	expect(out.hookSpecificOutput.hookEventName).toBe(eventName);
+	return out.hookSpecificOutput.additionalContext;
+}
+
+describe("chain handoff retire hook (S31)", () => {
+	it(
+		"a chain stage start retires the pending handoff",
+		() => {
+			const { repo, wt } = fixture();
+			expect(write(repo, "--next", "/rpiv:implement main").status).toBe(0);
+			const mainBytes = readFileSync(handoffPath(repo), "utf8");
+			const events = [
+				...CHAIN_STAGES.map((stage) => typed(`rpiv:${stage}`, wt)),
+				started("rpiv:validate", wt),
+			];
+			for (const [i, event] of events.entries()) {
+				expect(write(wt, "--next", `/rpiv:deep-review main ${i}`).status).toBe(0);
+				const before = readFileSync(handoffPath(wt), "utf8");
+				const label = JSON.stringify(event);
+				expect.soft(retire(wt, event), label).toEqual({ status: 0, stdout: "", stderr: "" });
+				expect.soft(existsSync(handoffPath(wt)), label).toBe(false);
+				// a superseded file from the earlier round is replaced by this one
+				expect.soft(readFileSync(supersededPath(wt), "utf8"), label).toBe(before);
+				expect.soft(restore(wt).stdout, label).toBe("");
+			}
+			expect(readFileSync(handoffPath(repo), "utf8")).toBe(mainBytes);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"other events leave the handoff and nothing pending is silent",
+		() => {
+			const { wt } = fixture();
+			expect(write(wt, "--next", "/rpiv:deep-review main").status).toBe(0);
+			const before = readFileSync(handoffPath(wt), "utf8");
+			const events = [
+				...["rpiv:commit", "rpiv:resume-handoff", "rpiv:revise", "rpiv:", "vitest"].map((name) => typed(name, wt)),
+				started("rpiv:explore", wt),
+				{ hook_event_name: "PostToolUse", tool_name: "AskUserQuestion", tool_input: { questions: [] }, cwd: wt },
+				{ hook_event_name: "SessionStart", source: "clear", cwd: wt },
+			];
+			for (const event of events) {
+				const label = JSON.stringify(event);
+				expect.soft(retire(wt, event), label).toEqual({ status: 0, stdout: "", stderr: "" });
+				expect.soft(readFileSync(handoffPath(wt), "utf8"), label).toBe(before);
+				expect.soft(existsSync(supersededPath(wt)), label).toBe(false);
+			}
+			const { wt: empty } = fixture();
+			const folder = `${gitDir(empty)}/rpiv`;
+			const filesBefore = existsSync(folder) ? readdirSync(folder) : [];
+			expect(retire(empty, typed("rpiv:implement", empty))).toEqual({ status: 0, stdout: "", stderr: "" });
+			expect(existsSync(folder) ? readdirSync(folder) : []).toEqual(filesBefore);
+			const outside = fresh("outside");
+			mkdirSync(outside);
+			expect(retire(outside, typed("rpiv:implement", outside))).toEqual({ status: 0, stdout: "", stderr: "" });
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"a handoff that cannot be retired is reported and kept",
+		() => {
+			const { wt } = fixture();
+			const bad = retire(wt, "{oops");
+			expect(bad.status).toBe(0);
+			expect(retireContext(bad.stdout, "PostToolUse")).toBe(
+				"[rpiv-hook] handoff not retired: the hook event is not valid JSON",
+			);
+			const gone = `${TMP}/gone${count++}\nline`;
+			const missing = retire(wt, typed("rpiv:implement", gone));
+			expect(missing.status).toBe(0);
+			const missingContext = retireContext(missing.stdout, "UserPromptExpansion");
+			expect(missingContext.startsWith("[rpiv-hook] handoff not retired: cwd does not exist: ")).toBe(true);
+			expect(missingContext).not.toContain("\n");
+			expect(write(wt, "--next", "/rpiv:deep-review main").status).toBe(0);
+			const before = readFileSync(handoffPath(wt), "utf8");
+			mkdirSync(supersededPath(wt));
+			writeFileSync(join(supersededPath(wt), "keep.txt"), "x");
+			const blocked = retire(wt, started("rpiv:validate", wt));
+			expect(blocked.status).toBe(0);
+			expect(
+				retireContext(blocked.stdout, "PostToolUse").startsWith("[rpiv-hook] handoff not retired: cannot move "),
+			).toBe(true);
+			expect(readFileSync(handoffPath(wt), "utf8")).toBe(before);
+		},
+		TEST_TIMEOUT,
+	);
+});
+
+describe("chain handoff retire hook, revision 1 (S31)", () => {
+	it(
+		"a broken worktree pointer is reported, not silent",
+		() => {
+			const dangling = fresh("dangling");
+			mkdirSync(dangling);
+			writeFileSync(join(dangling, ".git"), `gitdir: ${TMP}/missing${count++}/.git/worktrees/x\n`);
+			const res = retire(dangling, typed("rpiv:implement", dangling));
+			expect(res.status).toBe(0);
+			expect(retireContext(res.stdout, "UserPromptExpansion").startsWith("[rpiv-hook] handoff not retired: git refused ")).toBe(
+				true,
+			);
+			const plain = fresh("plain");
+			mkdirSync(plain);
+			expect(retire(plain, typed("rpiv:implement", plain))).toEqual({ status: 0, stdout: "", stderr: "" });
+		},
+		TEST_TIMEOUT,
+	);
+
+	it("an unreadable hook event is reported with its own reason", async () => {
+		const { readEvent } = await import("../.claude/hooks/chain-handoff-retire.mjs");
+		const unreadable = () => {
+			throw Object.assign(new Error("x"), { code: "EISDIR" });
+		};
+		expect(readEvent(unreadable)).toEqual({ problem: "cannot read the hook event (EISDIR)" });
+		expect(readEvent(() => "{oops")).toEqual({ problem: "the hook event is not valid JSON" });
+		expect(readEvent(() => '{"a":1}')).toEqual({ event: { a: 1 } });
+	});
+});

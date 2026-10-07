@@ -104,4 +104,18 @@ describe("one rpiv chain", () => {
 		expect(compact).toHaveLength(1);
 		expect(compact[0].hooks[0].command).toContain("session-state-restore.mjs");
 	});
+
+	it("the retire hook is registered for stage starts", () => {
+		// S31 (D41): a typed or model-started chain stage retires the pending handoff
+		const hooks = JSON.parse(read("hooks/hooks.json"));
+		const retires = (entry) =>
+			entry.hooks.some((hook) => hook.command.includes(".claude/hooks/chain-handoff-retire.mjs"));
+		expect(hooks.hooks.UserPromptExpansion.filter(retires)).toHaveLength(1);
+		const post = hooks.hooks.PostToolUse.filter(retires);
+		expect(post).toHaveLength(1);
+		const matcher = new RegExp(`^(?:${post[0].matcher})$`);
+		expect(matcher.test("Skill")).toBe(true);
+		expect(matcher.test("Bash")).toBe(false);
+		expect(hooks.description).toMatch(/retired when the next chain stage starts/);
+	});
 });

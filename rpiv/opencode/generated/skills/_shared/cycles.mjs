@@ -11,7 +11,7 @@
 // `cycles-archive.jsonl` beside the log and prints `archived: <n> line(s) of <name>
 // to <archive>` (S26, D36).
 //
-// Importable: cycleLogPath, stageName, readCommonDir, readHeadBranch, summarise,
+// Importable: cycleLogPath, stageName, readCommonDir, readHeadBranch, OUTSIDE_REPOSITORY, summarise,
 // splitBranchLines, readLog, runCli.
 
 import { spawnSync } from "node:child_process";
@@ -40,7 +40,7 @@ export const cycleLogPath = (commonDir) =>
 // discovery stops at a filesystem boundary, "(or any parent up to mount point …)"
 // (S15 revision 3). A `.git` pointer to a missing folder ("not a git repository:
 // <path>") does not match and stays broken.
-const OUTSIDE = "not a git repository (or any";
+export const OUTSIDE_REPOSITORY = "not a git repository (or any";
 
 const firstLine = (text) => (text ?? "").split(/\r?\n/)[0] || "(no message)";
 
@@ -49,7 +49,7 @@ const firstLine = (text) => (text ?? "").split(/\r?\n/)[0] || "(no message)";
     `dir` is in no repository, or `{ problem }` when git refused it. */
 export function readCommonDir(res, dir) {
 	if (res.status === 0) return { common: res.out };
-	if ((res.err ?? "").includes(OUTSIDE)) return { outside: true };
+	if ((res.err ?? "").includes(OUTSIDE_REPOSITORY)) return { outside: true };
 	return { problem: `git refused ${dir}: ${firstLine(res.err)}` };
 }
 

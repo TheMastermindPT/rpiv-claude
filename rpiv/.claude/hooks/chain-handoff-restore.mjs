@@ -3,7 +3,8 @@
 // writes `<git-dir>/rpiv/handoff.json` with skills/_shared/handoff.mjs as it ends
 // its stage; this hook reads the file of the event's worktree once, prints a short
 // summary as `hookSpecificOutput.additionalContext`, and renames the file to
-// `handoff.consumed.json`, so a later `/clear` shows nothing.
+// `handoff.consumed.json`, so a later `/clear` shows nothing. A chain stage that
+// starts first retires the file instead (chain-handoff-retire.mjs, S31).
 //
 // Absent is silent: no repository, or no handoff, prints nothing. Broken is
 // distinct (degrade-distinguishes-broken): an unreadable handoff prints
