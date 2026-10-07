@@ -48,11 +48,10 @@ import {
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-export const JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
-// Pinned deliberately: the bands and thresholds in this repo are tuned against
-// jev-1.13.0. `jev-latest` moves when a release ships, which would silently
-// shift every calibrated threshold. Move versions on our own schedule.
-export const JEV_MODEL = "jev-1.13.0";
+import { askJev, JEV_ENDPOINT, JEV_MODEL, readKey } from "./jev-client.mjs";
+
+// The transport moved to jev-client.mjs (D27); re-exported so existing importers keep working.
+export { JEV_ENDPOINT, JEV_MODEL, readKey };
 export const DEFAULT_LOG_PATH = "reports/jev-gate-shadow.log";
 export const DEFAULT_THRESHOLD = 0.7;
 // Rotation cap: when the log exceeds this, the current file becomes `<log>.1`
@@ -259,24 +258,10 @@ export function policy(answers, options = {}) {
 	return { verdict: "allow", reasons: [] };
 }
 
-/** Key resolution: TYPESAFE_API_KEY env var wins, then the .env file. Never prints. */
 function hazardProbability(answers, name) {
 	const p = answers[name]?.noul;
 	if (typeof p !== "number") throw new Error(`missing answer: ${name}`);
 	return p;
-}
-
-export function readKey({ envFile = ".env", env = process.env } = {}) {
-	const fromEnv = env.TYPESAFE_API_KEY?.trim();
-	if (fromEnv) return fromEnv;
-	try {
-		const match = readFileSync(envFile, "utf8").match(
-			/^TYPESAFE_API_KEY=(.+)$/m,
-		);
-		return match?.[1]?.trim() ?? null;
-	} catch {
-		return null;
-	}
 }
 
 /** A response body without a non-null `answers` object is not a Jev answer. */
@@ -284,7 +269,7 @@ function isMalformedBody(body) {
 	return !body || typeof body !== "object" || !body.answers;
 }
 
-/** One bounded Jev request. Throws on HTTP error or malformed response. */
+/** One gate question set through the shared client. Throws on any non-ok reply or malformed body. */
 export async function callJev({
 	command,
 	cwd,
@@ -294,23 +279,17 @@ export async function callJev({
 	model = JEV_MODEL,
 	timeoutMs = 6000,
 }) {
-	const t0 = performance.now();
-	const res = await fetchImpl(endpoint, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${key}`,
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify({
-			model,
-			state: { command, cwd },
-			questions: buildQuestions(),
-		}),
-		signal: AbortSignal.timeout(timeoutMs),
+	const reply = await askJev({
+		key,
+		state: { command, cwd },
+		questions: buildQuestions(),
+		fetchImpl,
+		endpoint,
+		model,
+		timeoutMs,
 	});
-	const latencyMs = Math.round(performance.now() - t0);
-	if (!res.ok) throw new Error(`HTTP ${res.status} from Jev endpoint`);
-	const body = await res.json();
+	if (reply.status !== "ok") throw new Error(reply.reason);
+	const { body, latencyMs } = reply;
 	if (isMalformedBody(body)) {
 		throw new Error("malformed Jev response (no answers)");
 	}

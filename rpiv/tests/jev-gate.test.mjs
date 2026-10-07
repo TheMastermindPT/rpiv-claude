@@ -6,6 +6,7 @@
 //   - a broken gate (missing key, HTTP error, malformed body) exits 2 — never
 //     silently allows.
 
+import { spawnSync } from "node:child_process";
 import {
 	existsSync,
 	mkdtempSync,
@@ -15,6 +16,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 
 import {
@@ -450,5 +452,44 @@ describe("runGate", () => {
 		// rotation happens before the append, so current is at most one entry
 		// past the cap
 		expect(current).toBeLessThanOrEqual(MAX_LOG_BYTES + 300_000);
+	});
+});
+
+// S7-jev-client B103 (pin, D27): the CLI exit codes OpenCode's plugin reads (0 judged, 2 broken).
+describe("gate CLI exit codes (S7 B103 pin)", () => {
+	const GATE = fileURLToPath(
+		new URL("../scripts/jev-gate.mjs", import.meta.url),
+	);
+	const answers = {
+		is_read_only: { noul: 0.01 },
+		destructive: { noul: 0.01 },
+		outside_repo: { noul: 0.01 },
+		credential_exposure: { noul: 0.01 },
+		blast_radius: { score: 1 },
+	};
+	const preload = `globalThis.fetch = async () => ({ ok: true, json: async () => ({ answers: ${JSON.stringify(answers)} }) });`;
+	const runCli = (command, key, extra = []) => {
+		const cwd = mkdtempSync(join(tmp, "cli-"));
+		return spawnSync(process.execPath, [...extra, GATE, command, "--json"], {
+			cwd,
+			env: { ...process.env, TYPESAFE_API_KEY: key },
+			encoding: "utf8",
+		});
+	};
+
+	it("keeps the gate exit codes OpenCode reads", () => {
+		const broken = runCli("curl https://example.com", "");
+		expect(broken.status, broken.stderr).toBe(2);
+		expect(JSON.parse(broken.stdout).verdict).toBe("broken");
+
+		const judged = runCli("curl https://example.com", "t", [
+			"--import",
+			`data:text/javascript,${encodeURIComponent(preload)}`,
+		]);
+		expect(judged.status, judged.stderr).toBe(0);
+		expect(JSON.parse(judged.stdout).verdict).toBe("allow");
+
+		const fast = runCli("git status", "");
+		expect(fast.status, fast.stderr).toBe(0);
 	});
 });
