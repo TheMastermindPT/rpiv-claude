@@ -7,12 +7,22 @@
 // current branch; `(detached)` reads the lines written on a detached HEAD). No log, or
 // no line for the branch, prints `records: none`; a git failure, a directory outside
 // a repository or a bad option prints `cycles: broken: <detail>` on stderr, exit 2.
+// `node cycles.mjs --archive --branch <name>` moves that branch's lines to
+// `cycles-archive.jsonl` beside the log and prints `archived: <n> line(s) of <name>
+// to <archive>` (S26, D36).
 //
 // Importable: cycleLogPath, stageName, readCommonDir, readHeadBranch, summarise,
-// runCli.
+// splitBranchLines, readLog, runCli.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import {
+	appendFileSync,
+	existsSync,
+	readFileSync,
+	renameSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { dirname, resolve } from "node:path";
 import { isMain } from "./is-main.mjs";
 
@@ -74,6 +84,19 @@ function parseLines(text) {
 				return null;
 			}
 		});
+}
+
+/** The log's raw lines split by owner: `own` holds the lines that parse to a
+    record of `branch`, `rest` every other line (another branch's, unreadable),
+    each in log order. Blank lines are dropped. */
+export function splitBranchLines(text, branch) {
+	const own = [];
+	const rest = [];
+	for (const line of text.split(/\r?\n/).filter((l) => l.trim() !== "")) {
+		const [rec] = parseLines(line);
+		(rec !== null && rec.branch === branch ? own : rest).push(line);
+	}
+	return { own, rest };
 }
 
 const count = (n) => (Number.isInteger(n) && n > 0 ? n : 0);
@@ -142,16 +165,42 @@ function orThrow(answer) {
 const missingValue = (value) =>
 	value === undefined || value === "" || value.startsWith("--");
 
-/** `{ branch }` from `--branch <name>`, or `{}`; throws on a bad option. */
+/** `{ branch, archive }` from `--branch <name>` and `--archive`; throws on a bad
+    option. `--archive` never defaults to the current branch. */
 function parseArgs(argv) {
 	const opts = {};
-	for (let i = 0; i < argv.length; i++) {
-		if (argv[i] !== "--branch") throw new Error(`unknown option: ${argv[i]}`);
-		const value = argv[++i];
-		if (missingValue(value)) throw new Error("--branch needs a branch name");
-		opts.branch = value;
-	}
+	for (let i = 0; i < argv.length; i++) i += readOption(argv, i, opts);
+	if (opts.archive && opts.branch === undefined)
+		throw new Error("--archive needs --branch");
 	return opts;
+}
+
+/** Reads the option at `argv[i]` into `opts`; returns how many values it took. */
+function readOption(argv, i, opts) {
+	if (argv[i] === "--archive") {
+		opts.archive = true;
+		return 0;
+	}
+	if (argv[i] !== "--branch") throw new Error(`unknown option: ${argv[i]}`);
+	const value = argv[i + 1];
+	if (missingValue(value)) throw new Error("--branch needs a branch name");
+	opts.branch = value;
+	return 1;
+}
+
+/** Moves `branch`'s lines from the log to `cycles-archive.jsonl` beside it (S26,
+    D36); other and unreadable lines stay in log order. The archive is appended
+    before the log is rewritten, so a crash in between duplicates, never loses. */
+function archiveBranch(log, branch) {
+	const archive = resolve(dirname(log), "cycles-archive.jsonl");
+	const { own, rest } = splitBranchLines(readLog(log), branch);
+	if (own.length > 0) {
+		appendFileSync(archive, `${own.join("\n")}\n`);
+		const next = `${log}.${process.pid}.tmp`; // unique per process (S26 revision 1)
+		writeFileSync(next, rest.length > 0 ? `${rest.join("\n")}\n` : "");
+		renameSync(next, log);
+	}
+	return `archived: ${own.length} line(s) of ${branch} to ${archive}\n`;
 }
 
 /** The branch checked out at `cwd`, null when HEAD is detached. */
@@ -161,7 +210,7 @@ const currentBranch = (cwd) =>
 
 /** The log's text; "" when it does not exist yet. A log folder that is not a
     folder is broken, never an empty log (degrade-distinguishes-broken). */
-function readLog(log) {
+export function readLog(log) {
 	const folder = dirname(log);
 	if (existsSync(folder) && !statSync(folder).isDirectory())
 		throw new Error(`log folder is not a folder: ${folder}`);
@@ -185,6 +234,7 @@ export function runCli(argv, cwd) {
 				? null
 				: opts.branch;
 	const log = cycleLogPath(repo.common);
+	if (opts.archive) return archiveBranch(log, branch);
 	return `${summarise(readLog(log), branch, log).join("\n")}\n`;
 }
 

@@ -646,4 +646,46 @@ describe("S15 cycles reader", () => {
 		},
 		TEST_TIMEOUT,
 	);
+
+	it(
+		"cycles --archive moves one branch's lines to the archive",
+		() => {
+			const repo = repoOn("main");
+			const log = logPath(repo);
+			const archive = resolve(commonDir(repo), "rpiv", "cycles-archive.jsonl");
+			const [l0, l1, l2, l4] = [
+				rec(0, "feat/x", { event: "stage", stage: "old" }),
+				rec(1, "feat/x", { event: "stage", stage: "implement" }),
+				rec(2, "main", { event: "stage", stage: "discover" }),
+				rec(4, "feat/x", { event: "decision", questions: 1 }),
+			];
+			const l3 = "not json";
+			mkdirSync(dirname(log), { recursive: true });
+			writeFileSync(log, `${[l1, l2, l3, l4].join("\n")}\n`);
+			writeFileSync(archive, `${l0}\n`);
+			const archivePath = archive.replaceAll("\\", "/");
+			const first = runReader(repo, "--archive", "--branch", "feat/x");
+			expect(first.stderr).toBe("");
+			expect(first.status).toBe(0);
+			expect(first.stdout.replaceAll("\\", "/")).toBe(`archived: 2 line(s) of feat/x to ${archivePath}\n`);
+			expect(readFileSync(log, "utf-8")).toBe(`${l2}\n${l3}\n`);
+			expect(readFileSync(archive, "utf-8")).toBe(`${l0}\n${l1}\n${l4}\n`);
+
+			const again = runReader(repo, "--archive", "--branch", "feat/x");
+			expect(again.stdout.replaceAll("\\", "/")).toBe(`archived: 0 line(s) of feat/x to ${archivePath}\n`);
+			expect(readFileSync(log, "utf-8")).toBe(`${l2}\n${l3}\n`);
+			expect(readFileSync(archive, "utf-8")).toBe(`${l0}\n${l1}\n${l4}\n`);
+
+			const alone = runReader(repo, "--archive");
+			expect(alone).toMatchObject({ status: 2, stdout: "", stderr: "cycles: broken: --archive needs --branch\n" });
+
+			const empty = repoOn("main");
+			const none = runReader(empty, "--archive", "--branch", "feat/x");
+			expect(none.status).toBe(0);
+			expect(none.stdout).toMatch(/^archived: 0 line\(s\) of feat\/x to /);
+			expect(existsSync(logPath(empty))).toBe(false);
+			expect(existsSync(resolve(commonDir(empty), "rpiv", "cycles-archive.jsonl"))).toBe(false);
+		},
+		TEST_TIMEOUT,
+	);
 });

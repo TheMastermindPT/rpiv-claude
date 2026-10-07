@@ -1,6 +1,7 @@
 // approve-outward-actions.mjs — PreToolUse hook that forces a permission prompt
 // ("ask") before outward-facing actions: git push (and push plumbing), branch and
-// worktree creation, any `gh` command that is not a known read, and GitHub MCP
+// worktree creation, local branch deletion (it drops the branch's approval marker,
+// S26), any `gh` command that is not a known read, and GitHub MCP
 // tools that are not reads. Runs for the main session and every subagent (D2).
 //
 // Output: one `permissionDecision: "ask"` object, reason prefixed
@@ -1101,6 +1102,33 @@ const checkoutCreates = (words, from) =>
 			clusterHas(value, "bBt") || hasLongOption(value, CHECKOUT_CREATE),
 	);
 
+// git accepts any unique abbreviation of a long option; `--de` is the shortest
+// of `--delete` among `git branch`'s options.
+const DELETE_LONG = "--delete";
+const MIN_DELETE_ABBREV = "--de".length;
+
+/** A `git branch` argument that deletes: `--delete` or its abbreviation, or a
+    short cluster with `d`/`D` before any value-taking letter: `u` and `t` take
+    the rest of the cluster as their value (`-udev` sets the upstream to `dev`,
+    `-tdirect` is `--track=direct`). */
+function deletesBranch(value) {
+	const name = value.split("=")[0];
+	if (name.length >= MIN_DELETE_ABBREV && DELETE_LONG.startsWith(name)) return true;
+	if (!isCluster(value)) return false;
+	const letters = value.slice(1).split(/[ut]/)[0];
+	return /[dD]/.test(letters);
+}
+
+/** What `git branch` does that asks: a deletion (git drops the branch's
+    `rpivApproved` marker with it, S26/D36) names its own kind; a creation is
+    true; anything else is false. */
+function branchActs(words, from) {
+	const deletes = ({ value }) => deletesBranch(value);
+	if (anyBeforeDashDash(words, from, "branch-delete", deletes))
+		return "branch deletion";
+	return branchCreates(words, from);
+}
+
 function branchCreates(words, from) {
 	const copies = ({ value }) =>
 		clusterHas(value, "cCmM") || hasLongOption(value, BRANCH_RENAME_COPY);
@@ -1120,7 +1148,8 @@ function branchCreates(words, from) {
 const pushesVia = (words, from) =>
 	anyFrom(words, from, "push-word", ({ value }) => value === "push");
 
-// git subcommand -> [outward kind, does this invocation act outward?]
+// git subcommand -> [outward kind, does this invocation act outward?]; the answer
+// may be a kind string that replaces the default kind (branch deletion).
 const GIT_OUTWARD = {
 	push: ["git push", () => true],
 	"send-pack": ["git push", () => true],
@@ -1129,7 +1158,7 @@ const GIT_OUTWARD = {
 	lfs: ["git push", pushesVia],
 	switch: [BRANCH, switchCreates],
 	checkout: [BRANCH, checkoutCreates],
-	branch: [BRANCH, branchCreates],
+	branch: [BRANCH, branchActs],
 	stash: [BRANCH, (words, from) => words[from]?.value === "branch"],
 	worktree: [
 		"worktree creation",
@@ -1166,7 +1195,9 @@ function gitSubcommandReason(sub, words, from) {
 	if (decisiveArgComputed(sub, words, from))
 		return broken(`an argument that decides what git ${sub} does is computed`);
 	const [kind, acts] = GIT_OUTWARD[sub];
-	return acts(words, from) ? outward(kind) : null;
+	const answer = acts(words, from);
+	if (!answer) return null;
+	return outward(typeof answer === "string" ? answer : kind);
 }
 
 // git's global options (D5 rev. 1); any other option before the subcommand asks,

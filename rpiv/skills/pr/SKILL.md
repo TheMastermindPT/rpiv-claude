@@ -48,4 +48,17 @@ Options: send (run both commands), edit (change the summary or the open decision
 
 ## 4. Close
 
-Report the PR URL from `gh`, the body path, and anything left open. Merging stays with the developer: this skill never merges, never approves the PR and never deletes a branch.
+Report the PR URL from `gh`, the body path, and anything left open. Merging stays with the developer: this skill never merges, never approves the PR, and never deletes anything before the developer approves the exact commands (step 5).
+
+## 5. After the Merge
+
+When the developer says the PR merged, or asks to clean up the feature, run from the main checkout (not the feature's own worktree):
+
+`node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/merge-cleanup.mjs" --branch <branch>`
+
+The helper asks `gh` whether the branch's pull request merged and deletes nothing itself.
+
+- `merged: no (<why>)`: offer nothing; report the state.
+- Exit 2 with `merge-cleanup: broken: <detail>`: report the detail and stop; a broken answer is never "not merged", and never a reason to delete anyway.
+- `merged: yes` with a `blocked:` line: cleanup runs nothing while a `blocked:` line stands. Report it with its fix and offer to plan again once it is done: for the current-directory block, switch the checkout off the branch (or run from another checkout); for commits that are not in the pull request, push them to a new branch or pull request (a merged pull request's head does not move), or drop them if they are not wanted; for a head or remote tip that is not in the repository, fetch it with `git fetch <remote> <sha>`.
+- `merged: yes` with no `blocked:` line: ask one `ask_user_question` that shows the plan's exact `command:` lines plus the archive of the branch's cycle-log lines. Options: clean up (run them), stop. On clean up, run each `command:` line in order, then `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/cycles.mjs" --archive --branch <branch>`. Stop at the first command that fails: report it with its output and what already ran, and never archive after a failure; never retry with `--force` or another remote. The approval hook asks again for the branch delete and the remote delete; that prompt is the enforced confirmation, so never try to avoid it. A declined approval prompt is a stop: run nothing after it, the archive included, and report what already ran.

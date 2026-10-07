@@ -570,4 +570,48 @@ describe("S25 pr skill wiring", () => {
 		expect(skill).toContain("not a mismatch");
 		expect(skill).toMatch(/no `candidate_revision`[^.]*stop/i);
 	});
+
+	it("pr offers cleanup only after a confirmed merge", () => {
+		// S26 (D36).
+		const joined = (path) => read(path).replace(/\s+/g, " ");
+		// The OpenCode adapter renames the question tool (`ask_user_question` →
+		// `question`); every other phrase is shared.
+		for (const [path, ask] of [
+			["skills/pr/SKILL.md", "ask_user_question"],
+			["opencode/generated/skills/rpiv-pr/SKILL.md", "question"],
+		]) {
+			const skill = joined(path);
+			expect(skill, path).toMatch(new RegExp(`merged: yes\`[^.]*: ask one \`${ask}\``));
+			for (const text of [
+				'merge-cleanup.mjs" --branch',
+				"merged: no",
+				"broken",
+				'cycles.mjs" --archive --branch',
+				"never deletes anything before the developer approves the exact commands",
+			])
+				expect(skill, `${path}: ${text}`).toContain(text);
+			expect(skill, path).not.toMatch(/never deletes a branch\./);
+		}
+	});
+
+	it("pr cleanup stops at the first failure and while blocked", () => {
+		// S26 revision 1.
+		const joined = (path) => read(path).replace(/\s+/g, " ");
+		for (const path of ["skills/pr/SKILL.md", "opencode/generated/skills/rpiv-pr/SKILL.md"]) {
+			const skill = joined(path).toLowerCase();
+			for (const text of [
+				"stop at the first command that fails",
+				"never archive after a failure",
+				"runs nothing while a `blocked:` line stands",
+				"merge-cleanup: broken",
+				"switch the checkout off the branch",
+				// S26 revision 2: a merged pull request's head does not move.
+				"push them to a new branch or pull request",
+				"git fetch <remote> <sha>",
+				"a declined approval prompt is a stop",
+			])
+				expect(skill, `${path}: ${text}`).toContain(text);
+			expect(skill, path).not.toContain("push or drop the extra commits");
+		}
+	});
 });

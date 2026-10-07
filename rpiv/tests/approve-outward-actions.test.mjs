@@ -545,6 +545,39 @@ describe("approve-outward-actions hook", () => {
 	);
 
 	it(
+		"deleting a local branch asks (its approval marker goes with it)",
+		() => {
+			// S26 (D36): git deletes `branch.<name>.rpivApproved` with the branch,
+			// so a delete asks; the S2-era silent pins for -d, -D and --delete moved here.
+			expectAsks(
+				[
+					"git branch -d x",
+					"git branch -D x",
+					"git branch --delete x",
+					"git branch -dr origin/x",
+					"git branch -Dq x",
+					"git -C repo branch -D x",
+				],
+				`${OUTWARD}branch deletion`,
+			);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"delete abbreviations and joined upstream values",
+		() => {
+			// S26 revision 1: git accepts a unique abbreviation of --delete; `-u`
+			// takes the rest of its cluster as the upstream name.
+			expectAsks(["git branch --del x", "git branch --dele x"], `${OUTWARD}branch deletion`);
+			expectSilent(["git branch -udev", "git branch -uorigin/dev"]);
+			// S26 revision 2: `-t` takes the rest of its cluster too (`--track=direct`).
+			expectAsks(["git branch -tdirect x origin/x"], `${OUTWARD}branch creation`);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
 		"asks before branch or worktree creation only",
 		() => {
 			expectAsks(
@@ -590,8 +623,6 @@ describe("approve-outward-actions hook", () => {
 				"git branch -a",
 				"git branch -vv",
 				"git branch --show-current",
-				"git branch -d x",
-				"git branch -D x",
 				"git branch -u origin/main",
 				"git branch --set-upstream-to=origin/main",
 				"git branch --contains HEAD",
@@ -612,7 +643,6 @@ describe("approve-outward-actions hook", () => {
 				"git branch --sort=-committerdate",
 				"git branch --column",
 				"git branch --no-column",
-				"git branch --delete x",
 				"git branch --unset-upstream",
 				"git branch --edit-description",
 				"git branch -r",
@@ -1103,9 +1133,11 @@ describe("approve-outward-actions hook", () => {
 				// bounded.
 				[`git push\n${"$((".repeat(22)}`, BROKEN],
 				["$((".repeat(40), BROKEN],
+				// S26 (D36): the expansion `git branch -d x` is now a branch deletion,
+				// whose outward reason outranks the alias one; still bounded and asking.
 				[
 					"git -c alias.b=branch b -d x -- ".repeat(2_000),
-					`${BROKEN} git alias`,
+					`${OUTWARD}branch deletion`,
 				],
 				["git -c alias.p=status p ".repeat(2_700), `${BROKEN} git alias`],
 				[`${"sudo -u x ".repeat(6_000)}bash`, null],
