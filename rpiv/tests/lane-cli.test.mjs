@@ -526,3 +526,301 @@ describe("lane CLI (S5)", () => {
 		TEST_TIMEOUT,
 	);
 });
+
+describe("lane config changes (S22)", () => {
+	const CONFIG = ".rpiv-lanes.json";
+	/** Stages everything and commits; returns the new commit's hash. */
+	const commit = (repo, message) => {
+		git(repo, "add", "-A");
+		git(repo, "commit", "-q", "-m", message);
+		return git(repo, "rev-parse", "HEAD");
+	};
+
+	it(
+		"--paths over .rpiv-lanes.json is rigorous",
+		() => {
+			const repo = newRepo();
+			expect(runLane(["--paths", ".rpiv-lanes.json", "--slices", "1"], { cwd: repo })).toEqual(
+				printed(
+					"lane: rigorous",
+					"reason: lane config: .rpiv-lanes.json",
+					"diagnostic: lines unknown",
+					"diagnostic: hub signal unavailable",
+				),
+			);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"--range uses the stricter of the base and disk lane config",
+		() => {
+			const repo = newRepo();
+			put(repo, CONFIG, '{"fast":{"maxLines":10,"maxFiles":50},"rigorous":{"minFiles":61}}');
+			const a = commit(repo, "A");
+			put(repo, "src/a.js", lines(20));
+			const b = commit(repo, "B");
+			put(repo, CONFIG, '{"fast":{"maxLines":500,"maxFiles":0},"rigorous":{"minFiles":1}}');
+			const strict = printed(
+				"lane: rigorous",
+				"reason: lines: 20 > 10",
+				"reason: files: 1 > 0",
+				"reason: files: 1 >= 1",
+				"diagnostic: hub signal unavailable",
+			);
+			expect.soft(runLane(["--range", `${a}..${b}`, "--slices", "1"], { cwd: repo })).toEqual(strict);
+			expect.soft(runLane(["--range", `${a}...${b}`, "--slices", "1"], { cwd: repo })).toEqual(strict);
+			rmSync(join(repo, CONFIG));
+			expect
+				.soft(runLane(["--range", `${a}..${b}`, "--slices", "1"], { cwd: repo }))
+				.toEqual(printed("lane: normal", "reason: lines: 20 > 10", "diagnostic: hub signal unavailable"));
+
+			// A base revision without the file contributes the defaults; the disk
+			// file's maxLines 10 is the stricter (S22 revision 1).
+			const bare = newRepo();
+			put(bare, "README.md", "x\n");
+			const c = commit(bare, "C");
+			put(bare, "src/a.js", lines(20));
+			const d = commit(bare, "D");
+			put(bare, CONFIG, '{"fast":{"maxLines":10}}');
+			expect
+				.soft(runLane(["--range", `${c}..${d}`, "--slices", "1"], { cwd: bare }))
+				.toEqual(printed("lane: normal", "reason: lines: 20 > 10", "diagnostic: hub signal unavailable"));
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"--working and --paths use HEAD's lane config as the base",
+		() => {
+			const repo = newRepo();
+			put(repo, CONFIG, '{"fast":{"maxFiles":1}}');
+			commit(repo, "A");
+			put(repo, CONFIG, '{"fast":{"maxFiles":50}}');
+			put(repo, "a.js", "a\n");
+			put(repo, "b.js", "b\n");
+			expect
+				.soft(runLane(["--paths", "a.js", "b.js", "--slices", "1"], { cwd: repo }))
+				.toEqual(
+					printed(
+						"lane: normal",
+						"reason: files: 2 > 1",
+						"diagnostic: lines unknown",
+						"diagnostic: hub signal unavailable",
+					),
+				);
+			const working = runLane(["--working", "--slices", "1"], { cwd: repo });
+			expect.soft(working.status).toBe(0);
+			expect.soft(working.stdout.split("\n")[0]).toBe("lane: rigorous");
+			expect.soft(working.stdout).toContain("reason: files: 3 > 1\n");
+			expect.soft(working.stdout).toContain("reason: lane config: .rpiv-lanes.json\n");
+
+			// An unborn HEAD has no base: the disk file alone decides (B124).
+			const unborn = newRepo();
+			put(unborn, CONFIG, '{"fast":{"maxFiles":1}}');
+			expect
+				.soft(runLane(["--paths", "a.js", "b.js", "--slices", "1"], { cwd: unborn }))
+				.toEqual(
+					printed(
+						"lane: normal",
+						"reason: files: 2 > 1",
+						"diagnostic: lines unknown",
+						"diagnostic: hub signal unavailable",
+					),
+				);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"a broken lane config at the base revision is reported",
+		() => {
+			const parseError = (() => {
+				try {
+					JSON.parse("{oops");
+				} catch (error) {
+					return error.message;
+				}
+			})();
+			const repo = newRepo();
+			put(repo, CONFIG, "{oops");
+			const a = commit(repo, "A");
+			put(repo, "src/a.js", "a\n");
+			const b = commit(repo, "B");
+			rmSync(join(repo, CONFIG));
+			expect.soft(runLane(["--range", `${a}..${b}`, "--slices", "1"], { cwd: repo })).toEqual(
+				printed(
+					"lane: normal",
+					"reason: within fast limits",
+					"reason: broken config: raised to normal",
+					`diagnostic: broken config: .rpiv-lanes.json at ${a}: invalid JSON (${parseError})`,
+					"diagnostic: hub signal unavailable",
+				),
+			);
+
+			// Both broken: the disk diagnostic first, then the base one; one raise.
+			put(repo, CONFIG, "{oops");
+			const both = runLane(["--range", `${a}..${b}`, "--slices", "1"], { cwd: repo });
+			expect.soft(both.status).toBe(0);
+			expect.soft(both.stderr).toBe("");
+			expect.soft(both.stdout).toBe(
+				[
+					"lane: normal",
+					"reason: within fast limits",
+					"reason: broken config: raised to normal",
+					`diagnostic: broken config: .rpiv-lanes.json: invalid JSON (${parseError})`,
+					`diagnostic: broken config: .rpiv-lanes.json at ${a}: invalid JSON (${parseError})`,
+					"diagnostic: hub signal unavailable",
+					"",
+				].join("\n"),
+			);
+
+			const shaped = newRepo();
+			put(shaped, CONFIG, '{"fast":{"maxLines":-1}}');
+			const c = commit(shaped, "C");
+			put(shaped, "src/a.js", "a\n");
+			const d = commit(shaped, "D");
+			rmSync(join(shaped, CONFIG));
+			const out = runLane(["--range", `${c}..${d}`, "--slices", "1"], { cwd: shaped });
+			expect
+				.soft(out.stdout)
+				.toContain(
+					`diagnostic: broken config: .rpiv-lanes.json at ${c}: fast.maxLines is not a non-negative integer\n`,
+				);
+
+			// Pin: a base that does not resolve is a broken call.
+			const missing = runLane(["--range", "nosuch..HEAD", "--slices", "1"], { cwd: shaped });
+			expect.soft(missing.status).toBe(2);
+			expect.soft(missing.stdout).toBe("");
+			expect.soft(missing.stderr).toMatch(/^lane: broken: /);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"--paths with a HEAD that does not resolve is a broken call",
+		() => {
+			const repo = newRepo();
+			put(repo, "a.js", "a\n");
+			commit(repo, "c0");
+			writeFileSync(join(repo, ".git/refs/heads/main"), "0000000000000000000000000000000000000001\n");
+			expect(runLane(["--paths", "a.js", "--slices", "1"], { cwd: repo })).toEqual({
+				status: 2,
+				stdout: "",
+				stderr: "lane: broken: git rev-parse failed: HEAD does not name a commit\n",
+			});
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"--range reads the excluded commit's lane config, not the tip's",
+		() => {
+			const repo = newRepo();
+			put(repo, CONFIG, '{"fast":{"maxLines":10}}\n');
+			const a = commit(repo, "A");
+			put(repo, CONFIG, '{"fast":{"maxLines":500}}\n');
+			put(repo, "src/a.js", lines(20));
+			const b = commit(repo, "B");
+			const out = runLane(["--range", `${a}..${b}`, "--slices", "1"], { cwd: repo });
+			expect.soft(out.status).toBe(0);
+			expect.soft(out.stdout).toContain("reason: lines: 22 > 10\n");
+			expect.soft(out.stdout).toContain("reason: lane config: .rpiv-lanes.json\n");
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"a base without the lane config contributes the defaults",
+		() => {
+			const repo = newRepo();
+			put(repo, "README.md", "x\n");
+			commit(repo, "c0");
+			put(repo, CONFIG, '{"fast":{"maxFiles":50}}');
+			const paths = ["p1.js", "p2.js", "p3.js", "p4.js", "p5.js", "p6.js"];
+			expect(runLane(["--paths", ...paths, "--slices", "1"], { cwd: repo })).toEqual(
+				printed(
+					"lane: normal",
+					"reason: files: 6 > 5",
+					"diagnostic: lines unknown",
+					"diagnostic: hub signal unavailable",
+				),
+			);
+		},
+		TEST_TIMEOUT,
+	);
+
+	/** The message JSON.parse gives for `text`. */
+	const parseErrorOf = (text) => {
+		try {
+			JSON.parse(text);
+		} catch (error) {
+			return error.message;
+		}
+	};
+
+	it(
+		"a broken base lane config contributes the defaults",
+		() => {
+			const repo = newRepo();
+			put(repo, CONFIG, "{oops");
+			commit(repo, "c0");
+			put(repo, CONFIG, '{"rigorous":{"minFiles":1000}}');
+			const paths = Array.from({ length: 61 }, (_, i) => `p${i + 1}.js`);
+			expect(runLane(["--paths", ...paths, "--slices", "1"], { cwd: repo })).toEqual(
+				printed(
+					"lane: rigorous",
+					"reason: files: 61 > 5",
+					"reason: files: 61 >= 61",
+					`diagnostic: broken config: .rpiv-lanes.json at HEAD: invalid JSON (${parseErrorOf("{oops")})`,
+					"diagnostic: lines unknown",
+					"diagnostic: hub signal unavailable",
+				),
+			);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"pins: single-revision ranges, the HEAD label and a lone base diagnostic",
+		() => {
+			// (a) A single revision is its own base.
+			const single = newRepo();
+			put(single, CONFIG, '{"fast":{"maxLines":10}}\n');
+			const a = commit(single, "A");
+			put(single, CONFIG, '{"fast":{"maxLines":500}}\n');
+			put(single, "src/a.js", lines(20));
+			git(single, "add", "src/a.js"); // `git diff <rev>` sees tracked files only
+			const one = runLane(["--range", a, "--slices", "1"], { cwd: single });
+			expect.soft(one.status).toBe(0);
+			expect.soft(one.stdout).toContain("reason: lines: 22 > 10\n");
+
+			// (b) An empty left side reads as HEAD.
+			const repo = newRepo();
+			put(repo, CONFIG, "{oops");
+			const c = commit(repo, "C");
+			put(repo, "src/a.js", "a\n");
+			const d = commit(repo, "D");
+			git(repo, "checkout", "-q", "--detach", c);
+			const left = runLane(["--range", `..${d}`, "--slices", "1"], { cwd: repo });
+			expect.soft(left.status).toBe(0);
+			expect
+				.soft(left.stdout)
+				.toContain(
+					`diagnostic: broken config: .rpiv-lanes.json at HEAD: invalid JSON (${parseErrorOf("{oops")})\n`,
+				);
+
+			// (c) A broken base diagnostic with no other diagnostic before it.
+			git(repo, "checkout", "-q", "main");
+			rmSync(join(repo, CONFIG));
+			const graph = join(tempDir(), "graph.json");
+			writeFileSync(graph, JSON.stringify({ modules: [] }));
+			const lone = runLane(["--range", `${c}..${d}`, "--slices", "1", "--graph", graph], { cwd: repo });
+			expect.soft(lone.status).toBe(0);
+			expect
+				.soft(lone.stdout.split("\n").filter((line) => line.startsWith("diagnostic: ")))
+				.toEqual([`diagnostic: broken config: .rpiv-lanes.json at ${c}: invalid JSON (${parseErrorOf("{oops")})`]);
+		},
+		TEST_TIMEOUT,
+	);
+});

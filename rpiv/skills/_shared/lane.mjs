@@ -9,7 +9,8 @@
 //                 [--slices <n>] [--graph <depcruise-or-madge.json>]
 // prints `lane: <lane>`, then `reason: …` and `diagnostic: …` lines, exit 0. Line
 // counts come from `git diff --numstat -z`; generated and media paths are dropped;
-// hubs come only from a graph file (no analysis tool is run). A broken call prints
+// hubs come only from a graph file (no analysis tool is run). The limits are the
+// stricter of the disk `.rpiv-lanes.json` and the base revision's (D33, S22). A broken call prints
 // `lane: broken: <detail>` on stderr and exits 2, never a lane.
 //
 // Importable: DEFAULT_LANE_THRESHOLDS, LANES, classifyLane, loadLaneThresholds, mergeLane.
@@ -24,7 +25,9 @@ import {
 	isEnvFile,
 	isFixture,
 	isGenerated,
+	isLaneConfig,
 	isManifest,
+	LANE_CONFIG_FILE,
 	isMedia,
 	isMigration,
 	isTest,
@@ -40,7 +43,7 @@ export const DEFAULT_LANE_THRESHOLDS = Object.freeze({
 export const LANES = Object.freeze(["fast", "normal", "rigorous"]);
 const higher = (a, b) => (LANES.indexOf(a) >= LANES.indexOf(b) ? a : b);
 
-const CONFIG_FILE = ".rpiv-lanes.json";
+const CONFIG_FILE = LANE_CONFIG_FILE;
 /** A path with `\` read as `/` (Windows paths). */
 const slashed = (p) => p.replace(/\\/g, "/");
 const isPlainObject = (v) =>
@@ -83,6 +86,7 @@ const RIGOROUS_KINDS = [
 	["ci config", isCiConfig],
 	["container file", isContainerFile],
 	["env file", isEnvFile],
+	["lane config", isLaneConfig],
 ];
 // Words with known false positives (design tokens, schema definitions): normal only.
 const WEAK_WORDS = new Set(["token", "schema"]);
@@ -239,6 +243,13 @@ export const loadLaneThresholds = (repoRoot) => {
 			broken: `cannot read (${error.code ?? error.message})`,
 		};
 	}
+	return thresholdsFromText(text);
+};
+
+/** Thresholds from the text of a `.rpiv-lanes.json`: the defaults overridden key
+    by key, or the defaults plus a `broken` detail. */
+const thresholdsFromText = (text) => {
+	const defaults = structuredClone(DEFAULT_LANE_THRESHOLDS);
 	let config;
 	try {
 		config = JSON.parse(text);
@@ -252,6 +263,15 @@ export const loadLaneThresholds = (repoRoot) => {
 		rigorous: { ...defaults.rigorous, ...config.rigorous },
 	};
 };
+
+/** The stricter of two threshold sets, limit by limit (D33): every limit is an
+    upper bound on what still counts as small, so the smaller one is stricter. */
+const stricterThresholds = (a, b) => ({
+	fast: Object.fromEntries(
+		Object.entries(a.fast).map(([key, value]) => [key, Math.min(value, b.fast[key])]),
+	),
+	rigorous: { minFiles: Math.min(a.rigorous.minFiles, b.rigorous.minFiles) },
+});
 
 const assertLane = (value, name) => {
 	if (!LANES.includes(value))
@@ -521,6 +541,64 @@ const modeFiles = (options, root) => {
 	return options.paths.map((path) => ({ path: cleanPath(path) }));
 };
 
+/** The revision whose `.rpiv-lanes.json` also judges the change (D33), as
+    `{ commit, label }`, or undefined when there is none. For a range it is the
+    commit git excludes (the merge base of `a...b`), or a single revision itself;
+    otherwise HEAD — none when HEAD is unborn, a broken call when it exists but
+    names no commit (headBase). */
+const baseRevision = (options, root) => {
+	if (options.mode !== "range")
+		return headBase(root) === "HEAD" ? { commit: "HEAD", label: "HEAD" } : undefined;
+	// rev-parse echoes `--end-of-options` itself: keep only the object ids it prints.
+	const revisions = gitIn(root, ["rev-parse", "--end-of-options", options.range])
+		.split("\n")
+		.filter((line) => /^\^?[0-9a-f]{40,64}$/.test(line.trim()))
+		.map((line) => line.trim());
+	const excluded = revisions.filter((rev) => rev.startsWith("^")).at(-1);
+	const label = options.range.split(/\.\.\.?/)[0] || "HEAD";
+	return { commit: excluded ? excluded.slice(1) : revisions[0], label };
+};
+
+/** Thresholds from `.rpiv-lanes.json` at `commit`; the defaults when it has none,
+    so a new local file can tighten but never loosen (S22 revision 1). */
+const thresholdsAt = (root, commit) => {
+	const entry = gitIn(root, ["ls-tree", "-z", commit, "--", CONFIG_FILE]);
+	if (!entry) return structuredClone(DEFAULT_LANE_THRESHOLDS);
+	return thresholdsFromText(gitIn(root, ["cat-file", "blob", `${commit}:${CONFIG_FILE}`]));
+};
+
+/** The thresholds a change is judged by — the stricter of the disk file and the
+    base revision's file (D33) — and, when the base file is broken, its
+    `{ label, detail }`; a broken base file contributes the defaults, like a
+    missing one (S22 revision 2). */
+const judgingThresholds = (options, root) => {
+	const disk = loadLaneThresholds(root);
+	const base = baseRevision(options, root);
+	const atBase = base && thresholdsAt(root, base.commit);
+	if (!atBase) return { thresholds: disk };
+	const merged = stricterThresholds(disk, atBase);
+	return {
+		thresholds: disk.broken === undefined ? merged : { ...merged, broken: disk.broken },
+		...(atBase.broken !== undefined && {
+			baseBroken: { label: base.label, detail: atBase.broken },
+		}),
+	};
+};
+
+/** A broken base-revision config: its diagnostic after any disk one, and the
+    same one-step raise as a broken disk file (fast -> normal, once). */
+const reportBrokenBase = (result, { label, detail }) => {
+	const diagnostics = [...result.diagnostics];
+	const at = diagnostics[0]?.startsWith("broken config: ") ? 1 : 0;
+	diagnostics.splice(at, 0, `broken config: ${CONFIG_FILE} at ${label}: ${detail}`);
+	if (result.lane !== "fast") return { ...result, diagnostics };
+	return {
+		lane: "normal",
+		reasons: [...result.reasons, "broken config: raised to normal"],
+		diagnostics,
+	};
+};
+
 /** The CLI's stdout for `argv`, run in `cwd`; throws on a broken call. */
 const runCli = (argv, cwd) => {
 	const options = parseArgs(argv);
@@ -531,10 +609,12 @@ const runCli = (argv, cwd) => {
 		options.graph === undefined
 			? {}
 			: readHubs(resolve(cwd, options.graph), files.map((file) => file.path));
+	const judged = judgingThresholds(options, root);
 	let result = classifyLane(
 		{ files, slices: options.slices, hubs: signal.hubs },
-		loadLaneThresholds(root),
+		judged.thresholds,
 	);
+	if (judged.baseBroken !== undefined) result = reportBrokenBase(result, judged.baseBroken);
 	if (signal.broken !== undefined)
 		result = reportBrokenGraph(result, options.graph, signal.broken);
 	const { lane, reasons, diagnostics } = result;

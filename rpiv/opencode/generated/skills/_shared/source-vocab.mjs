@@ -17,8 +17,8 @@
 //
 // Importable-only: no CLI, no isMain.
 // Importable: SOURCE_EXT, CITE_EXT, extOf, isSource, isTest, isFixture, TEST_EXCLUDE_RE,
-// isManifest, isLockfile, isMigration, isCiConfig, isContainerFile, isEnvFile,
-// sensitiveWords, isGenerated, isMedia.
+// isManifest, isLockfile, isMigration, isCiConfig, isContainerFile, LANE_CONFIG_FILE,
+// isLaneConfig, isEnvFile, sensitiveWords, isGenerated, isMedia.
 
 /** Extensions that count as reviewable source code (metrics, mutation, semantic). */
 export const SOURCE_EXT = new Set([
@@ -113,6 +113,12 @@ const CONTAINER_NAME_RE =
 	/^(dockerfile(\..+)?|.+\.dockerfile|containerfile|docker-compose[^/]*\.ya?ml|compose(\.[^/]+)?\.ya?ml|\.dockerignore)$/i;
 /** A container build or compose file. */
 export const isContainerFile = (p) => CONTAINER_NAME_RE.test(baseOf(p));
+
+/** The repo-root file of per-repository lane thresholds (D9, D33). */
+export const LANE_CONFIG_FILE = ".rpiv-lanes.json";
+/** The root lane thresholds file itself — never a nested or look-alike name (D33). */
+export const isLaneConfig = (p) =>
+	slashed(p).replace(/^\.\//, "") === LANE_CONFIG_FILE;
 
 // `.env`, `.env.<x>`, `<x>.env` — except the placeholder templates (developer
 // choice, D15).

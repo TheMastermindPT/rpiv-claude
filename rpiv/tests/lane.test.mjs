@@ -56,6 +56,37 @@ const classify = (files, extra = {}) => {
 };
 
 describe("lane classifier (S4)", () => {
+	it("editing .rpiv-lanes.json is a rigorous lane config change", () => {
+		expect(
+			classifyLane({
+				files: [{ path: ".rpiv-lanes.json", added: 1, deleted: 1 }],
+				slices: 1,
+				hubs: [],
+			}),
+		).toEqual({
+			lane: "rigorous",
+			reasons: ["lane config: .rpiv-lanes.json"],
+			diagnostics: [],
+		});
+		for (const path of ["./.rpiv-lanes.json", ".\\.rpiv-lanes.json"]) {
+			expect.soft(classify([{ path, added: 1, deleted: 0 }]), path).toEqual({
+				lane: "rigorous",
+				reasons: [`lane config: ${path}`],
+			});
+		}
+		for (const path of [
+			"sub/.rpiv-lanes.json",
+			"rpiv-lanes.json",
+			".rpiv-lanes.json.bak",
+			"docs/.rpiv-lanes.json.md",
+		]) {
+			expect.soft(classify([{ path, added: 1, deleted: 0 }]), path).toEqual({
+				lane: "fast",
+				reasons: ["within fast limits"],
+			});
+		}
+	});
+
 	it("applies the default size limits at their edges", () => {
 		expect(
 			classifyLane({

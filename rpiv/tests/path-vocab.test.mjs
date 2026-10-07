@@ -20,6 +20,7 @@ import {
 	isContainerFile,
 	isEnvFile,
 	isGenerated,
+	isLaneConfig,
 	isLockfile,
 	isManifest,
 	isMedia,
@@ -334,6 +335,32 @@ describe("path vocabulary (S3)", () => {
 			.toEqual([]);
 		// S3 revision 1 pin: nothing beyond the union.
 		expect.soft(isManifest("uv.lock")).toBe(false);
+	});
+
+	it("recognizes the root lane config and nothing that looks like it (S22)", () => {
+		expect
+			.soft(
+				mismatches(
+					isLaneConfig,
+					[".rpiv-lanes.json", "./.rpiv-lanes.json", ".\\.rpiv-lanes.json"],
+					true,
+				),
+			)
+			.toEqual([]);
+		expect
+			.soft(
+				mismatches(
+					isLaneConfig,
+					[
+						"sub/.rpiv-lanes.json",
+						"rpiv-lanes.json",
+						".rpiv-lanes.json.bak",
+						"docs/.rpiv-lanes.json.md",
+					],
+					false,
+				),
+			)
+			.toEqual([]);
 	});
 
 	it("recognizes migrations, CI config, container files and env files", () => {
