@@ -20,8 +20,9 @@
 //   claim-verifier / diff-analyst: repo-relative citation contract
 // slice-verifier cites artifact locations by basename legitimately — skipped.
 //
-// Input (stdin): { agent_type, result } envelope or raw text. Emits warnings
-// to stdout; advisory only, never blocks, never grades.
+// Input (stdin): a SubagentStop envelope { agent_type, result } (OpenCode) or
+// { agent_type, last_assistant_message } (Claude Code), or raw text. Emits
+// warnings to stdout; advisory only, never blocks, never grades.
 //
 // Usage:
 //   node scripts/agent-cite-check.mjs --root <repo-root>
@@ -29,6 +30,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+
+import {
+	agentOutput,
+	NO_AGENT_OUTPUT,
+} from "../skills/_shared/subagent-event.mjs";
 
 export const CITATION_PATTERN =
 	/([\w./\\-]+\.(?:ts|mts|cts|js|mjs|cjs|tsx|jsx|md|json|html|css)):(\d{1,5})/g;
@@ -106,7 +112,7 @@ function extractFromStdin(raw) {
 		) {
 			return {
 				agentType: event.agent_type,
-				text: typeof event.result === "string" ? event.result : "",
+				text: agentOutput(event),
 			};
 		}
 	} catch {
@@ -136,12 +142,17 @@ async function main() {
 	const raw = readStdin();
 	if (!raw) return;
 	const { agentType, text } = extractFromStdin(raw);
-	if (!text.trim()) return;
 	const { root } = parseArgs(process.argv.slice(2));
 	const agentName = Object.keys(CONTRACTS).find((name) =>
 		agentType.includes(name),
 	);
 	if (!agentName) return;
+	if (!text.trim()) {
+		process.stdout.write(
+			`[cite-check] ${agentName}: ${NO_AGENT_OUTPUT} — citations not checked\n`,
+		);
+		return;
+	}
 	const metrics = citeMetrics(text, root);
 	const problems = violations(agentName, metrics);
 	for (const problem of problems) {

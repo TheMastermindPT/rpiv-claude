@@ -16,9 +16,10 @@
 // A broken gate (no key, API error, unreadable reference) emits a distinct
 // UNAVAILABLE line — never a silent pass (degrade-distinguishes-broken).
 //
-// Input (stdin): a JSON envelope { agent_type, result } (Claude Code
-// SubagentStop event or opencode plugin), or raw agent text. Agent types
-// without a ROW_LINTS entry exit silently.
+// Input (stdin): a SubagentStop envelope { agent_type, result } (OpenCode) or
+// { agent_type, last_assistant_message } (Claude Code), read by
+// skills/_shared/subagent-event.mjs (D28), or raw agent text. Agent types
+// without a ROW_LINTS entry exit silently; a linted agent with no text says so.
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -33,6 +34,10 @@ import {
 } from "./jev-client.mjs";
 import { findingId, requireProbability } from "./jev-contracts.mjs";
 import { appendLog } from "./jev-gate.mjs";
+import {
+	agentOutput,
+	NO_AGENT_OUTPUT,
+} from "../skills/_shared/subagent-event.mjs";
 
 const PLUGIN_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
@@ -515,7 +520,7 @@ function extractFromStdin(raw) {
 		if (isSubagentEvent(event)) {
 			return {
 				agentType: event.agent_type,
-				text: typeof event.result === "string" ? event.result : "",
+				text: agentOutput(event),
 				prompt:
 					typeof event.prompt === "string" && event.prompt
 						? event.prompt
@@ -553,7 +558,12 @@ async function main() {
 	);
 	if (!entry) return;
 	const [agentName, config] = entry;
-	if (!text.trim()) return;
+	if (!text.trim()) {
+		process.stdout.write(
+			`[jev-lint] UNAVAILABLE: ${NO_AGENT_OUTPUT} — rows not linted\n`,
+		);
+		return;
+	}
 
 	const constituents =
 		config.needsConstituents && prompt

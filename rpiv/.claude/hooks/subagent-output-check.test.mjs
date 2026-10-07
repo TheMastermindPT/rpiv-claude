@@ -146,8 +146,12 @@ const mkAgent = (repo, name, effort) => {
   try {
     mkAgent(repo, "claim-verifier", "high");
     const { stderr } = runHook(repo, { agent_type: "claim-verifier", result: "" });
-    assert.match(stderr, /WARNING: agent "claim-verifier".*suspiciously short output/);
-    console.log("OK — empty result, high effort: warns.");
+    // S28 revision 1 (D28): an event with no agent text says so instead of the 0-chars warning.
+    assert.ok(
+      stderr.includes('WARNING: agent "claim-verifier" — no agent output in the event (result or last_assistant_message); output checks skipped.'),
+      `expected the no-output line, got: ${stderr}`,
+    );
+    console.log("OK — empty result, high effort: warns (no agent output).");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
 

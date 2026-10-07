@@ -17,7 +17,7 @@
 
 import { readFileSync } from "node:fs";
 
-import { readAgentFrontmatter } from "./_shared.mjs";
+import { bareAgentName, readAgentFrontmatter } from "./_shared.mjs";
 
 // ---- helpers -------------------------------------------------------------------
 
@@ -53,7 +53,7 @@ const BASH_ALLOWLIST = {
 };
 
 function violatesAllowlist(agentType, command) {
-  const spec = BASH_ALLOWLIST[agentType];
+  const spec = BASH_ALLOWLIST[bareAgentName(agentType)];
   if (!spec) return null;
   const segments = command.split(/(?:\|\||&&|[;|])/).map((s) => s.trim()).filter(Boolean);
   if (segments.length === 0) return spec.label;

@@ -4,11 +4,13 @@
 // meaningful output — non-empty for agents that should return results,
 // and free of error/fallback language. Advisory only (warns, never blocks).
 //
-// Reads SubagentStop JSON from stdin.
+// Reads SubagentStop JSON from stdin: the agent's text from `result` (OpenCode) or
+// `last_assistant_message` (Claude Code), via skills/_shared/subagent-event.mjs (D28).
 
 import { readFileSync } from "node:fs";
 
-import { readAgentFrontmatter } from "./_shared.mjs";
+import { agentOutput, NO_AGENT_OUTPUT } from "../../skills/_shared/subagent-event.mjs";
+import { bareAgentName, readAgentFrontmatter } from "./_shared.mjs";
 
 // ---- helpers -------------------------------------------------------------------
 
@@ -83,8 +85,8 @@ function checkLength(agentType, effort, result) {
 }
 
 /** Check that known structured agents produce their expected format. */
-function checkFormat(agentType, result) {
-  const spec = STRUCTURED_AGENTS[agentType];
+function checkFormat(agentType, name, result) {
+  const spec = STRUCTURED_AGENTS[name];
   if (!spec || spec.pattern.test(result)) return;
   process.stderr.write(
     `[rpiv-hook] WARNING: agent "${agentType}" output missing expected ` +
@@ -101,14 +103,23 @@ function main() {
   const agentType = input.agent_type;
   if (!agentType) return;
 
+  // A non-string or unknown type finds no agent file and stays silent. The format map uses
+  // the bare name (bareAgentName, D28); messages keep the type as received.
   const fm = readAgentFrontmatter(agentType);
   if (!fm) return;
+  const name = bareAgentName(agentType);
   const effort = fm.effort || "medium";
-  const result = input.result || "";
+  const result = agentOutput(input);
+  if (!result) {
+    process.stderr.write(
+      `[rpiv-hook] WARNING: agent "${agentType}" — ${NO_AGENT_OUTPUT}; output checks skipped.\n`
+    );
+    return;
+  }
 
   checkLength(agentType, effort, result);
   checkErrorLanguage(agentType, result);
-  checkFormat(agentType, result);
+  checkFormat(agentType, name, result);
 }
 
 main();

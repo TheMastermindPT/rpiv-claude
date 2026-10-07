@@ -30,11 +30,19 @@ export function isSafeAgentType(agentType) {
     && !agentType.startsWith(".");
 }
 
+/** The agent's bare name: Claude Code names a plugin agent with its prefix
+    (`rpiv:claim-verifier`), OpenCode and the agent files use the bare name (D28). A non-string
+    comes back unchanged so isSafeAgentType still rejects it. */
+export function bareAgentName(agentType) {
+  return typeof agentType === "string" ? agentType.replace(/^rpiv:/, "") : agentType;
+}
+
 /** Absolute path to an rpiv agent's .md, or null when agent_type is unsafe or the file
     does not exist. Never probes the filesystem with an unsafe agent_type. */
 export function agentFilePath(agentType) {
-  if (!isSafeAgentType(agentType)) return null;
-  const file = join(agentsDir(), `${agentType}.md`);
+  const name = bareAgentName(agentType);
+  if (!isSafeAgentType(name)) return null;
+  const file = join(agentsDir(), `${name}.md`);
   return existsSync(file) ? file : null;
 }
 
