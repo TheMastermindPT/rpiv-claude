@@ -11,6 +11,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import * as client from "../scripts/jev-client.mjs";
 import * as gate from "../scripts/jev-gate.mjs";
+import { judgeFinding } from "../scripts/jev-rel-audit.mjs";
 import { lintRow, ROW_LINTS } from "../scripts/jev-row-lint.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -141,7 +142,11 @@ describe("S7 Jev client (B98–B101)", () => {
 });
 
 // Grows by one file per S7 commit (D27): each listed caller sends through the client only.
-const MIGRATED = ["scripts/jev-gate.mjs", "scripts/jev-row-lint.mjs"];
+const MIGRATED = [
+	"scripts/jev-gate.mjs",
+	"scripts/jev-row-lint.mjs",
+	"scripts/jev-rel-audit.mjs",
+];
 
 describe("S7 callers send through the client (B102)", () => {
 	it.each(MIGRATED)(
@@ -179,5 +184,15 @@ describe("S7 callers keep their broken shapes (B104)", () => {
 			fetchImpl: http503,
 		});
 		expect(r).toMatchObject({ id: "Q1", tag: "Verified", broken: HTTP_503 });
+	});
+
+	it("each caller reports an HTTP failure in its own broken shape: rel-audit", async () => {
+		const r = await judgeFinding({
+			finding: { id: "I1", text: "I1 — src/a.ts:3 race" },
+			bundle: "record",
+			key: "k",
+			fetchImpl: http503,
+		});
+		expect(r).toEqual({ id: "I1", broken: HTTP_503 });
 	});
 });

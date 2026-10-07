@@ -37,7 +37,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { JEV_ENDPOINT, JEV_MODEL, readKey } from "./jev-gate.mjs";
+import { askJev, JEV_ENDPOINT, JEV_MODEL, readKey } from "./jev-client.mjs";
 import { requireProbability } from "./jev-contracts.mjs";
 
 export const OK_BAR = 0.7;
@@ -191,35 +191,31 @@ async function callRelJudge({
 	endpoint,
 	timeoutMs,
 }) {
-	const res = await fetchImpl(endpoint, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${key}`,
-			"Content-Type": "application/json",
+	const reply = await askJev({
+		key,
+		model: JEV_MODEL,
+		state: {
+			finding: finding.text.slice(0, 4000),
+			record: bundle,
 		},
-		body: JSON.stringify({
-			model: JEV_MODEL,
-			state: {
-				finding: finding.text.slice(0, 4000),
-				record: bundle,
-			},
-			questions: {
-				consistent: {
-					type: "noul",
-					instructions:
-						"Does the finding's description of relationships match the extracted record for its cited files?",
-					criteria: {
-						true: "the relational claims the finding makes (consumers, imports, boundaries, call sites, ownership) are consistent with what the record shows, or the finding makes no relational claims",
-						false:
-							"the finding describes a relationship that contradicts the record — e.g., names a consumer that does not import the file, claims a boundary violation the record does not flag, or asserts ownership the record contradicts",
-					},
+		questions: {
+			consistent: {
+				type: "noul",
+				instructions:
+					"Does the finding's description of relationships match the extracted record for its cited files?",
+				criteria: {
+					true: "the relational claims the finding makes (consumers, imports, boundaries, call sites, ownership) are consistent with what the record shows, or the finding makes no relational claims",
+					false:
+						"the finding describes a relationship that contradicts the record — e.g., names a consumer that does not import the file, claims a boundary violation the record does not flag, or asserts ownership the record contradicts",
 				},
 			},
-		}),
-		signal: AbortSignal.timeout(timeoutMs),
+		},
+		fetchImpl,
+		endpoint,
+		timeoutMs,
 	});
-	if (!res.ok) throw new Error(`HTTP ${res.status} from Jev endpoint`);
-	return requireProbability((await res.json())?.answers?.consistent?.noul);
+	if (reply.status !== "ok") throw new Error(reply.reason);
+	return requireProbability(reply.body?.answers?.consistent?.noul);
 }
 
 /** One judgment per finding. Returns { id, p, verdict } | { id, broken } |
