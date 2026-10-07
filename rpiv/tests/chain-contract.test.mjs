@@ -72,14 +72,29 @@ describe("one rpiv chain", () => {
 		},
 	);
 
-	it("pipeline skills write a handoff and the clear hook is registered", () => {
-		// S17 (D37): the stage that ends writes the handoff the clear hook shows once.
-		for (const skill of ["discover", "research", "design", "plan", "implement", "deep-review", "validate"]) {
-			const [line] = nextStepLines(skill);
-			expect(line, skill).toContain('handoff.mjs" write --next');
-			expect(line, skill).toContain("unless a stop is pending");
-			expect(read(`opencode/generated/skills/rpiv-${skill}/SKILL.md`), skill).toContain("handoff.mjs");
+	// Fenced blocks are text the agent prints (closing-message templates), not steps.
+	const FENCED = /^\s*```[\s\S]*?^\s*```/gm;
+	const PIPELINE = ["discover", "research", "design", "plan", "implement", "deep-review", "validate"];
+
+	it("the handoff instruction stands outside the printed closing message", () => {
+		// S17 revision 1 (B159): an instruction inside a template is printed, never run.
+		for (const skill of PIPELINE) {
+			for (const path of [`skills/${skill}/SKILL.md`, `opencode/generated/skills/rpiv-${skill}/SKILL.md`]) {
+				const text = read(path);
+				const outside = text.replace(FENCED, "").replace(/\s+/g, " ");
+				expect.soft(outside, path).toContain('handoff.mjs" write --next');
+				expect.soft(outside, path).toContain("unless a stop is pending");
+				const fenced = text.match(FENCED) ?? [];
+				expect.soft(fenced.filter((block) => block.includes("handoff.mjs")), path).toEqual([]);
+			}
 		}
+	});
+
+	it("pipeline skills write a handoff and the clear hook is registered", () => {
+		// S17 (D37): the stage that ends writes the handoff the clear hook shows once
+		// (where the instruction stands: B159 above).
+		for (const skill of PIPELINE)
+			expect(read(`opencode/generated/skills/rpiv-${skill}/SKILL.md`), skill).toContain("handoff.mjs");
 		const sessionStart = JSON.parse(read("hooks/hooks.json")).hooks.SessionStart;
 		const clear = sessionStart.filter((entry) => entry.matcher === "clear");
 		expect(clear).toHaveLength(1);

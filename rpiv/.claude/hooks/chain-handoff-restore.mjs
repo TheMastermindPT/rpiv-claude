@@ -35,12 +35,20 @@ function gitDirOf(dir) {
 
 const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 const hasText = (value) => typeof value === "string" && value !== "";
+const textOrNull = (value) => value == null || typeof value === "string";
+const isArtifact = (a) => a == null || (isRecord(a) && hasText(a.path) && typeof a.content_hash === "string");
+const isDecisions = (d) => d === undefined || (Array.isArray(d) && d.every((x) => typeof x === "string"));
+const malformed = (field) => [(rec) => textOrNull(rec[field]), () => `${field} is malformed`];
 
-// What a record must hold before it is trusted, in order: [holds, why not].
+// What a record must hold before it is trusted, in order: [holds, why not]
+// (S17 revision 1: every field the summary prints).
 const RECORD_CHECKS = [
 	[isRecord, () => "not an object"],
 	[(rec) => rec.v === 1, (rec) => `unknown version ${rec.v}`],
 	[(rec) => hasText(rec.next), () => "next is missing"],
+	[(rec) => isArtifact(rec.artifact), () => "artifact is malformed"],
+	[(rec) => isDecisions(rec.decisions), () => "decisions is malformed"],
+	...["slice", "lane", "branch", "time"].map(malformed),
 ];
 
 /** The handoff record in `text`; a shape this hook cannot trust throws Unreadable. */
@@ -98,11 +106,20 @@ function pending(dir) {
 	} catch (err) {
 		renameSync(path, `${gitDir}/rpiv/handoff.broken.json`);
 		const why = err instanceof Unreadable ? err.message : `cannot read (${err.code ?? err.message})`;
-		return `[rpiv-hook] handoff unreadable: ${why}`;
+		return `[rpiv-hook] handoff unreadable: ${sanitizeForContext(why)}`;
 	}
-	const top = runGit(dir, ["rev-parse", "--show-toplevel"]).out;
+	// Build everything first: a handoff that cannot be shown is never consumed.
+	const context = summary(rec, artifactDrift(rec, topOf(dir))).join("\n");
 	renameSync(path, `${gitDir}/rpiv/handoff.consumed.json`);
-	return summary(rec, artifactDrift(rec, top)).join("\n");
+	return context;
+}
+
+/** The worktree's top level; a failed read throws (never an empty path). */
+function topOf(dir) {
+	const res = runGit(dir, ["rev-parse", "--show-toplevel"]);
+	if (res.error) throw new Error(`git could not run (${res.error})`);
+	if (res.status !== 0) throw new Error(`git refused ${dir}: ${res.err.split("\n")[0]}`);
+	return res.out;
 }
 
 /** The context for this event: pending, broken, or null. */
@@ -116,13 +133,24 @@ function contextFor(stdin) {
 	try {
 		return pending(event?.cwd ?? process.cwd());
 	} catch (err) {
-		return `[rpiv-hook] handoff not checked: ${err?.message ?? err}`;
+		return `[rpiv-hook] handoff not checked: ${sanitizeForContext(err?.message ?? err)}`;
+	}
+}
+
+/** The event text; an unreadable stdin is a "not checked" answer, never a crash. */
+function readStdin() {
+	try {
+		return { text: readFileSync(0, "utf-8") };
+	} catch (err) {
+		const why = sanitizeForContext(err?.code ?? err?.message);
+		return { problem: `[rpiv-hook] handoff not checked: cannot read the hook event (${why})` };
 	}
 }
 
 function main() {
 	limitGitTime(6_000);
-	const context = contextFor(readFileSync(0, "utf-8"));
+	const stdin = readStdin();
+	const context = stdin.problem ?? contextFor(stdin.text);
 	if (context === null) return;
 	process.stdout.write(
 		JSON.stringify({ hookSpecificOutput: { hookEventName: EVENT, additionalContext: context } }),

@@ -99,7 +99,9 @@ Done when required intent reviews pass on the current projection and authoritati
 4. Flip `status: in-review` to `status: ready` only after required intent gates and finalization lint pass. Readiness describes reviewed planning intent; build approval and execution gates remain separate.
 5. Present the path, next slice, executable/unresolved counts, review outcome, and deferred scope. Never imply automatic commits, pushes, or merges.
 
-**Next step:** `/rpiv:implement <plan-path>` — build the next slice; implement agrees the workspace and build authorization first. Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop (a failed, broken, or missing gate) is pending. Before ending, unless a stop is pending, write the handoff for that command: `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/handoff.mjs" write --next "<the command>" [--artifact <path>] [--slice <id>] [--lane <lane>] [--decision "<open decision>"]...`; after `/clear`, Claude Code shows it once.
+**Next step:** `/rpiv:implement <plan-path>` — build the next slice; implement agrees the workspace and build authorization first. Run `/clear` first, then this command, so the next stage starts in a fresh session; stop here instead if a developer decision or any other **Lanes** stop (a failed, broken, or missing gate) is pending.
+
+**Write the handoff (a step, not part of the message):** before printing the closing message, unless a stop is pending, run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/handoff.mjs" write --next "<the next-step command>" [--artifact <path>] [--slice <id>] [--lane <lane>] [--decision "<open decision>"]...`; after `/clear`, Claude Code shows it once.
 
 ## Follow-Ups
 

@@ -19,8 +19,9 @@ import { contentHashOf } from "./validate-artifact.mjs";
 
 const HEADS = "refs/heads/";
 
-/** git's trimmed stdout in `cwd`; a failure throws a broken detail. */
-function gitOut(cwd, args) {
+/** git's trimmed stdout in `cwd` when its exit status is one of `ok` (0 by
+    default) — `{ status, out }`; anything else throws a broken detail. */
+function git(cwd, args, ok = [0]) {
 	const res = spawnSync("git", args, {
 		cwd,
 		encoding: "utf-8",
@@ -28,10 +29,12 @@ function gitOut(cwd, args) {
 		windowsHide: true,
 	});
 	if (res.error) throw new Error(`git could not run (${res.error.message})`);
-	if (res.status !== 0)
+	if (!ok.includes(res.status))
 		throw new Error(`git ${args[0]} failed: ${(res.stderr ?? "").trim().split("\n")[0]}`);
-	return (res.stdout ?? "").trim();
+	return { status: res.status, out: (res.stdout ?? "").trim() };
 }
+
+const gitOut = (cwd, args) => git(cwd, args).out;
 
 const REPEATED = new Set(["--decision"]);
 const SINGLE = new Set(["--next", "--artifact", "--slice", "--lane"]);
@@ -62,11 +65,17 @@ function checkOptions(opts) {
 		throw new Error("lane must be fast, normal or rigorous");
 }
 
+/** HEAD's symbolic ref, or "" when HEAD is detached (git's quiet exit 1); any
+    other failure throws (S17 revision 1). */
+function headRef(cwd) {
+	const { status, out } = git(cwd, ["symbolic-ref", "--quiet", "HEAD"], [0, 1]);
+	return status === 1 ? "" : out;
+}
+
 /** The handoff record for `opts`, written from `cwd`'s worktree. */
 function record(opts, cwd) {
 	const top = gitOut(cwd, ["rev-parse", "--show-toplevel"]);
-	const head = spawnSync("git", ["symbolic-ref", "--quiet", "HEAD"], { cwd, encoding: "utf-8" });
-	const ref = (head.stdout ?? "").trim();
+	const ref = headRef(cwd);
 	let artifact = null;
 	if (opts.artifact !== undefined) {
 		const full = resolve(cwd, opts.artifact);
