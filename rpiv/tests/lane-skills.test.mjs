@@ -158,6 +158,21 @@ describe("lane rules at the front of the chain", () => {
 			);
 		expect(unconditional).toEqual([]);
 	});
+	it("research names .rpiv-lanes.json where it confirms the lane", () => {
+		// D34, verbatim (S23 revision 1).
+		const SENTENCE =
+			"An optional `.rpiv-lanes.json` at the repository root overrides `fast.maxSlices`, `fast.maxLines`, `fast.maxFiles` and `rigorous.minFiles` key by key, but a change is judged by the stricter of that file and the committed one (a missing or broken committed file counts as the defaults), so an uncommitted file can only tighten the limits; it cannot change the sensitive vocabulary, a broken file raises fast to normal with a `broken config` diagnostic, and a change that edits it is rigorous.";
+		const research = joined("skills/research/SKILL.md");
+		expect(research.split(SENTENCE).length - 1).toBe(1);
+		const step = research.indexOf("**Confirm the lane.**");
+		const next = research.indexOf("**", step + "**Confirm the lane.**".length);
+		const at = research.indexOf(SENTENCE);
+		expect(step).toBeGreaterThan(-1);
+		expect(at).toBeGreaterThan(step);
+		expect(at).toBeLessThan(next);
+		expect(joined("opencode/generated/skills/rpiv-research/SKILL.md")).toContain(SENTENCE);
+		expect(joined("skills/discover/SKILL.md")).not.toContain(".rpiv-lanes.json");
+	});
 	it("design and plan review intent only in the rigorous lane", () => {
 		const design = joined("skills/design/SKILL.md");
 		for (const rule of [
