@@ -13,7 +13,8 @@
 // stricter of the disk `.rpiv-lanes.json` and the base revision's (D33, S22). A broken call prints
 // `lane: broken: <detail>` on stderr and exits 2, never a lane.
 //
-// Importable: DEFAULT_LANE_THRESHOLDS, LANES, classifyLane, loadLaneThresholds, mergeLane.
+// Importable: DEFAULT_LANE_THRESHOLDS, LANES, classifyLane, loadLaneThresholds, mergeLane,
+// laneInput (the files a CLI call judges, S8).
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { lstatSync, readFileSync, statSync } from "node:fs";
@@ -599,12 +600,27 @@ const reportBrokenBase = (result, { label, detail }) => {
 	};
 };
 
-/** The CLI's stdout for `argv`, run in `cwd`; throws on a broken call. */
-const runCli = (argv, cwd) => {
+/** What a CLI call classifies: its parsed options, repository root, every listed
+    file and the files kept after generated/media paths are dropped. Throws on a
+    broken call. */
+const cliInput = (argv, cwd) => {
 	const options = parseArgs(argv);
 	const root = gitIn(cwd, ["rev-parse", "--show-toplevel"]).trim();
 	const listed = modeFiles(options, root);
-	const files = listed.filter((file) => !isDropped(file.path));
+	return { options, root, listed, files: listed.filter((file) => !isDropped(file.path)) };
+};
+
+/** The changed files a CLI call judges, for callers that ask about the same
+    change (S8's Jev shadow): `{ mode, files: [repo-relative paths], slices }`.
+    Throws on a broken call, as the CLI would. */
+export const laneInput = (argv, cwd) => {
+	const { options, files } = cliInput(argv, cwd);
+	return { mode: options.mode, files: files.map((file) => slashed(file.path)), slices: options.slices };
+};
+
+/** The CLI's stdout for `argv`, run in `cwd`; throws on a broken call. */
+const runCli = (argv, cwd) => {
+	const { options, root, listed, files } = cliInput(argv, cwd);
 	const signal =
 		options.graph === undefined
 			? {}
