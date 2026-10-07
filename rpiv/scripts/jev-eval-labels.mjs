@@ -21,6 +21,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { NO_KEY_REASON } from "./jev-client.mjs";
 import { appendLog, readKey } from "./jev-gate.mjs";
 import {
 	contentDigest,
@@ -241,9 +242,7 @@ async function main() {
 	const args = parseArgs(process.argv.slice(2));
 	const key = readKey();
 	if (!key) {
-		process.stderr.write(
-			"jev-eval-labels broken: no TYPESAFE_API_KEY in env or .env\n",
-		);
+		process.stderr.write(`jev-eval-labels broken: ${NO_KEY_REASON}\n`);
 		process.exit(2);
 	}
 	const summary = await processEvalRoot({

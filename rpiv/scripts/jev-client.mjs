@@ -17,7 +17,9 @@ export const JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 // shift every calibrated threshold. Move versions on our own schedule.
 export const JEV_MODEL = "jev-1.13.0";
 
-const NO_KEY = "no TYPESAFE_API_KEY in env or .env";
+// The one owner of the no-key text (shared-vocab-union); callers keep their own no-key
+// mapping (unavailable or broken) but quote this reason.
+export const NO_KEY_REASON = "no TYPESAFE_API_KEY in env or .env";
 
 /** Key resolution: TYPESAFE_API_KEY env var wins, then the .env file. Never prints. */
 export function readKey({ envFile = ".env", env = process.env } = {}) {
@@ -43,7 +45,13 @@ export async function askJev({
 	model = JEV_MODEL,
 	timeoutMs,
 }) {
-	if (!key?.trim()) return { status: "unavailable", reason: NO_KEY };
+	if (key != null && typeof key !== "string") {
+		return {
+			status: "broken",
+			reason: `Jev key is not a string (${typeof key})`,
+		};
+	}
+	if (!key?.trim()) return { status: "unavailable", reason: NO_KEY_REASON };
 	try {
 		const t0 = performance.now();
 		const res = await fetchImpl(endpoint, {

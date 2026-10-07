@@ -149,6 +149,33 @@ describe("S7 Jev client (B98–B101)", () => {
 	});
 });
 
+// S7 review 1 fixes (developer choice, 2026-10-07): W2 and W3.
+describe("S7 review fixes", () => {
+	it("treats a non-string key as broken, never a throw (W2)", async () => {
+		const { calls, fetchImpl } = recording(() => okJson({}));
+		const r = await client.askJev({ key: 123, ...request, fetchImpl });
+		expect(r.status).toBe("broken");
+		expect(typeof r.reason).toBe("string");
+		expect(calls).toHaveLength(0);
+	});
+
+	it("gives the no-key text one owner under scripts/ and evals/ (W3)", () => {
+		expect(client.NO_KEY_REASON).toBe("no TYPESAFE_API_KEY in env or .env");
+		const owners = ["scripts", "evals"]
+			.flatMap((dir) =>
+				readdirSync(join(ROOT, dir), { recursive: true })
+					.filter((f) => String(f).endsWith(".mjs"))
+					.map((f) => `${dir}/${String(f).replaceAll("\\", "/")}`),
+			)
+			.filter((f) =>
+				readFileSync(join(ROOT, f), "utf-8").includes(
+					"no TYPESAFE_API_KEY in env or .env",
+				),
+			);
+		expect(owners).toEqual(["scripts/jev-client.mjs"]);
+	});
+});
+
 // Grows by one file per S7 commit (D27): each listed caller sends through the client only.
 const MIGRATED = [
 	"scripts/jev-gate.mjs",

@@ -20,7 +20,12 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { askJev, JEV_MODEL, readKey } from "../../scripts/jev-client.mjs";
+import {
+	askJev,
+	JEV_MODEL,
+	NO_KEY_REASON,
+	readKey,
+} from "../../scripts/jev-client.mjs";
 import { findingId, requireProbability } from "../../scripts/jev-contracts.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -204,7 +209,7 @@ async function main() {
 				{
 					case: caseSpec.id,
 					recall: [],
-					unavailable: "no TYPESAFE_API_KEY in env or .env",
+					unavailable: NO_KEY_REASON,
 				},
 				null,
 				2,

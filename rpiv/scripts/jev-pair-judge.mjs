@@ -25,7 +25,13 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { askJev, JEV_ENDPOINT, JEV_MODEL, readKey } from "./jev-client.mjs";
+import {
+	askJev,
+	JEV_ENDPOINT,
+	JEV_MODEL,
+	NO_KEY_REASON,
+	readKey,
+} from "./jev-client.mjs";
 import { requireProbability } from "./jev-contracts.mjs";
 
 export const OK_BAR = 0.7;
@@ -276,9 +282,7 @@ async function main() {
 	const pairs = loadPairs(args);
 	const key = readKey();
 	if (!key) {
-		process.stderr.write(
-			"jev-pair-judge broken: no TYPESAFE_API_KEY in env or .env\n",
-		);
+		process.stderr.write(`jev-pair-judge broken: ${NO_KEY_REASON}\n`);
 		process.exit(2);
 	}
 	const results = await judgePairs({ check, pairs, key });

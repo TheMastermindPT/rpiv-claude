@@ -24,7 +24,13 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { askJev, JEV_ENDPOINT, JEV_MODEL, readKey } from "./jev-client.mjs";
+import {
+	askJev,
+	JEV_ENDPOINT,
+	JEV_MODEL,
+	NO_KEY_REASON,
+	readKey,
+} from "./jev-client.mjs";
 import { findingId, requireProbability } from "./jev-contracts.mjs";
 import { appendLog } from "./jev-gate.mjs";
 
@@ -428,7 +434,7 @@ export async function lintAgentOutput(config, text, deps = {}) {
 	if (!key) {
 		return {
 			results: [],
-			unavailable: "no TYPESAFE_API_KEY in env or .env",
+			unavailable: NO_KEY_REASON,
 		};
 	}
 

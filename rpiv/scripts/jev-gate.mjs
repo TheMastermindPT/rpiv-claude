@@ -48,7 +48,13 @@ import {
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { askJev, JEV_ENDPOINT, JEV_MODEL, readKey } from "./jev-client.mjs";
+import {
+	askJev,
+	JEV_ENDPOINT,
+	JEV_MODEL,
+	NO_KEY_REASON,
+	readKey,
+} from "./jev-client.mjs";
 
 // The transport moved to jev-client.mjs (D27); re-exported so existing importers keep working.
 export { JEV_ENDPOINT, JEV_MODEL, readKey };
@@ -365,7 +371,7 @@ export async function runGate({
 		const result = {
 			phase: "broken",
 			verdict: "broken",
-			reasons: ["no TYPESAFE_API_KEY in env or .env"],
+			reasons: [NO_KEY_REASON],
 			exitCode: 2,
 		};
 		appendLog(logPath, { ts, command, cwd, mode, threshold, ...result });
