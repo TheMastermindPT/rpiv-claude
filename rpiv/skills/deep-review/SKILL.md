@@ -434,7 +434,7 @@ Carry every verifier result into Step 7. Verified and Weakened findings remain a
 
 ### Step 8: Present Summary
 
-Before presenting, count the fix commits on the branch that name a review artifact (implement's fix-commit messages name the review and its fix round). With 1 fix round already made and the review still `Merge: blocked`, present the Fix step as the stop below, not as a new round.
+Before presenting, count the fix commits on the branch: the commits carrying a `Review:` trailer. Run `git log --format='%(trailers:key=Review,valueonly)' <range>` (quoted as shown, for bash and PowerShell; cmd.exe does not treat single quotes as quotes): each commit that prints a value is one fix round; a slice commit prints an empty line. Implement writes that trailer on every fix commit and never on a slice commit. A count command that fails is broken: stop and ask the developer with `ask_user_question`, and never read it as 0 rounds. With 1 fix round already made and the review still `Merge: blocked`, present the Fix step as the stop below, not as a new round.
 
 ```
 Review written to:
@@ -478,7 +478,7 @@ Ask follow-ups, or chain forward.
 
 ## Important Notes
 
-- **Read-only review**: deep-review stays read-only — it never edits code; findings become fix commits on the branch through `/rpiv:implement <review-path>`, one fix round at most before the developer decides (Step 8). Fix rounds are counted from the fix commits on the branch, whose messages name the review artifact and its fix round.
+- **Read-only review**: deep-review stays read-only — it never edits code; findings become fix commits on the branch through `/rpiv:implement <review-path>`, one fix round at most before the developer decides (Step 8). Fix rounds are counted from the fix commits on the branch: the commits carrying a `Review:` trailer, as `git log --format='%(trailers:key=Review,valueonly)' <range>` prints them (Step 8).
 - **Frontmatter**: `allowed-tools` is intentionally omitted — the skill inherits `Agent`, `ask_user_question`, `advisor`, `Write`, `web_search`, `todo`. Do NOT re-add the line.
 - **Security-lens precision stance**: prefer false negatives. Evidence must carry `confidence ≥ 8`; 🔴 requires an explicit source→sink trace. Missing hardening without a traced sink is NOT a finding.
 - **Load-bearing invariants** (each is enforced in the cited step; this is the do-not-break checklist):

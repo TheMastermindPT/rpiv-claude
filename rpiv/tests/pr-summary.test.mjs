@@ -79,7 +79,7 @@ function fixtureF({ log = true, design = LANE_FAST } = {}) {
 	const c3 = commit(dir, "chore: three\n\nSee Red: inline.\n");
 	const c4 = commit(
 		dir,
-		"fix: review round 1\n\nFix round 1 for .rpiv/artifacts/reviews/r1.md\n",
+		"fix: review round 1\n\nFix round 1.\n\nReview: .rpiv/artifacts/reviews/r1.md\n",
 	);
 	writeFileSync(join(dir, "d.md"), design);
 	writeFileSync(join(dir, "r1.md"), "---\nmerge_status: clear\n---\n\n# R\n");
@@ -252,7 +252,7 @@ describe("S25 PR summary helper", () => {
 			);
 			const fa = commit(
 				dir,
-				"fix: a\n\nRound 1: .rpiv/artifacts/reviews/a.md\n",
+				"fix: a\n\nRound 1.\n\nReview: .rpiv/artifacts/reviews/a.md\n",
 			);
 			git(dir, "switch", "-q", "-c", "side", base);
 			const side = commit(dir, "feat: side work\n");
@@ -260,7 +260,7 @@ describe("S25 PR summary helper", () => {
 			git(dir, "merge", "-q", "--no-ff", "-m", "Merge side into feat", "side");
 			const fb = commit(
 				dir,
-				"fix: b\n\nRound 2: .rpiv/artifacts/reviews/b.md\n",
+				"fix: b\n\nRound 2.\n\nReview: .rpiv/artifacts/reviews/b.md\n",
 			);
 			writeFileSync(join(dir, "d.md"), LANE_FAST);
 			for (const [name, field] of [
@@ -343,6 +343,104 @@ describe("S25 PR summary helper", () => {
 				"## Cycle metrics",
 			);
 			expect(detached[0]).toBe("cycles: (detached)");
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"a fix commit is the one with a Review trailer",
+		() => {
+			// S27-fix-commit-review-path, B115 (D31): only the trailer marks a fix commit.
+			const dir = newRepo();
+			const base = git(dir, "rev-parse", "HEAD");
+			const slice = commit(
+				dir,
+				"feat: slice\n\nTDD: the rule reads .rpiv/artifacts/reviews/x.md paths\n",
+			);
+			const fix = commit(
+				dir,
+				"fix: review round\n\nThe fixes.\n\nReview: .rpiv/artifacts/reviews/r.md\nCo-Authored-By: A <a@x>\n",
+			);
+			const named = commit(
+				dir,
+				"fix: named in the subject .rpiv/artifacts/reviews/s.md\n",
+			);
+			// S27 review 2 R1 pin: a Review line outside the last paragraph is no trailer.
+			const early = commit(
+				dir,
+				"fix: early\n\nReview: .rpiv/artifacts/reviews/e.md\n\nCo-Authored-By: A <a@x>\n",
+			);
+			writeFileSync(join(dir, "d.md"), LANE_FAST);
+			const body = okBody(runHelper(dir, "--base", base, "--design", "d.md"));
+			expect(section(body, "## Fix commits")).toEqual([
+				"fix rounds: 1",
+				`- ${short(dir, fix)} fix: review round (review: .rpiv/artifacts/reviews/r.md)`,
+			]);
+			const slices = section(body, "## Slices").join("\n");
+			expect(slices).toContain(`- ${short(dir, slice)} feat: slice`);
+			expect(slices).toContain(
+				`- ${short(dir, named)} fix: named in the subject`,
+			);
+			expect(slices).toContain(`- ${short(dir, early)} fix: early`);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"a Review trailer without a review path is broken",
+		() => {
+			// S27-fix-commit-review-path, B116 (D31): broken, never a quiet slice commit.
+			const dir = newRepo();
+			const base = git(dir, "rev-parse", "HEAD");
+			const bad = commit(dir, "fix: other\n\nReview: looked fine\n");
+			writeFileSync(join(dir, "d.md"), LANE_FAST);
+			const res = runHelper(dir, "--base", base, "--design", "d.md");
+			expect(res.status).toBe(2);
+			expect(res.stdout).toBe("");
+			expect(res.stderr).toBe(
+				`${BROKEN}${short(dir, bad)} has a Review trailer that is not a review path (looked fine)\n`,
+			);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"Review trailers: every value is checked, the first is shown",
+		() => {
+			// S27 revision 1, B121 (D31 pins): multi-value trailers and git's key matching.
+			const two = newRepo();
+			const twoBase = git(two, "rev-parse", "HEAD");
+			const fix = commit(
+				two,
+				"fix: two\n\nReview: .rpiv/artifacts/reviews/a.md\nReview: .rpiv/artifacts/reviews/b.md\n",
+			);
+			const lower = commit(
+				two,
+				"fix: lower\n\nreview: .rpiv/artifacts/reviews/c.md\n",
+			);
+			writeFileSync(join(two, "d.md"), LANE_FAST);
+			const body = okBody(
+				runHelper(two, "--base", twoBase, "--design", "d.md"),
+			);
+			expect(section(body, "## Fix commits")).toEqual([
+				"fix rounds: 2",
+				`- ${short(two, fix)} fix: two (review: .rpiv/artifacts/reviews/a.md)`,
+				`- ${short(two, lower)} fix: lower (review: .rpiv/artifacts/reviews/c.md)`,
+			]);
+
+			const mixed = newRepo();
+			const mixedBase = git(mixed, "rev-parse", "HEAD");
+			const bad = commit(
+				mixed,
+				"fix: mixed\n\nReview: .rpiv/artifacts/reviews/a.md\nReview: nope\n",
+			);
+			writeFileSync(join(mixed, "d.md"), LANE_FAST);
+			const res = runHelper(mixed, "--base", mixedBase, "--design", "d.md");
+			expect(res.status).toBe(2);
+			expect(res.stdout).toBe("");
+			expect(res.stderr).toBe(
+				`${BROKEN}${short(mixed, bad)} has a Review trailer that is not a review path (nope)\n`,
+			);
 		},
 		TEST_TIMEOUT,
 	);

@@ -22,8 +22,9 @@ import { LANES } from "./lane.mjs";
 // The evidence paragraphs a slice commit's message may carry (D25: S12/S13 commits
 // use TDD:/Gates:, S14/S15 Red:/Green:).
 const LABELS = ["Contract:", "Red:", "Green:", "TDD:", "Gates:", "Evidence:"];
-// A fix commit names the review it fixes (D22).
-const REVIEW_PATH = /\.rpiv\/artifacts\/reviews\/[^\s`'"()]+\.md/;
+// A fix commit carries a `Review: <review path>` trailer, its only marker (D31); a
+// review path anywhere else in a message marks nothing.
+const REVIEW_PATH = /^\.rpiv\/artifacts\/reviews\/[^\s]+\.md$/;
 const SINGLE = new Set(["--base", "--design", "--branch"]);
 const REPEATED = new Map([
 	["--review", "reviews"],
@@ -92,13 +93,14 @@ function checkBase(cwd, base) {
 	if (res.status !== 0) throw new Error(`base is not a commit: ${base}`);
 }
 
-/** `[{ short, message }]` for the non-merge commits of `base..HEAD`, oldest first. */
+/** `[{ short, message, reviews }]` for the non-merge commits of `base..HEAD`, oldest
+    first; `reviews` holds the values of the commit's `Review:` trailers, as git parses them. */
 function commitsSince(cwd, base) {
 	const res = git(cwd, [
 		"log",
 		"--reverse",
 		"--no-merges",
-		"--format=%h%x00%B%x1e",
+		"--format=%h%x00%B%x00%(trailers:key=Review,valueonly)%x1e",
 		`${base}..HEAD`,
 	]);
 	if (res.status !== 0)
@@ -108,11 +110,26 @@ function commitsSince(cwd, base) {
 		.map((entry) => entry.replace(/^\n+/, ""))
 		.filter(Boolean)
 		.map((entry) => {
-			const [short, message] = entry.split("\0");
-			return { short, message: message.trim() };
+			const [short, message, trailers] = entry.split("\0");
+			const reviews = trailers
+				.split("\n")
+				.map((value) => value.trim())
+				.filter(Boolean);
+			return { short, message: message.trim(), reviews };
 		});
 	if (commits.length === 0) throw new Error(`no commits in ${base}..HEAD`);
 	return commits;
+}
+
+/** The review a fix commit names, or null for a slice commit; throws when a
+    `Review:` value is not a review path (broken, never a quiet slice commit). */
+function reviewOf({ short, reviews }) {
+	const bad = reviews.find((value) => !REVIEW_PATH.test(value));
+	if (bad !== undefined)
+		throw new Error(
+			`${short} has a Review trailer that is not a review path (${bad})`,
+		);
+	return reviews[0] ?? null;
 }
 
 /** The message's evidence paragraphs, in message order (the subject excluded). */
@@ -190,8 +207,9 @@ export function runCli(argv, cwd) {
 	checkBase(cwd, opts.base);
 	const commits = commitsSince(cwd, opts.base);
 	const lane = laneLines(designFrontmatter(opts.design));
-	const fixes = commits.filter((c) => REVIEW_PATH.test(c.message));
-	const slices = commits.filter((c) => !REVIEW_PATH.test(c.message));
+	const marked = commits.map((c) => ({ ...c, review: reviewOf(c) }));
+	const fixes = marked.filter((c) => c.review !== null);
+	const slices = marked.filter((c) => c.review === null);
 	const reviews = outcomeLines("review", opts.reviews, "merge_status");
 	const validations = outcomeLines("validation", opts.validations, "verdict");
 	const cycles = cycleLines(cwd, opts.branch);
@@ -203,8 +221,7 @@ export function runCli(argv, cwd) {
 			"## Fix commits",
 			`fix rounds: ${fixes.length}`,
 			...fixes.map(
-				(c) =>
-					`- ${c.short} ${c.message.split("\n")[0]} (review: ${c.message.match(REVIEW_PATH)[0]})`,
+				(c) => `- ${c.short} ${c.message.split("\n")[0]} (review: ${c.review})`,
 			),
 		],
 		["## Reviews", ...(reviews.length > 0 ? reviews : ["reviews: none"])],

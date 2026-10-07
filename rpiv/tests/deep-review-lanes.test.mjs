@@ -127,7 +127,7 @@ describe("deep-review findings become fix commits", () => {
 			/After 1 fix round[^.]*`Merge: blocked`[^.]*`ask_user_question`/i,
 			/deep-review stays read-only/i,
 			/without a `design=` token, validate asks for the contract/i,
-			/Before presenting, count the fix commits on the branch that name a review artifact/i,
+			/Before presenting, count the fix commits on the branch/i,
 		]) {
 			expect.soft(deepReviewJoined).toMatch(phrase);
 		}
@@ -140,7 +140,6 @@ describe("deep-review findings become fix commits", () => {
 			/verified 🔴 and 🟡 findings/,
 			/one fix commit per round/i,
 			/never amends a slice commit/i,
-			/names the review artifact and its fix round/i,
 			/each behavior-changing fix starts with its own expected red/i,
 			/A deep-review artifact has no approved copy/i,
 			/recorded in the owning design's `## Developer Context`, is its approval/i,
@@ -158,6 +157,49 @@ describe("deep-review findings become fix commits", () => {
 		expect(next[0]).not.toMatch(/once the slice's gates pass/i);
 		expect(implementJoined).not.toMatch(
 			/once the lane's acceptance is recorded/i,
+		);
+	});
+
+	it("implement writes and deep-review counts the Review trailer", () => {
+		// S27-fix-commit-review-path, B117 (D31): the trailer is the one fix-commit marker.
+		const WRITE = "its message carries the trailer `Review: <review-path>`";
+		const COUNT = "carrying a `Review:` trailer";
+		// S27 revision 1 (review 1 W2, W3): quoted for any shell, at both counts; a failed
+		// count is broken, never 0 rounds.
+		const LOG = "git log --format='%(trailers:key=Review,valueonly)' <range>";
+		const OLD = [
+			/names the review artifact and its fix round/i,
+			/name a review artifact/i,
+			/name the review artifact/i,
+			/--format=%\(trailers/,
+		];
+		const check = (implementText, deepReviewText) => {
+			const impl = joined(implementText);
+			const deep = joined(deepReviewText);
+			expect.soft(impl).toContain(WRITE);
+			expect.soft(impl).toMatch(/a slice commit never carries it/i);
+			expect.soft(deep.split(LOG).length - 1).toBe(2);
+			expect.soft(deep.split(COUNT).length - 1).toBe(2);
+			expect.soft(deep).toMatch(/a count command that fails is broken/i);
+			expect.soft(deep).toMatch(/never read it as 0 rounds/i);
+			// S27 review 2 R1, R2 (developer: fix wording, unreviewed): git reads trailers only
+			// from the last paragraph; the quoting is proven for bash and PowerShell only.
+			expect
+				.soft(impl)
+				.toMatch(
+					/goes in the message's last paragraph, in the same block as any `Co-Authored-By:` line/i,
+				);
+			expect.soft(deep).toMatch(/quoted as shown, for bash and PowerShell/i);
+			expect.soft(deep).not.toMatch(/in any shell/i);
+			for (const old of OLD) {
+				expect.soft(impl).not.toMatch(old);
+				expect.soft(deep).not.toMatch(old);
+			}
+		};
+		check(implement, deepReview);
+		check(
+			read("opencode/generated/skills/rpiv-implement/SKILL.md"),
+			read("opencode/generated/skills/rpiv-deep-review/SKILL.md"),
 		);
 	});
 
