@@ -1,5 +1,6 @@
 import {
 	cpSync,
+	lstatSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
@@ -247,8 +248,17 @@ function readAgentDefinitions(root) {
 
 function readSkillDefinitions(root) {
 	const skillsDir = join(root, "skills");
+	// A folder is a skill only when it holds a SKILL.md (D29). Only a missing entry
+	// is skipped; a SKILL.md that exists but cannot be read throws below.
 	return readdirSync(skillsDir, { withFileTypes: true })
-		.filter((entry) => entry.isDirectory() && entry.name !== "_shared")
+		.filter(
+			(entry) =>
+				entry.isDirectory() &&
+				entry.name !== "_shared" &&
+				lstatSync(join(skillsDir, entry.name, "SKILL.md"), {
+					throwIfNoEntry: false,
+				}) !== undefined,
+		)
 		.sort((left, right) => left.name.localeCompare(right.name))
 		.map((entry) => {
 			const path = join(skillsDir, entry.name, "SKILL.md");

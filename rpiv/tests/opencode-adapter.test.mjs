@@ -1,4 +1,11 @@
-import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import {
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -204,6 +211,56 @@ describe("OpenCode definition inventory", () => {
 		);
 		expect(dispatch).toContain("task({");
 		expect(dispatch).not.toContain("Agent({");
+	});
+
+	/** S18 fixture: one agent, skill `alpha`, `_shared`, and two folders without a SKILL.md. */
+	function strayRoot() {
+		const root = mkdtempSync(join(tmpdir(), "rpiv-opencode-root-"));
+		mkdirSync(join(root, "agents"));
+		writeFileSync(
+			join(root, "agents", "codebase-locator.md"),
+			readFileSync(join(ROOT, "agents", "codebase-locator.md"), "utf8"),
+		);
+		mkdirSync(join(root, "skills", "alpha"), { recursive: true });
+		writeFileSync(
+			join(root, "skills", "alpha", "SKILL.md"),
+			"---\nname: alpha\ndescription: Alpha\n---\n\nbody\n",
+		);
+		mkdirSync(join(root, "skills", "_shared"));
+		mkdirSync(join(root, "skills", "stray"));
+		mkdirSync(join(root, "skills", "notes"));
+		writeFileSync(join(root, "skills", "notes", "readme.md"), "notes\n");
+		return root;
+	}
+
+	it("skips skill folders without a SKILL.md", () => {
+		// S18-adapter-skill-dirs, B113 (D29): only folders holding a SKILL.md are skills.
+		const root = strayRoot();
+
+		const definitions = buildOpenCodeDefinitions(root);
+		expect(definitions.skills).toHaveLength(1);
+		expect(Object.keys(definitions.commands)).toEqual(["rpiv:alpha"]);
+
+		const output = join(root, "generated");
+		expect(generateOpenCodeSkills(root, output)).toEqual({ count: 1, output });
+		const generated = readdirSync(output);
+		expect(generated).toContain("rpiv-alpha");
+		expect(generated).not.toContain("rpiv-stray");
+		expect(generated).not.toContain("rpiv-notes");
+	});
+
+	it("throws for a SKILL.md that exists but cannot be read", () => {
+		// S18 revision 1, B120 (D29): only a missing SKILL.md is skipped; a dangling
+		// link (a junction on Windows, which needs no privilege) still throws.
+		const root = strayRoot();
+		mkdirSync(join(root, "skills", "linked"));
+		symlinkSync(
+			join(root, "nowhere"),
+			join(root, "skills", "linked", "SKILL.md"),
+			process.platform === "win32" ? "junction" : "file",
+		);
+
+		expect(() => buildOpenCodeDefinitions(root)).toThrow(/linked/);
 	});
 
 	it("keeps committed generated skills synchronized with their sources", () => {
