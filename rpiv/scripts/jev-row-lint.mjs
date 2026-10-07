@@ -20,8 +20,12 @@
 // { agent_type, last_assistant_message } (Claude Code), read by
 // skills/_shared/subagent-event.mjs (D28), or raw agent text. Agent types
 // without a ROW_LINTS entry exit silently; a linted agent with no text says so.
+// A constituent-aware agent's dispatch prompt comes from the event's `prompt`
+// (OpenCode) or the subagent transcript at `agent_transcript_path` (Claude Code,
+// D32); an unreadable transcript prints a distinct BROKEN line.
 
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -525,12 +529,82 @@ function extractFromStdin(raw) {
 					typeof event.prompt === "string" && event.prompt
 						? event.prompt
 						: null,
+				transcriptPath:
+					typeof event.agent_transcript_path === "string" &&
+					event.agent_transcript_path
+						? event.agent_transcript_path
+						: null,
 			};
 		}
 	} catch {
 		// raw text fallthrough
 	}
-	return { agentType: "", text: raw, prompt: null };
+	return { agentType: "", text: raw, prompt: null, transcriptPath: null };
+}
+
+/** The text of a transcript message's content: a string, or its text blocks joined. */
+function contentText(content) {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((block) => block?.type === "text" && typeof block.text === "string")
+		.map((block) => block.text)
+		.join("\n");
+}
+
+/**
+ * The dispatch prompt from a Claude Code subagent transcript (D32): the first
+ * line, in file order, that is a non-meta `user` entry. Returns `{ prompt }` or
+ * `{ broken: <reason> }` — an unreadable transcript is never "no prompt".
+ */
+export function promptFromTranscript(path) {
+	const full = path.replace(/^~(?=[\\/])/, homedir());
+	let text;
+	try {
+		text = readFileSync(full, "utf-8");
+	} catch (err) {
+		return { broken: `cannot read: ${err.code ?? err.message}` };
+	}
+	const lines = text.split(/\r?\n/);
+	for (const [index, line] of lines.entries()) {
+		if (!line.trim()) continue;
+		let entry;
+		try {
+			entry = JSON.parse(line);
+		} catch {
+			return { broken: `line ${index + 1} is not JSON` };
+		}
+		if (entry?.type !== "user" || entry.isMeta) continue;
+		const prompt = contentText(entry.message?.content);
+		return prompt.trim()
+			? { prompt }
+			: { broken: "no text in the user message" };
+	}
+	return { broken: "no user message" };
+}
+
+/** The dispatch prompt for a constituent-aware lint: the event's (OpenCode), else
+    the subagent transcript's (Claude Code), else none. */
+function dispatchPrompt({ prompt, transcriptPath }) {
+	if (prompt) return { prompt };
+	if (transcriptPath) return promptFromTranscript(transcriptPath);
+	return { prompt: null };
+}
+
+/** `{ constituents }` for a config (null when it needs none), or `{ stop: <line> }`
+    when a constituent-aware lint cannot get its dispatch prompt. */
+function constituentsFor(config, source) {
+	if (!config.needsConstituents) return { constituents: null };
+	const { prompt, broken } = dispatchPrompt(source);
+	if (broken)
+		return {
+			stop: `[jev-lint] BROKEN: dispatch prompt unreadable from agent_transcript_path (${broken}) — rows not linted\n`,
+		};
+	if (!prompt)
+		return {
+			stop: `[jev-lint] UNAVAILABLE: constituent findings not supplied (no dispatch prompt) — rows not linted\n`,
+		};
+	return { constituents: parseConstituentFindings(prompt) };
 }
 
 function emitWarning(agentName, r) {
@@ -552,7 +626,7 @@ function emitWarning(agentName, r) {
 async function main() {
 	const raw = readStdin();
 	if (!raw) return;
-	const { agentType, text, prompt } = extractFromStdin(raw);
+	const { agentType, text, ...source } = extractFromStdin(raw);
 	const entry = Object.entries(ROW_LINTS).find(([name]) =>
 		agentType.includes(name),
 	);
@@ -565,14 +639,9 @@ async function main() {
 		return;
 	}
 
-	const constituents =
-		config.needsConstituents && prompt
-			? parseConstituentFindings(prompt)
-			: null;
-	if (config.needsConstituents && !constituents) {
-		process.stdout.write(
-			`[jev-lint] UNAVAILABLE: constituent findings not supplied (no dispatch prompt) — rows not linted\n`,
-		);
+	const { constituents, stop } = constituentsFor(config, source);
+	if (stop) {
+		process.stdout.write(stop);
 		return;
 	}
 
