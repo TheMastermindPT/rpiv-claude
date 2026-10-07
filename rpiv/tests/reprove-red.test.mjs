@@ -793,7 +793,7 @@ describe("validate re-proves red (S14)", () => {
 			/reprove-red\.mjs" --commit <slice-commit>/,
 			/executable with arguments, not a shell string/i,
 			/--test <path>::<name>/,
-			/Re-proved red is report-only: it never fails or blocks validation/i,
+			// S19 (D39) replaces the report-only sentence; B178 asserts its absence.
 			/validate does not judge whether a failure reason matches the Expected red/i,
 			/beside the behavior's Expected red/i,
 			/never as red and never as a pass/i,
@@ -823,5 +823,277 @@ describe("validate re-proves red (S14)", () => {
 		const authoring = joined("skills/_shared/test-contract-authoring.md");
 		expect(authoring).toMatch(/`Expected red: none — pin`/);
 		expect(authoring).toMatch(/validate does not re-prove it/i);
+	});
+});
+
+// S19 (D39): a runner that also writes a JUnit report (first argument), one case
+// named "sums" per test file, its failure message the thrown error's.
+const JUNIT_RUNNER = `import { writeFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+const [junit, ...paths] = process.argv.slice(2);
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
+const cases = [];
+let failed = false;
+for (const p of paths) {
+	try {
+		await import(pathToFileURL(resolve(p)).href);
+		cases.push(\`<testcase classname="\${esc(p)}" name="sums"></testcase>\`);
+	} catch (error) {
+		failed = true;
+		cases.push(\`<testcase classname="\${esc(p)}" name="sums"><failure message="\${esc(error.message)}"/></testcase>\`);
+	}
+}
+writeFileSync(junit, \`<testsuites><testsuite name="t">\${cases.join("")}</testsuite></testsuites>\`);
+process.exit(failed ? 1 : 0);
+`;
+
+describe("re-proving red at another revision and parameterised titles (S19)", () => {
+	it(
+		"--base re-proves the slice's tests on the named revision",
+		() => {
+			const repo = newRepo();
+			put(repo, "jrun.mjs", JUNIT_RUNNER);
+			put(repo, "src/sum.mjs", BROKEN_SUM);
+			put(repo, "tests/shared.test.mjs", "export {};\n");
+			const base = commitAll(repo, "base");
+			git(repo, "checkout", "-q", "-b", "side");
+			put(repo, "src/sum.mjs", "export const sum = () => 7;\n");
+			// S19 revision 1 (B189): the base's own test change is never applied. The
+			// slice leaves tests/shared.test.mjs alone, so a base → commit diff would
+			// list it; the parent → commit diff does not.
+			put(repo, "tests/shared.test.mjs", "export const side = 1;\n");
+			const seven = commitAll(repo, "an amended-away candidate");
+			put(repo, "src/sum.mjs", GOOD_SUM);
+			const good = commitAll(repo, "a candidate that already works");
+			git(repo, "checkout", "-q", "main");
+			put(repo, "src/sum.mjs", GOOD_SUM);
+			put(repo, "tests/sum.test.mjs", SUM_TEST);
+			const slice = commitAll(repo, "slice");
+			const id = "tests/sum.test.mjs::sums";
+			const call = (rev) =>
+				runHelper(
+					[
+						"--commit",
+						slice,
+						...(rev ? ["--base", rev] : []),
+						"--test",
+						id,
+						"--",
+						NODE,
+						"jrun.mjs",
+						"{junit}",
+						"{tests}",
+					],
+					repo,
+				);
+			const logOf = (run) => run.lines.find((line) => line.startsWith("log: "));
+
+			const atSeven = call(seven);
+			expect(atSeven.stderr).toBe("");
+			expect(atSeven.status).toBe(0);
+			expect(atSeven.lines.slice(0, 3)).toEqual([
+				`reprove-red: ${slice}`,
+				`base: ${seven}`,
+				"test: tests/sum.test.mjs",
+			]);
+			expect(atSeven.lines.filter((line) => line.startsWith("test: "))).toEqual(["test: tests/sum.test.mjs"]);
+			expect(atSeven.lines).toContain(`test-result: failed ${id}`);
+			expect(atSeven.lines).toContain(`reason: ${id}: got 7`);
+			expect(logOf(atSeven)).toBe(`log: ${scratchOf(repo, `${slice}-${seven}`)}.log`);
+			expect(lastLine(atSeven.lines)).toBe("result: red");
+
+			const atParent = call();
+			expect(atParent.lines[1]).toBe(`base: ${base}`);
+			expect(atParent.lines).toContain(`reason: ${id}: got 0`);
+			expect(logOf(atParent)).toBe(`log: ${scratchOf(repo, slice)}.log`);
+			expect(lastLine(atParent.lines)).toBe("result: red");
+
+			const atGood = call(good);
+			expect(atGood.lines).toContain(`test-result: passed ${id}`);
+			expect(lastLine(atGood.lines)).toBe("result: green");
+
+			const nope = call("nope");
+			expect(nope.status).toBe(2);
+			expect(nope.stdout).toBe("");
+			expect(nope.stderr.split(/\r?\n/)[0]).toBe("reprove-red: broken: unknown revision: nope");
+		},
+		TEST_TIMEOUT,
+	);
+
+	const PARAM_REPORT = `<?xml version="1.0"?>
+<testsuites><testsuite name="t">
+<testcase classname="tests/t.test.mjs" name="adds (x)"><failure message="x broke"/></testcase>
+<testcase classname="tests/t.test.mjs" name="adds (y)"><failure message="y broke"/></testcase>
+<testcase classname="tests/t.test.mjs" name="adds ()"></testcase>
+<testcase classname="tests/t.test.mjs" name="half (x)"><failure message="h broke"/></testcase>
+<testcase classname="tests/t.test.mjs" name="half (y)"></testcase>
+<testcase classname="tests/t.test.mjs" name="suite &gt; checks 3 items"><failure message="three"/></testcase>
+<testcase classname="tests/t.test.mjs" name="tail (x) more"><failure message="more"/></testcase>
+<testcase classname="tests/t.test.mjs" name="100% sure"><failure message="percent"/></testcase>
+<testcase classname="tests/t.test.mjs" name="100x sure"></testcase>
+<testcase classname="tests/t.test.mjs" name="axb"><failure message="axb"/></testcase>
+</testsuite></testsuites>
+`;
+	const COPIER = `import { copyFileSync } from "node:fs";
+const [src, dst] = process.argv.slice(2);
+copyFileSync(src, dst);
+process.exit(1);
+`;
+
+	it(
+		"placeholder titles match their parameterised cases",
+		() => {
+			const repo = newRepo();
+			put(repo, "copy.mjs", COPIER);
+			commitAll(repo, "base");
+			put(repo, "tests/t.test.mjs", "export {};\n");
+			put(repo, "tests/fixtures/param.xml", PARAM_REPORT);
+			const slice = commitAll(repo, "slice");
+			const names = [
+				"adds (%s)",
+				"half (%s)",
+				"checks %d items",
+				"adds ($name)",
+				"adds (%s) more",
+				"tail (%s)",
+				"100%% sure",
+				"a.b",
+			].map((name) => `tests/t.test.mjs::${name}`);
+			const run = runHelper(
+				[
+					"--commit",
+					slice,
+					...names.flatMap((name) => ["--test", name]),
+					"--",
+					NODE,
+					"copy.mjs",
+					"tests/fixtures/param.xml",
+					"{junit}",
+				],
+				repo,
+			);
+			expect(run.status).toBe(0);
+			const from = run.lines.findIndex((line) => line.startsWith("report: "));
+			expect(run.lines.slice(from + 1)).toEqual([
+				"test-result: failed tests/t.test.mjs::adds (%s)",
+				"reason: tests/t.test.mjs::adds (%s): x broke",
+				"test-result: mixed tests/t.test.mjs::half (%s)",
+				"test-result: failed tests/t.test.mjs::checks %d items",
+				"reason: tests/t.test.mjs::checks %d items: three",
+				"test-result: failed tests/t.test.mjs::adds ($name)",
+				"reason: tests/t.test.mjs::adds ($name): x broke",
+				"test-result: not-found tests/t.test.mjs::adds (%s) more",
+				"test-result: not-found tests/t.test.mjs::tail (%s)",
+				"test-result: failed tests/t.test.mjs::100%% sure",
+				"reason: tests/t.test.mjs::100%% sure: percent",
+				"test-result: not-found tests/t.test.mjs::a.b",
+				"result: red",
+			]);
+		},
+		TEST_TIMEOUT,
+	);
+});
+
+describe("placeholder edges (S19 revision 1)", () => {
+	const EDGE_REPORT = `<?xml version="1.0"?>
+<testsuites>
+<testsuite name="tests/l.test.mjs"><testcase classname="tests/l.test.mjs" name="tests/l.test.mjs"><failure message="cannot load"/></testcase></testsuite>
+<testsuite name="t">
+<testcase classname="tests/t.test.mjs" name="x &gt; b y &gt; z"><failure message="spans"/></testcase>
+<testcase classname="tests/t.test.mjs" name="suite &gt; b w"></testcase>
+</testsuite>
+</testsuites>
+`;
+	const COPY = `import { copyFileSync } from "node:fs";
+const [src, dst] = process.argv.slice(2);
+copyFileSync(src, dst);
+process.exit(1);
+`;
+
+	it(
+		"placeholder titles never span a nesting or match a load record",
+		() => {
+			const repo = newRepo();
+			put(repo, "copy.mjs", COPY);
+			commitAll(repo, "base");
+			put(repo, "tests/l.test.mjs", "export {};\n");
+			put(repo, "tests/t.test.mjs", "export {};\n");
+			put(repo, "tests/fixtures/edge.xml", EDGE_REPORT);
+			const slice = commitAll(repo, "slice");
+			const run = runHelper(
+				[
+					"--commit",
+					slice,
+					"--test",
+					"tests/l.test.mjs::%s",
+					"--test",
+					"tests/t.test.mjs::b %s",
+					"--",
+					NODE,
+					"copy.mjs",
+					"tests/fixtures/edge.xml",
+					"{junit}",
+				],
+				repo,
+			);
+			expect(run.status).toBe(0);
+			const from = run.lines.findIndex((line) => line.startsWith("report: "));
+			expect(run.lines.slice(from + 1)).toEqual([
+				"test-result: failed-to-load tests/l.test.mjs::%s",
+				"reason: tests/l.test.mjs::%s: cannot load",
+				"test-result: passed tests/t.test.mjs::b %s",
+				"result: red",
+			]);
+		},
+		TEST_TIMEOUT,
+	);
+});
+
+describe("validate asks about re-prove outcomes (S19)", () => {
+	it("validate asks about non-failed re-prove outcomes and re-proves revision reds", () => {
+		const sources = ["skills/validate/SKILL.md", "opencode/generated/skills/rpiv-validate/SKILL.md"];
+		for (const path of sources) {
+			const validate = joined(path);
+			for (const phrase of [
+				/never fails validation on its own/i,
+				/becomes one developer question per slice/i,
+				/accept it with a recorded reason, or send the slice back to implement/i,
+				/never as a pass/i,
+				/--base <revision>/,
+				/Expected red names a revision other than the slice's parent/i,
+				/not re-provable: red at <rev>, revision missing/,
+				/title as written in the test file, placeholders included/i,
+				/validate does not judge whether a failure reason matches the Expected red/i,
+				// S19 revision 1 (B191)
+				/leave those tests out of the call on the slice's parent/i,
+				/`not re-proved: no slice commit`[^.]*joins the developer question/i,
+			]) {
+				expect.soft(validate, path).toMatch(phrase);
+			}
+			expect.soft(validate, path).not.toMatch(/Re-proved red is report-only: it never fails or blocks validation/i);
+		}
+		for (const path of ["skills/_shared/test-contract-authoring.md", "opencode/generated/skills/_shared/test-contract-authoring.md"]) {
+			const authoring = joined(path);
+			expect.soft(authoring, path).toMatch(/it\.each[^.]*title as written, placeholders included/i);
+			expect.soft(authoring, path).toMatch(/a revision's Expected red names the revision it was observed at/i);
+		}
+	});
+});
+
+describe("validation template (S19 revision 1)", () => {
+	it("the validation template records the re-prove question", () => {
+		for (const path of [
+			"skills/validate/templates/validation.md",
+			"opencode/generated/skills/rpiv-validate/templates/validation.md",
+		]) {
+			const line = readFileSync(join(ROOT, path), "utf-8")
+				.split(/\r?\n/)
+				.find((l) => l.includes("expected-red reason"));
+			expect.soft(line, path).toMatch(/re-proved red/i);
+			expect.soft(line, path).not.toMatch(/report-only/i);
+			expect.soft(line, path).toMatch(/developer's answer and reason/i);
+			expect.soft(line, path).toMatch(/--base revision/i);
+		}
 	});
 });

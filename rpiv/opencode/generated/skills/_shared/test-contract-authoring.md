@@ -49,6 +49,10 @@ Check the current source so Expected red is plausible. If behavior already
 exists, record that fact and refine the missing behavior instead of inventing red.
 A test that must already pass before its slice (a pin guarding kept behavior)
 states `Expected red: none — pin`; validate does not re-prove it.
+Name an `it.each` test by its title as written, placeholders included
+(`adds (%s)`), so validate can match its cases. A revision's Expected red names
+the revision it was observed at (`at <sha>`), so validate re-proves it there
+when that revision is not the slice's parent.
 List automated commands and observable manual criteria separately under
 `### Success Criteria:`. A success-criteria reference is not evidence of a pass.
 

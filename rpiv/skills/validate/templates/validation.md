@@ -32,7 +32,7 @@ last_updated_by: {Author from Metadata}
 
 ### TDD Evidence Audit
 
-{One result per behavior: test name/path, agreed seam/oracle, expected-red reason, observed red before implementation, re-proved red (the helper's bucket and reason for the slice commit, report-only; pins skipped), subsequent green, and linked revision/contract evidence. Record explicit valid exemptions with reasons. Missing historical red is a proof gap, never an automatic pre-TDD exemption.}
+{One result per behavior: test name/path, agreed seam/oracle, expected-red reason, observed red before implementation, re-proved red (the helper's bucket and reason for the slice commit or its --base revision; pins skipped; for every outcome other than `failed`, the developer's answer and reason), subsequent green, and linked revision/contract evidence. Record explicit valid exemptions with reasons. Missing historical red is a proof gap, never an automatic pre-TDD exemption.}
 
 ### Independent Review/Refactor Audit
 

@@ -4,8 +4,10 @@
 // reports the outcome. The real index, HEAD, branch and working tree are never touched.
 //
 // CLI, run only as the entry point:
-//   node reprove-red.mjs --commit <rev> [--test <path>::<name>]... [--link <path>]...
-//                        [--timeout <seconds>] -- <executable> [args...]
+//   node reprove-red.mjs --commit <rev> [--base <rev>] [--test <path>::<name>]...
+//                        [--link <path>]... [--timeout <seconds>] -- <executable> [args...]
+// --base rebuilds that revision instead of the commit's parent (a red observed at an
+// amended-away candidate, S19/D39); the applied tests stay the parent → commit diff.
 // prints `reprove-red:`, `base:`, `test:`/`fixture:`, `exit:`, `log:` and last
 // `result: red | green | no-tests`, exit 0. A broken call prints
 // `reprove-red: broken: <detail>` on stderr and exits 2, never a result.
@@ -77,6 +79,9 @@ const OPTIONS = {
 	"--commit": (parsed, value) => {
 		parsed.commit = value;
 	},
+	"--base": (parsed, value) => {
+		parsed.base = value;
+	},
 	"--test": (parsed, value) => {
 		parsed.tests.push(parseTest(value));
 	},
@@ -105,6 +110,7 @@ const parseArgs = (argv) => {
 	const options = split === -1 ? argv : argv.slice(0, split);
 	const parsed = {
 		commit: undefined,
+		base: undefined,
 		tests: [],
 		links: [],
 		timeout: DEFAULT_TIMEOUT_SECONDS,
@@ -121,11 +127,11 @@ const parseArgs = (argv) => {
 	return parsed;
 };
 
-/** The full SHA of `rev` and its only parent; any other parent count is broken. */
-const resolveCommit = (cwd, rev) => {
-	let commit;
+/** The full SHA of the commit `rev` names; an unknown revision is broken. */
+const resolveRevision = (cwd, rev) => {
+	let sha;
 	try {
-		commit = gitIn(cwd, [
+		sha = gitIn(cwd, [
 			"rev-parse",
 			"--verify",
 			"--quiet",
@@ -133,9 +139,15 @@ const resolveCommit = (cwd, rev) => {
 			`${rev}^{commit}`,
 		]).trim();
 	} catch {
-		commit = "";
+		sha = "";
 	}
-	if (!commit) throw new Error(`unknown revision: ${rev}`);
+	if (!sha) throw new Error(`unknown revision: ${rev}`);
+	return sha;
+};
+
+/** The full SHA of `rev` and its only parent; any other parent count is broken. */
+const resolveCommit = (cwd, rev) => {
+	const commit = resolveRevision(cwd, rev);
 	const parents = gitIn(cwd, ["rev-list", "--parents", "-n", "1", commit])
 		.trim()
 		.split(" ")
@@ -375,13 +387,43 @@ const outcomeOf = (record) =>
 			? "skipped"
 			: "passed";
 
+// A test runner's title placeholders (vitest/jest `it.each`): printf-style and
+// `$name` / `$a.b` interpolation; `%%` is a literal percent (S19, D39).
+const PLACEHOLDER = /%%|%[sdifjoOp#]|\$[A-Za-z_][\w.]*/g;
+const REGEXP_SPECIAL = /[.*+?^${}()|[\]\\]/g;
+const escapeRegExp = (text) => text.replace(REGEXP_SPECIAL, (ch) => `\\${ch}`);
+
+// One placeholder's value: one or more characters, never across a ` > ` nesting
+// (S19 revision 1).
+const PLACEHOLDER_VALUE = "(?:(?! > ).)+";
+
+/** Whether a report case's name, in the file `path`, is the test `wanted` names: the
+    whole name or the part after a ` > `; each placeholder in `wanted` stands for one
+    or more characters, and never matches the file-level load record (name = path),
+    so a load failure stays `failed-to-load` (S19 revision 1). */
+const nameMatcher = (wanted, path) => {
+	const found = [...wanted.matchAll(PLACEHOLDER)];
+	if (found.length === 0) {
+		return (name) => name === wanted || name.endsWith(` > ${wanted}`);
+	}
+	let pattern = "";
+	let last = 0;
+	for (const match of found) {
+		pattern += escapeRegExp(wanted.slice(last, match.index));
+		pattern += match[0] === "%%" ? "%" : PLACEHOLDER_VALUE;
+		last = match.index + match[0].length;
+	}
+	pattern += escapeRegExp(wanted.slice(last));
+	const title = new RegExp(`^(?:.* > )?${pattern}$`, "s");
+	return (name) => name !== path && title.test(name);
+};
+
 /** The bucket of one named test: its matching records agree, disagree (`mixed`), or
     none exists — then a file-level failure (name = classname = path) is a load failure. */
 const bucketOf = (records, { path, name }) => {
+	const isNamed = nameMatcher(name, path);
 	const matches = records.filter(
-		(r) =>
-			r.classname === path &&
-			(r.name === name || r.name.endsWith(` > ${name}`)),
+		(r) => r.classname === path && isNamed(r.name),
 	);
 	if (matches.length === 0) {
 		const load = records.find(
@@ -430,6 +472,7 @@ const lines = (list) => list.map((line) => `${line}\n`).join("");
 const runCli = (argv, cwd) => {
 	const {
 		commit: rev,
+		base: baseRev,
 		tests: named,
 		links: linkArgs,
 		timeout,
@@ -437,10 +480,11 @@ const runCli = (argv, cwd) => {
 	} = parseArgs(argv);
 	const top = resolve(cwd, gitIn(cwd, ["rev-parse", "--show-toplevel"]).trim());
 	const { commit, parent } = resolveCommit(cwd, rev);
+	const base = baseRev === undefined ? parent : resolveRevision(cwd, baseRev);
 	const { tests, fixtures, manifests } = slicePaths(top, parent, commit);
 	const header = [
 		`reprove-red: ${commit}`,
-		`base: ${parent}`,
+		`base: ${base}`,
 		...tests.map((path) => `test: ${path}`),
 		...fixtures.map((path) => `fixture: ${path}`),
 		...manifests.map((path) => `diagnostic: dependencies changed: ${path}`),
@@ -450,7 +494,8 @@ const runCli = (argv, cwd) => {
 		gitIn(cwd, [
 			"rev-parse",
 			"--git-path",
-			`rpiv/reprove-red/${commit}`,
+			// A run on another base keeps its own scratch copy, log and report.
+			`rpiv/reprove-red/${baseRev === undefined ? commit : `${commit}-${base}`}`,
 		]).trim(),
 	);
 	const links = checkLinks(linkArgs, { cwd, top, scratch });
@@ -467,7 +512,7 @@ const runCli = (argv, cwd) => {
 	rmSync(junit, { force: true }); // a report from an earlier run is never read
 	try {
 		buildScratch(top, scratch, {
-			parent,
+			parent: base,
 			commit,
 			paths: [...tests, ...fixtures],
 		});
