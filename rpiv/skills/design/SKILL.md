@@ -87,6 +87,8 @@ Intent review runs only in the rigorous lane (**Lanes** table). In fast and norm
 
 Done when the required intent reviews pass on the stabilized brief and the user confirms that intent; on that approval, save its approved copy per the shared workflow. Candidate-mode review belongs to the later real source revision.
 
+When the developer approves a slice brief whose `Lane:` line came from `lane.mjs --paths`, record the approved lane as a calibration label for the Jev lane shadow: `node "${CLAUDE_PLUGIN_ROOT}/scripts/jev-lane-labels.mjs" label --slice <id> --lane <approved lane> -- <the paths lane.mjs --paths measured>`. A label without a matching shadow row is still a label; a `jev-lane-labels: broken:` answer is reported to the developer, never dropped.
+
 ## 5. Finalize And Present
 
 1. Verify canonical references, intent review evidence, and next-slice completeness; keep deferred questions explicit.

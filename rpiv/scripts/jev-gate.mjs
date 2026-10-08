@@ -326,6 +326,33 @@ export function appendLog(logPath, entry) {
 }
 
 /**
+ * The non-empty lines of a log written by appendLog, as `{ file, number, text }`
+ * with each line's number in its own file (blank lines counted): the rotated
+ * generation `<log>.1` first, then `<log>` (S30, D40). A missing generation
+ * reads as empty; any other read failure throws.
+ */
+export function readLogEntries(logPath) {
+	return [`${logPath}.1`, logPath].flatMap((file) => {
+		let text;
+		try {
+			text = readFileSync(file, "utf8");
+		} catch (err) {
+			if (err?.code === "ENOENT") return [];
+			throw err;
+		}
+		return text
+			.split(/\r?\n/)
+			.map((line, i) => ({ file, number: i + 1, text: line }))
+			.filter((entry) => entry.text !== "");
+	});
+}
+
+/** The text of readLogEntries: the rotated generation's lines, then the current's. */
+export function readLogLines(logPath) {
+	return readLogEntries(logPath).map((entry) => entry.text);
+}
+
+/**
  * Full gate. Exit codes: 0 = allowed/confirmed (or shadow block), 1 = blocked
  * under --enforce, 2 = broken gate (never allow).
  */

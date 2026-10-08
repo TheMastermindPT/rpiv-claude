@@ -403,3 +403,28 @@ describe("Jev lane shadow hook (S8)", () => {
 		TEST_TIMEOUT,
 	);
 });
+
+describe("Jev lane shadow rows keep the paths (S30)", () => {
+	it(
+		"a shadow row keeps the paths Jev was sent",
+		() => {
+			// S30 revision 1 (B187): labels join a row on the paths it measured.
+			const ok = run(repo());
+			expect(ok.log).toHaveLength(1);
+			expect(ok.log[0]).toMatchObject({ status: "ok", files: 2, paths: ["src/a.js", "docs/b.md"] });
+
+			const many = Array.from({ length: 201 }, (_, i) => `p${i}.js`);
+			const big = run(repo(), { command: `node lane.mjs --paths ${many.join(" ")}` });
+			expect(big.log[0].files).toBe(201);
+			expect(big.log[0].paths).toEqual(many.slice(0, 200));
+
+			const noKey = run(repo(), { env: { TYPESAFE_API_KEY: "" } });
+			expect(noKey.log[0]).toMatchObject({ status: "unavailable", paths: ["src/a.js", "docs/b.md"] });
+
+			const skipped = run(repo(), { command: "node lane.mjs --paths $(git diff --name-only)" });
+			expect(skipped.log[0].status).toBe("skipped");
+			expect(skipped.log[0]).not.toHaveProperty("paths");
+		},
+		TEST_TIMEOUT,
+	);
+});

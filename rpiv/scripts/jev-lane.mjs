@@ -3,7 +3,8 @@
 // `lane.mjs` run, asks Jev for a would-be lane of the same change, and appends both
 // to `<repository top>/.rpiv/logs/jev-lane-shadow.log`. It never changes the lane:
 // the printed lane is lane.mjs's alone (FR4 shadow mode). A call whose arguments the
-// shell computes is logged `skipped`, never guessed. Labels and calibration are S30.
+// shell computes is logged `skipped`, never guessed. Each row keeps the paths it
+// measured, so scripts/jev-lane-labels.mjs can join developer labels (S30).
 //
 // What Jev sees (FR4: never source code): the branch, the mode, the slice count
 // and up to 200 repo-relative file paths. One call (jev-client.mjs, 6 s): a Score
@@ -52,7 +53,7 @@ const logPathFor = (cwd) => resolve(topOf(cwd), LANE_LOG_PATH);
 
 /** `input` with absolute `--paths` values made repository-relative: Jev only
     ever sees paths inside the project (FR4, S8 revision 1). */
-function repoRelative(input, cwd) {
+export function repoRelative(input, cwd) {
 	// --range and --working list paths from git, already relative to the top;
 	// --paths values are as typed, relative to the cwd (S8 revision 2).
 	if (input.mode !== "paths") return input;
@@ -61,7 +62,7 @@ function repoRelative(input, cwd) {
 	return { ...input, files: input.files.map(rel) };
 }
 const TIMEOUT_MS = 6_000;
-const MAX_FILES = 200;
+export const MAX_FILES = 200;
 
 // D38's ordered levels, as situations (Jev scores each level on its own).
 export const LANE_LEVELS = [
@@ -206,6 +207,8 @@ async function shadow(event) {
 		mode: input.mode,
 		slices: input.slices ?? null,
 		files: input.files.length,
+		// The paths Jev is sent, so a developer label can join this row (S30 rev. 1).
+		paths: input.files.slice(0, MAX_FILES),
 		lane,
 	};
 	const state = {
