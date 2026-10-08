@@ -118,4 +118,19 @@ describe("one rpiv chain", () => {
 		expect(matcher.test("Bash")).toBe(false);
 		expect(hooks.description).toMatch(/retired when the next chain stage starts/);
 	});
+
+	it("the issue-drafts hook is registered and the manifest names the repository", () => {
+		// S20 (D43): pending rpiv issue drafts are shown at session start
+		const hooks = JSON.parse(read("hooks/hooks.json"));
+		const pending = hooks.hooks.SessionStart.filter((entry) =>
+			entry.hooks.some((hook) => hook.command.includes(".claude/hooks/rpiv-issue-pending.mjs")),
+		);
+		expect(pending).toHaveLength(1);
+		const matcher = new RegExp(`^(?:${pending[0].matcher || ".*"})$`);
+		for (const source of ["startup", "resume", "clear"]) expect(matcher.test(source), source).toBe(true);
+		expect(hooks.description).toMatch(/pending rpiv issue drafts shown at session start/);
+		expect(JSON.parse(read(".claude-plugin/plugin.json")).repository).toBe(
+			"https://github.com/TheMastermindPT/rpiv-claude",
+		);
+	});
 });

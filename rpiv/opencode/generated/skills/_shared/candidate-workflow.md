@@ -326,3 +326,22 @@ identity **Lanes** defines), and final verification at the
 reviewed candidate. Preserve prior results and decisions as history. Later fixes
 produce new evidence and reviews; do not rewrite earlier failures into passes.
 Validation reports facts and remediation needs without editing implementation.
+## rpiv Problems
+
+When a problem lies in rpiv itself, not in the project being worked on, draft an
+issue for rpiv's own repository and carry on with the task:
+`node "$RPIV_PLUGIN_ROOT/skills/_shared/rpiv-issue.mjs" draft --trigger <broken|rejected-prompt|contradiction|judgment> --component '<skill, helper or hook>' --title '<title>' --what '<what happened>' --repro '<minimal steps in a throwaway repository>' [--diagnostic '<diagnostic text>']`.
+Single-quote each value: single quotes are literal in Bash and PowerShell, so a
+`$` or a backtick in the text never runs; write a single quote inside a value
+as `'\''` in Bash or `''` in PowerShell.
+Use `broken` for an rpiv helper's or hook's broken diagnostic, `rejected-prompt`
+when the developer rejects an rpiv approval-hook prompt as a false prompt (no
+hook sees a rejection, so record what the session showed), `contradiction` for
+two rpiv rules that cannot both hold, and `judgment` for any other rpiv problem
+you judge real (the draft says agent-judged).
+Drafting is local; filing happens only through `/rpiv:issue`, after the
+developer approves the exact text. A draft never carries project code: describe
+rpiv's behavior and a repro outside the
+project; the helper also replaces project paths, the branch, the project's
+remote and secret-like values with placeholders. A `rpiv-issue: broken:` answer
+is reported, never dropped. Name a new draft in the closing message.

@@ -66,6 +66,7 @@ node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/skill-context.mjs" changes subjects
 - Do not include any "Generated with Claude" messages
 - Do not add "Co-Authored-By" lines
 - Write commit messages as if the user wrote them
+- If the developer rejects an rpiv approval-hook prompt for a commit as a false prompt, draft an rpiv issue as the **rpiv Problems** section of `${CLAUDE_PLUGIN_ROOT}/skills/_shared/candidate-workflow.md` says (`node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/rpiv-issue.mjs" draft --trigger rejected-prompt …`); a rejected prompt is still a stop for the commit
 
 ## Remember:
 

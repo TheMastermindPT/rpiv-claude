@@ -483,8 +483,9 @@ describe("S15 hook registration", () => {
 
 	// Hooks registered by later slices, each pinned by its own slice's tests
 	// (S17: chain-handoff.test.mjs / chain-contract.test.mjs; S8: jev-lane.test.mjs;
-	// S31: chain-handoff.test.mjs / chain-contract.test.mjs).
-	const LATER_HOOKS = ["chain-handoff-restore.mjs", "jev-lane.mjs", "chain-handoff-retire.mjs"];
+	// S31: chain-handoff.test.mjs / chain-contract.test.mjs; S20: rpiv-issue.test.mjs /
+	// chain-contract.test.mjs).
+	const LATER_HOOKS = ["chain-handoff-restore.mjs", "jev-lane.mjs", "chain-handoff-retire.mjs", "rpiv-issue-pending.mjs"];
 	const isLaterEntry = (entry) =>
 		entry.hooks.some((h) => LATER_HOOKS.some((name) => h.command.includes(name)));
 
