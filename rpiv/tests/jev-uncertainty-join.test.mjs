@@ -79,6 +79,51 @@ describe("inputs", () => {
 		expect(rows.map((r) => r.id)).toEqual(["Q1", "Q3"]);
 	});
 
+	it("readLintRows reads the rotated generation first", () => {
+		const dir = join(tmp, "rotated");
+		mkdirSync(dir, { recursive: true });
+		const path = join(dir, "lint.log");
+		const read = (logPath) => {
+			const diagnostics = [];
+			const ids = readLintRows(logPath, (message) =>
+				diagnostics.push(message),
+			).map((r) => r.id);
+			return { ids, diagnostics };
+		};
+		writeFileSync(
+			`${path}.1`,
+			`${JSON.stringify(lintRow("Q1", "flag"))}\nBROKEN\n${JSON.stringify(lintRow("Q2", "ok"))}\n`,
+		);
+		writeFileSync(path, `${JSON.stringify(lintRow("Q3", "review"))}\n`);
+		expect(read(path)).toEqual({
+			ids: ["Q1", "Q2", "Q3"],
+			diagnostics: [`malformed lint JSON at line 2 in ${path}.1`],
+		});
+
+		const onlyRotated = join(dir, "only.log");
+		writeFileSync(
+			`${onlyRotated}.1`,
+			`${JSON.stringify(lintRow("Q1", "flag"))}\n`,
+		);
+		expect(read(onlyRotated)).toEqual({ ids: ["Q1"], diagnostics: [] });
+
+		const missing = join(dir, "missing.log");
+		expect(read(missing)).toEqual({
+			ids: [],
+			diagnostics: [`cannot read lint log ${missing}: ENOENT`],
+		});
+
+		const folder = join(dir, "folder.log");
+		mkdirSync(folder);
+		const fromFolder = read(folder);
+		expect(fromFolder.ids).toEqual([]);
+		expect(fromFolder.diagnostics).toHaveLength(1);
+		expect(
+			fromFolder.diagnostics[0].startsWith(`cannot read lint log ${folder}: `),
+		).toBe(true);
+		expect(fromFolder.diagnostics[0]).toMatch(/: E[A-Z]+$/);
+	});
+
 	it("reads records from arrays, envelopes, and directories", () => {
 		const dir = join(tmp, "stores");
 		mkdirSync(dir, { recursive: true });

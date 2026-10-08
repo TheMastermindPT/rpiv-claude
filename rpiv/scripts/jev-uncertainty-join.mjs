@@ -15,35 +15,50 @@
 // Canonical stores use { findings: [...] }; legacy arrays/records are accepted.
 // Review-local IDs never disambiguate two different stores by themselves.
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { readLogEntries } from "./jev-gate.mjs";
 
 export const MIN_ROWS = 20;
 
 const diagnostic = (message) =>
 	process.stderr.write(`[jev-join] BROKEN: ${message}\n`);
 
+/** Claim-verifier rows of the lint log, the rotated `<log>.1` first (S32, D42).
+ * A log with neither generation is missing, not empty, and is diagnosed. */
 export function readLintRows(logPath, onDiagnostic = diagnostic) {
-	let text;
+	return lintLogEntries(logPath, onDiagnostic).flatMap((entry) =>
+		claimVerifierRow(entry, onDiagnostic),
+	);
+}
+
+function lintLogEntries(logPath, onDiagnostic) {
 	try {
-		text = readFileSync(logPath, "utf8");
+		const entries = readLogEntries(logPath);
+		if (entries.length === 0 && !hasGeneration(logPath))
+			onDiagnostic(`cannot read lint log ${logPath}: ENOENT`);
+		return entries;
 	} catch (error) {
 		onDiagnostic(`cannot read lint log ${logPath}: ${error.code}`);
 		return [];
 	}
-	const rows = [];
-	for (const [index, line] of text.split(/\r?\n/).entries()) {
-		if (!line.trim()) continue;
-		try {
-			const entry = JSON.parse(line);
-			if (entry?.agent === "claim-verifier" && Number.isFinite(entry.p))
-				rows.push(entry);
-		} catch {
-			onDiagnostic(`malformed lint JSON at line ${index + 1} in ${logPath}`);
-		}
+}
+
+const hasGeneration = (logPath) =>
+	existsSync(logPath) || existsSync(`${logPath}.1`);
+
+function claimVerifierRow({ file, number, text }, onDiagnostic) {
+	if (!text.trim()) return [];
+	try {
+		const entry = JSON.parse(text);
+		return entry?.agent === "claim-verifier" && Number.isFinite(entry.p)
+			? [entry]
+			: [];
+	} catch {
+		onDiagnostic(`malformed lint JSON at line ${number} in ${file}`);
+		return [];
 	}
-	return rows;
 }
 
 /** Records from store files: top-level array or { records: [...] }, keeping

@@ -44,6 +44,28 @@ describe("log and label IO", () => {
 		expect(readLog(path)).toHaveLength(1);
 	});
 
+	it("readLog reads the rotated generation first", () => {
+		const path = join(tmp, "rotated.jsonl");
+		const t2 = JSON.stringify(entry({ ts: "t2" }));
+		writeFileSync(
+			`${path}.1`,
+			`${JSON.stringify(entry({ ts: "t1" }))}\n${t2}\n\n{oops\n`,
+		);
+		writeFileSync(path, `${JSON.stringify(entry({ ts: "t3" }))}\n${t2}\n`);
+		const diagnostics = [];
+		const rows = readLog(path, (message) => diagnostics.push(message));
+		expect(rows.map((row) => row.ts)).toEqual(["t1", "t2", "t3"]);
+		expect(diagnostics).toEqual([
+			`malformed diagnostic JSON at line 4 in ${path}.1; reporting valid and committed rows only`,
+		]);
+
+		const none = [];
+		expect(
+			readLog(join(tmp, "absent.jsonl"), (message) => none.push(message)),
+		).toEqual([]);
+		expect(none).toEqual([]);
+	});
+
 	it("appendLabel + readLabels round-trip, skipping malformed lines", () => {
 		const path = join(tmp, "labels.jsonl");
 		appendLabel(path, { ts: "t1", correct: true });

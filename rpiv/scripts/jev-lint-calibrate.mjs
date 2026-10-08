@@ -19,6 +19,7 @@
 import { appendFileSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { readLogEntries } from "./jev-gate.mjs";
 import { readCommittedRows } from "./jev-source-store.mjs";
 
 export const LINT_LOG_PATH = "reports/jev-lint-shadow.log";
@@ -32,25 +33,26 @@ export const MIN_TOTAL = 20;
 export const OK_ACCURACY = 0.95;
 export const FLAG_WRONG_RATE = 0.6;
 
-export function readLines(path, keepEmpty = false) {
+export function readLines(path) {
 	try {
-		const lines = readFileSync(path, "utf8").split(/\r?\n/);
-		return keepEmpty ? lines : lines.filter(Boolean);
+		return readFileSync(path, "utf8").split(/\r?\n/).filter(Boolean);
 	} catch (error) {
 		if (error.code !== "ENOENT") throw error;
 		return [];
 	}
 }
 
+/** Lint-log rows, the rotated `<log>.1` first (S32, D42), plus committed
+ * source batches; a row present more than once is kept once. */
 export function readLog(path = LINT_LOG_PATH, onDiagnostic = reportLogError) {
 	const diagnosticRows = [];
-	for (const [index, line] of readLines(path, true).entries()) {
-		if (!line.trim()) continue;
+	for (const { file, number, text } of readLogEntries(path)) {
+		if (!text.trim()) continue;
 		try {
-			diagnosticRows.push(JSON.parse(line));
+			diagnosticRows.push(JSON.parse(text));
 		} catch {
 			onDiagnostic(
-				`malformed diagnostic JSON at line ${index + 1} in ${path}; reporting valid and committed rows only`,
+				`malformed diagnostic JSON at line ${number} in ${file}; reporting valid and committed rows only`,
 			);
 		}
 	}
