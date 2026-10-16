@@ -36,11 +36,13 @@ shows nothing but added lines inside `## Developer Context`,
 `## TDD Evidence (implement)` or `## Follow-up`, plus changed `status`,
 `last_updated`, `last_updated_by`, `last_updated_note` and `content_hash`
 frontmatter lines, and changed `lane` and `lane_reasons` lines that raise the
-lane with a `## Developer Context` entry recording the raise: this is the
-append-only check.
+lane with a `## Developer Context` entry recording the raise, while every
+unchanged line stays in its section: this is the append-only check.
 Any other change reopens approval. A missing approved copy fails the check; it
-never passes by default. Exit 0 or 1 is a result; any other exit or an error
-message is a broken check, never a pass.
+never passes by default. Its one owner runs it:
+`node "$RPIV_PLUGIN_ROOT/skills/_shared/append-only.mjs" <approved copy> <artifact>`.
+Exit 0 keeps the approval; exit 1 reopens it and names each offending line;
+exit 2, any other exit or an error message is a broken check, never a pass.
 An artifact's `content_hash` alone is not proof of code identity or of unchanged
 external references. Verify both when resuming or dispatching a reviewer.
 

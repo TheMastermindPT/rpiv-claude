@@ -52,6 +52,7 @@ node "$RPIV_PLUGIN_ROOT/skills/_shared/skill-context.mjs" changes subjects
 2. **Plan your commit(s):**
    - Identify which files belong together
    - **Pinned change group — the decision ledger**: if the changes include `.rpiv/decisions/**` or an edit inside the `AGENTS.md` `Standing Decisions` block (between the `<!-- BEGIN standing-decisions ... -->` and `<!-- END standing-decisions -->` sentinels), NEVER classify these as unrelated noise and NEVER drop them. They are a byproduct of the work that recorded a standing decision. Stage them with the commit that produced them; only if the rest of the diff is genuinely unrelated, emit them as their own decision-ledger commit (subject in the repo's observed style, e.g. `docs(decisions): record <key>`). Never leave them uncommitted.
+   - **Decision records and approved copies batch per slice**: developer-decision entries and `.rpiv/evidence/<artifact-stem>/approved-<content_hash>.md` copies go into one docs commit per slice, made at every acceptance stop and before `/clear` or a handoff, never one commit per decision; never rewrite an approved-copy file once saved.
    - Draft clear, descriptive commit messages
    - Use imperative mood in commit messages
    - **Match the subject style observed in `---recent-subjects---`** — same prefix convention (e.g. `feat:` / `fix(scope):` / `docs:` for Conventional Commits, gitmoji, bare sentence-case, ticket-prefixed, etc.), same length budget, same casing. If the sample is empty (initial repo) or mixed, default to imperative sentence-case with no prefix.
