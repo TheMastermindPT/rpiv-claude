@@ -71,18 +71,20 @@ const SIX_COLUMN_TABLE = {
 	},
 };
 
-const SEVERITY_REFERENCE = {
-	path: "agents/artifact-code-reviewer.md",
+// Each reviewer of the pair grades severity by its own contract (code: impact of a
+// defect; coverage: consequence of a wrong implementation slipping past the checks).
+const severityReference = (agent) => ({
+	path: `agents/${agent}.md`,
 	label: "severity contract",
 	format: "key-bullets",
-};
+});
 
 export const ROW_LINTS = {
 	"claim-verifier": {
 		label: "tag",
 		mechanical: true,
 		pattern:
-			/FINDING\s+(\S+)\s+\|\s+(Verified|Weakened|Falsified)\s*\|\s*(.+)$/gm,
+			/FINDING\s+(\S+)\s+\|\s+(Verified|Weakened|Falsified|Resolved|Unverifiable)\s*\|\s*(.+)$/gm,
 		fields: { id: 1, tag: 2, text: 3 },
 		contracts: {
 			Verified:
@@ -91,6 +93,10 @@ export const ROW_LINTS = {
 				"claim is partially true but narrower than stated, or relies on a consumer-side assumption the consumer does not make",
 			Falsified:
 				"quote does not match, or the claimed behavior is contradicted by code the lens did not read",
+			Resolved:
+				"the claimed defect was real and its fix is already present at the cited file:line (a resolved-by hash confirmed, or the cited code already changed)",
+			Unverifiable:
+				"reading cannot settle the claim (runtime timing, load, rendering or environment) after a trace was attempted, and the justification names the run that would settle it",
 		},
 		question: {
 			instructions: "Does the justification support the tag?",
@@ -112,7 +118,8 @@ export const ROW_LINTS = {
 			OK: "the category completed its audit without findings",
 			VIOLATION:
 				"names a concrete unsatisfied commitment or conflict with citations on both sides",
-			WARNING: "names a soft constraint that is unsatisfied, with a citation",
+			WARNING:
+				"names a non-blocking finding with a citation: a soft constraint that is unsatisfied, or a plausible join or commitment problem not yet traced to a consequence",
 			INCOMPLETE: "a required inspection could not be completed",
 			UNAVAILABLE: "a required capability was not available",
 			BROKEN: "execution of the review broke",
@@ -173,11 +180,11 @@ export const ROW_LINTS = {
 	},
 	"artifact-code-reviewer": {
 		...SIX_COLUMN_TABLE,
-		reference: SEVERITY_REFERENCE,
+		reference: severityReference("artifact-code-reviewer"),
 	},
 	"artifact-coverage-reviewer": {
 		...SIX_COLUMN_TABLE,
-		reference: SEVERITY_REFERENCE,
+		reference: severityReference("artifact-coverage-reviewer"),
 	},
 };
 

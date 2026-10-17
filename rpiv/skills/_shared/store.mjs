@@ -58,12 +58,18 @@ export const SEVERITIES = {
 // non-empty strings but does NOT restrict values to this list.
 export const BLAST_RADII = ["internal", "public-API", "on-disk", "cross-module", "other"];
 // Enums that apply only to kind:"ar" (severity is shared above; blastRadius is the
-// open array below; verify gains "Falsified" for Slice 4's retire-not-delete).
+// open array below; verify gains "Falsified" for Slice 4's retire-not-delete, then
+// "Resolved" (real but already fixed: retired, never a false positive) and
+// "Unverifiable" (reading cannot settle it: stays active, the note names the run).
 export const AR_ENUMS = {
 	effort: ["S", "M", "L"],
 	class: ["polish", "redesign"],
-	verify: ["Verified", "Weakened", "Falsified"],
+	verify: ["Verified", "Weakened", "Falsified", "Resolved", "Unverifiable"],
 };
+// Verdicts that retire a finding (status "withdrawn"), and verdicts whose
+// justification must be stored in verifyNote.
+const RETIRING_VERDICTS = new Set(["Falsified", "Resolved"]);
+const NOTED_VERDICTS = new Set(["Weakened", "Falsified", "Resolved", "Unverifiable"]);
 // Back-compat union export — ENUMS.severity/blastRadius keep the pilot's keys (the
 // recommended vocabularies) so any importer of the flat ENUMS is unaffected.
 export const ENUMS = { severity: SEVERITIES.ar, blastRadius: BLAST_RADII, ...SHARED_ENUMS, ...AR_ENUMS };
@@ -186,12 +192,12 @@ function validateDrFields(f) {
 	if (DR_NEEDS_FIX.has(sev) && !isNonEmptyStr(f.fix)) errors.push(`kind:dr ${sev} finding requires a fix`);
 	if (invalidWhenPresent(f.alt, isNonEmptyStr)) errors.push("alt must be a non-empty string or null (kind:dr)");
 	if (!AR_ENUMS.verify.includes(f.verify)) errors.push(`verify must be one of ${AR_ENUMS.verify.join(" | ")} (got: ${f.verify})`);
-	if (f.verify === "Falsified" && f.status !== "withdrawn") {
-		errors.push("kind:dr Falsified finding must have status withdrawn");
-	} else if (f.verify !== "Falsified" && f.status === "withdrawn") {
-		errors.push("kind:dr withdrawn finding must be Falsified");
+	if (RETIRING_VERDICTS.has(f.verify) && f.status !== "withdrawn") {
+		errors.push(`kind:dr ${f.verify} finding must have status withdrawn`);
+	} else if (!RETIRING_VERDICTS.has(f.verify) && f.status === "withdrawn") {
+		errors.push("kind:dr withdrawn finding must be Falsified or Resolved");
 	}
-	if (["Weakened", "Falsified"].includes(f.verify) && !isNonEmptyStr(f.verifyNote)) {
+	if (NOTED_VERDICTS.has(f.verify) && !isNonEmptyStr(f.verifyNote)) {
 		errors.push(`kind:dr ${f.verify} finding requires a verifyNote`);
 	}
 	return errors;
@@ -779,6 +785,32 @@ function applyFalsified(f, patch) {
 	delete f.priorId;
 }
 
+/** Resolved: the finding was real and its fix is already present — retire it, but keep
+ *  its drift history (requires a verifyNote naming the fix). VOID — mutates f in place. */
+function applyResolved(f, patch) {
+	if (!isNonEmptyStr(patch.verifyNote)) {
+		throw new Error("update: Resolved requires a verifyNote (where the fix is present)");
+	}
+	f.verifyNote = patch.verifyNote.trim();
+	f.status = "withdrawn";
+}
+
+/** Unverifiable: reading cannot settle the claim — it stays active at its severity
+ *  (requires a verifyNote naming the run that settles it). VOID — mutates f in place. */
+function applyUnverifiable(f, patch) {
+	if (!isNonEmptyStr(patch.verifyNote)) {
+		throw new Error("update: Unverifiable requires a verifyNote (the run that would settle it)");
+	}
+	f.verifyNote = patch.verifyNote.trim();
+}
+
+const VERDICT_ARMS = {
+	Weakened: applyWeakened,
+	Falsified: (f, _kind, patch) => applyFalsified(f, patch),
+	Resolved: (f, _kind, patch) => applyResolved(f, patch),
+	Unverifiable: (f, _kind, patch) => applyUnverifiable(f, patch),
+};
+
 // Content fields update may patch (each REPLACES the stored value wholesale, then the
 // whole record re-validates like add). id is the selector; kind/layer/lens/fp and the
 // drift fields (baselineState/driftClass/priorFp/priorId) stay immutable — identity,
@@ -825,22 +857,22 @@ export function updateFinding(artifactPath, root, patch) {
 	const f = store.findings.find((x) => x.id === patch.id);
 	if (!f) throw new Error(`update: no finding with id ${patch.id}`);
 	const kind = f.kind ?? "ar";
-	const wasFalsified = f.verify === "Falsified";
+	const retiredBy = RETIRING_VERDICTS.has(f.verify) ? f.verify : null;
 	const touched = PATCHABLE.filter((k) => k in patch);
 	for (const k of touched) f[k] = patch[k];
 	if (patch.verify != null) {
 		f.verify = patch.verify;
-		if (patch.verify === "Weakened") applyWeakened(f, kind, patch);
-		else if (patch.verify === "Falsified") applyFalsified(f, patch);
+		const arm = VERDICT_ARMS[patch.verify];
+		if (arm) arm(f, kind, patch);
 		else if (isNonEmptyStr(patch.verifyNote)) f.verifyNote = patch.verifyNote.trim();
 		else delete f.verifyNote;
 	} else if (isNonEmptyStr(patch.verifyNote)) {
 		f.verifyNote = patch.verifyNote.trim();
 	}
 	if (typeof patch.status === "string") f.status = patch.status;
-	if (f.verify === "Falsified") f.status = "withdrawn";
-	if (wasFalsified && patch.verify != null && patch.verify !== "Falsified" && patch.status == null) {
-		throw new Error("update: changing a Falsified verdict requires an explicit status");
+	if (RETIRING_VERDICTS.has(f.verify)) f.status = "withdrawn";
+	if (retiredBy && patch.verify != null && !RETIRING_VERDICTS.has(patch.verify) && patch.status == null) {
+		throw new Error(`update: changing a ${retiredBy} verdict requires an explicit status`);
 	}
 	if (typeof patch.statusNote === "string") f.statusNote = patch.statusNote.trim();
 	revalidateAfterUpdate(f, root);
@@ -902,7 +934,10 @@ export function diffReview(artifactPath, priorPath) {
 	const activeCurrent = store.findings.filter((finding) => finding.status !== "withdrawn");
 	const activePrior = (prior.findings ?? []).filter((finding) => finding.status !== "withdrawn");
 	const priorByFp = new Map(activePrior.map((f) => [f.fp, f]));
-	const priorResolved = new Map((prior.drift?.resolved ?? []).map((r) => [r.fp, r]));
+	// A prior finding the verifier tagged Resolved was real and fixed: if it reappears it
+	// Regressed, exactly like a fingerprint the prior drift run saw disappear.
+	const priorFixed = (prior.findings ?? []).filter((f) => f.verify === "Resolved");
+	const priorResolved = new Map([...(prior.drift?.resolved ?? []), ...priorFixed].map((r) => [r.fp, r]));
 	const currentFps = new Set(activeCurrent.map((f) => f.fp));
 	for (const f of activeCurrent) {
 		const p = priorByFp.get(f.fp);
@@ -1119,7 +1154,7 @@ const DR_LEGEND = [
 	"## Legend", "", "```text",
 	"Severity    🔴 fix before merge   🟡 fix soon   🔵 nice to have   💭 discuss",
 	"ID prefix   I interaction   Q quality   S security   G gap",
-	"Verify      ✓ verified   − weakened (demoted)   ✗ falsified (dropped)",
+	"Verify      ✓ verified   − weakened (demoted)   ✗ falsified (dropped)   ↺ resolved (withdrawn)   ? unverifiable (kept)",
 	"Annotate    [precedent-weighted]   [cascade: <kind>]   [subsumed-by <ID>]", // byte-shaped per templates/review.md:37
 	"```",
 ].join("\n");
@@ -1153,6 +1188,7 @@ export function renderDrFinding(f) {
 	const tier = DR_TIERS.find((t) => t.sev === f.severity) ?? DR_TIERS[2];
 	const where = f.evidence.map((ev) => `\`${ev.path}:${ev.endLine != null ? `${ev.startLine}-${ev.endLine}` : ev.startLine}\``).join(" ");
 	const lines = [`### ${f.id} ${tier.emoji} ${f.title}`, "", "**Where**", where];
+	if (f.verify === "Unverifiable" && isNonEmptyStr(f.verifyNote)) lines.push("", "**Unverifiable — settle by**", f.verifyNote);
 	for (const name of DR_TIER_SECTIONS[f.severity] ?? []) lines.push(...drSection(name, f));
 	return lines.join("\n");
 }
@@ -1183,13 +1219,13 @@ export function renderReview(store) {
 		`review_status: ${meta.review_status ?? "complete"}`,
 		`merge_status: ${n("critical") + n("important") > 0 ? "blocked" : "clear"}`,
 		`severity: { critical: ${n("critical")}, important: ${n("important")}, suggestion: ${n("suggestion")} }`,
-		`verification: { verified: ${vn("Verified")}, weakened: ${vn("Weakened")}, falsified: ${vn("Falsified")} }`,
+		`verification: { verified: ${vn("Verified")}, weakened: ${vn("Weakened")}, falsified: ${vn("Falsified")}, resolved: ${vn("Resolved")}, unverifiable: ${vn("Unverifiable")} }`,
 		`blockers_count: ${n("critical") + n("important")}`,
 		"tags: [code-review]",
 		"---",
 	].join("\n");
 	// Post-heading summary line — byte-shaped per deep-review/templates/review.md:22.
-	const summaryLine = `**Commit:** \`${meta.commit ?? ""}\` · **Status:** \`${meta.status ?? "needs_changes"}\` · **Findings:** ${n("critical")}🔴 · ${n("important")}🟡 · ${n("suggestion")}🔵 · **Verification:** ${vn("Verified")}✓ / ${vn("Weakened")}− / ${vn("Falsified")}✗`;
+	const summaryLine = `**Commit:** \`${meta.commit ?? ""}\` · **Status:** \`${meta.status ?? "needs_changes"}\` · **Findings:** ${n("critical")}🔴 · ${n("important")}🟡 · ${n("suggestion")}🔵 · **Verification:** ${vn("Verified")}✓ / ${vn("Weakened")}− / ${vn("Falsified")}✗ / ${vn("Resolved")}↺ / ${vn("Unverifiable")}?`;
 	const blockers = active
 		.filter((f) => f.severity === "critical" || f.severity === "important")
 		.map((f, i) => `${i + 1}. **${f.id}** — ${f.title}`);
@@ -1259,7 +1295,7 @@ function sarifProperties(finding) {
  * not-deleted → emit a SARIF suppression rather than dropping them (research:
  * Falsified ≈ SARIF suppressions). DR falsified-case mapping lands with Slice 8. */
 function sarifSuppression(finding) {
-	const off = finding.status === "rejected" || finding.status === "withdrawn" || finding.verify === "Falsified";
+	const off = finding.status === "rejected" || finding.status === "withdrawn" || RETIRING_VERDICTS.has(finding.verify);
 	return off ? [{ kind: "external", justification: finding.statusNote ?? finding.verifyNote ?? String(finding.verify ?? finding.status) }] : null;
 }
 

@@ -90,7 +90,7 @@ Stabilize the brief and record its body hash and the referenced contracts' hashe
 
 Intent review runs only in the rigorous lane (**Lanes** table). In fast and normal, skip steps 1–2: present the stabilized brief, and on the user's confirmation of intent save its approved copy; steps 3–4 still govern any finding the user raises.
 
-1. Dispatch `slice-verifier` with `mode=intent`, the exact `artifact_path` identity, and the next `slice_id`. It reviews commitments, seam/oracle sufficiency, dependencies, and verified upstream facts, not hypothetical implementation correctness.
+1. Dispatch `slice-verifier` with `mode=intent`, the exact `artifact_path` identity, and the next `slice_id`. It reviews commitments, dependencies, base guarantees, atomicity, and verified upstream facts, not hypothetical implementation correctness. Seam and oracle sufficiency (an observable Expected red, an oracle that fails on a wrong implementation) belongs to `artifact-coverage-reviewer` in step 2, so an oracle edit reruns that review.
 2. Dispatch independent `artifact-code-reviewer` and `artifact-coverage-reviewer` agents in parallel on that same intent identity. Read `$RPIV_PLUGIN_ROOT/skills/_shared/artifact-review-dispatch.md` for dispatch and evidence persistence.
 3. Present verified findings to the user. Fix gaps or explicitly reopen the affected commitment; then re-record the body hash and rerun affected reviews. A changed contract cannot inherit approval for the old hash.
 4. Apply **States And Evidence**: unavailable, broken, failed, and passed remain distinct. Missing review or a blocker cannot be waived by filling a `resolution` cell. Hold the gate until the required evidence supports it.

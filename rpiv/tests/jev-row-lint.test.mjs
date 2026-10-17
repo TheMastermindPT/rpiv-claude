@@ -40,6 +40,33 @@ describe("parseRows", () => {
 		expect(rows[1].text).toContain("src/c.mjs:9");
 	});
 
+	it("each reviewer of the pair is labelled against its own severity contract", () => {
+		expect(ROW_LINTS["artifact-code-reviewer"].reference.path).toBe(
+			"agents/artifact-code-reviewer.md",
+		);
+		expect(ROW_LINTS["artifact-coverage-reviewer"].reference.path).toBe(
+			"agents/artifact-coverage-reviewer.md",
+		);
+	});
+
+	it("a slice-verifier WARNING covers an untraced join, not only a soft research constraint", () => {
+		expect(ROW_LINTS["slice-verifier"].contracts.WARNING).toMatch(/join/);
+		expect(ROW_LINTS["slice-verifier"].contracts.WARNING).toMatch(
+			/soft constraint/,
+		);
+	});
+
+	it("claim-verifier rows accept Resolved and Unverifiable with their own contracts", () => {
+		const lint = ROW_LINTS["claim-verifier"];
+		const rows = parseRows(
+			"FINDING Q7 | Resolved | fix present at src/a.mjs:51 via git show 3a2b1c8.\nFINDING T1 | Unverifiable | wake-up timing at src/lock.mjs:41; settle with an interleaving run.\n",
+			lint,
+		);
+		expect(rows.map((r) => r.tag)).toEqual(["Resolved", "Unverifiable"]);
+		expect(lint.contracts.Resolved).toMatch(/fix[\s\S]*present/i);
+		expect(lint.contracts.Unverifiable).toMatch(/run/i);
+	});
+
 	it("slice-verifier rows extract category, verdict, detail", () => {
 		const rows = parseRows(
 			"- Decisions: VIOLATION: store.mjs export contract - missing `initStore` - design line 78\n- Cross-slice: OK\n- Research: WARNING: knip flags LoadClampEvent - never imported by name\n",

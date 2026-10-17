@@ -6,7 +6,7 @@ The caller supplies **write-step** (the existing artifact write), **review-step*
 
 ## 1. Check and dispatch one frozen packet
 
-Require an explicit `mode=intent` or `mode=candidate`. Read the shared contract and validate the caller's common inputs: `mode`, `workflow_path`, `artifact_path`, `slice_id`, `repository_path`, `base_commit`, `candidate_revision`, and `evidence_paths`, plus its required identity/contract references. Resolve `workflow_path` to the readable absolute path of `${CLAUDE_PLUGIN_ROOT}/skills/_shared/candidate-workflow.md` in the installed plugin before dispatch. `slice_id` may be omitted for the pair's whole-current-brief review; it is required by slice-verifier. Verify the artifact and required inputs are readable before dispatch. Missing inputs mean incomplete review, not an inferred mode or empty candidate.
+Require an explicit `mode=intent` or `mode=candidate`. Read the shared contract and validate the caller's common inputs: `mode`, `workflow_path`, `artifact_path`, `slice_id`, `repository_path`, `base_commit`, `candidate_revision`, `patch_path` (candidate mode), `requirements`, and `evidence_paths`, plus its required identity/contract references. Write `patch_path` once, outside the frozen candidate, from the same identity every reviewer inspects. Earlier review reports are not evidence for a new review: leave them out of the packet. Resolve `workflow_path` to the readable absolute path of `${CLAUDE_PLUGIN_ROOT}/skills/_shared/candidate-workflow.md` in the installed plugin before dispatch. `slice_id` may be omitted for the pair's whole-current-brief review; it is required by slice-verifier. Verify the artifact and required inputs are readable before dispatch. Missing inputs mean incomplete review, not an inferred mode or empty candidate.
 
 - **Intent:** no actual candidate is required. Review feasible intent, scope, contracts, and test seams before build. A clean intent review cannot claim tested/runtime readiness or implementation correctness.
 - **Candidate:** the parent has already frozen the actual worktree and evidence under the shared contract. Review the actual diff/files/tests against the exact accepted predecessor/base `base_commit`, not the original integration target base. Inspect the supplied immutable `candidate_revision`; never reconstruct HEAD plus artifact code fences.
@@ -51,7 +51,9 @@ Code review: {outcome and diagnostic}. Coverage review: {outcome and diagnostic}
 | coverage | {plan-loc} | {codebase-loc} | {severity} | verification-coverage | {finding} | {recommendation} | |
 ```
 
-Sort by severity (`blocker`, `concern`, `suggestion`), then source (`code`, `coverage`); retain each reviewer's emitted order within that bucket. One finding per row. Keep the header and confirmed rows if one source cannot complete.
+Sort by severity (`blocker`, `concern`, `suggestion`), then source (`code`, `coverage`); retain each reviewer's emitted order within that bucket. One finding per row; a row that names a class keeps its listed instances. Keep the header and confirmed rows if one source cannot complete.
+
+Below the table, keep each source's other parts under its name: `Alternatives` (advisory; shown to the user at triage, never a blocker and never a fix-round trigger), `needs-run:` lines (the parent runs the ones the user picks at triage and records the result with the row they confirm or refute), and the `polish:` line (one triage decision for the whole line).
 
 Only when both reviewers completed successfully on the identical target and returned zero findings, add `_No findings - both reviewers completed the stated mode on the frozen review target._`. An empty table alone is never clearance. In intent mode this marker clears only intent inspection; in candidate mode it does not replace execution evidence, other mandatory reviews, or user approval. Persist diagnostics even when there are no rows.
 

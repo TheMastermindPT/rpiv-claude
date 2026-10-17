@@ -1194,7 +1194,7 @@ function mkDrFixture({ findings = [], mdBody = "# DR\n" } = {}) {
 	assert.ok(!disErrs.some((e) => e.includes("requires a fix")), "discuss does NOT require a fix");
 	assert.deepEqual(validateFinding({ ...DR_C, verify: "Falsified", verifyNote: "contradicted by caller", status: "withdrawn" }, new Map(), new Set()), [], "falsified withdrawn finding accepted");
 	assert.ok(validateFinding({ ...DR_C, verify: "Falsified" }, new Map(), new Set()).includes("kind:dr Falsified finding must have status withdrawn"), "falsified active finding rejected");
-	assert.ok(validateFinding({ ...DR_C, verify: "verified" }, new Map(), new Set()).includes("verify must be one of Verified | Weakened | Falsified (got: verified)"), "lowercase verify rejected");
+	assert.ok(validateFinding({ ...DR_C, verify: "verified" }, new Map(), new Set()).includes("verify must be one of Verified | Weakened | Falsified | Resolved | Unverifiable (got: verified)"), "lowercase verify rejected");
 	console.log("OK — P8 dr validation arm: lens I/Q/S/G, per-tier why/fix, capitalized verify.");
 }
 
@@ -1224,7 +1224,7 @@ function mkDrFixture({ findings = [], mdBody = "# DR\n" } = {}) {
 	assert.ok(out.includes("date: 2026-07-20T00:00:00+0100"), "date");
 	assert.ok(out.includes("commit: abc123"), "commit");
 	assert.ok(out.includes("severity: { critical: 1, important: 1, suggestion: 1 }"), "severity counts (withdrawn excluded)");
-	assert.ok(out.includes("verification: { verified: 3, weakened: 0, falsified: 1 }"), "verification counts");
+	assert.ok(out.includes("verification: { verified: 3, weakened: 0, falsified: 1, resolved: 0, unverifiable: 0 }"), "verification counts");
 	assert.ok(out.includes("blockers_count: 2"), "blockers_count");
 	assert.ok(out.includes("## 🔴 Critical") && out.includes("### S1 🔴"), "critical section");
 	assert.ok(out.includes("## 🟡 Important") && out.includes("### I1 🟡"), "important section");
@@ -1233,7 +1233,7 @@ function mkDrFixture({ findings = [], mdBody = "# DR\n" } = {}) {
 	assert.ok(out.includes("**S1**") && out.includes("**I1**"), "Top Blockers lists S1 + I1");
 	assert.ok(out.includes("**Commit:** `abc123`"), "post-heading summary commit");
 	assert.ok(out.includes("**Findings:** 1🔴 · 1🟡 · 1🔵"), "summary findings line");
-	assert.ok(out.includes("**Verification:** 3✓ / 0− / 1✗"), "summary verification line");
+	assert.ok(out.includes("**Verification:** 3✓ / 0− / 1✗ / 0↺ / 0?"), "summary verification line");
 	assert.ok(out.includes("[precedent-weighted]"), "Legend Annotate row");
 	console.log("OK — P8 renderReview: full frontmatter, severity-grouped, withdrawn omitted, counts + blockers derived.");
 }

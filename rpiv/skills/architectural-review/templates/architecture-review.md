@@ -15,7 +15,7 @@ likec4_model: {repo-relative path of the emitted LikeC4 model directory, Step 4.
 health_score: {composite verdict — healthy | drifting | degraded}
 unresolved_finding_count: {U}    # increments on file, decrements on triage; should be 0 before Step 8
 severity: { high: {H}, med: {M}, low: {L} }
-verification: { verified: {V}, weakened: {W}, falsified: {F} }    # claim-verifier gate, Step 6
+verification: { verified: {V}, weakened: {W}, falsified: {F}, resolved: {VR}, unverifiable: {VU} }    # claim-verifier gate, Step 6
 interactions: {IX}    # interaction-sweeper compounds, Step 6.5
 clusters_discovered: {K}    # un-anticipated clusters from set-arithmetic, Step 9.5
 drift: { resolved: {R}, regressed: {Rg}, still_open: {S}, new: {N}, net: {+/-Δ} }    # omit keys as 0 on baseline
@@ -225,7 +225,7 @@ Each finding is a level-3 heading `### L<layer>-<seq> — <title>` followed by t
 | **Effort** | S (single-file, no consumers) / M (<=5 files, mechanical) / L (public-API or >=6 files) |
 | **Blast radius** | one or more of `internal` / `public-API` / `on-disk` / `cross-module` / `other` — free-form allowed (from integration-scanner) |
 | **Class** | `polish` (rename / refactor / DRY) vs `redesign` (structural shift) |
-| **Verify** | `Verified` / `Weakened` (demoted one tier) — `Falsified` findings are dropped, never written |
+| **Verify** | `Verified` / `Weakened` (demoted one tier) / `Unverifiable` (carried at its severity; its verifyNote names the settling run) — `Falsified` and `Resolved` findings are dropped, never written |
 | **Status** | `open` / `accepted` / `rejected` / `deferred` / `withdrawn` |
 | **Depends on** | other finding IDs that must land first |
 | **Cross-cut tag** | optional — see "Cross-cutting themes" |
@@ -279,7 +279,7 @@ _Principles emerge during Step 5 triage and are captured at Step 7. Patterns tha
        - **Severity:** {Low | Med | High}   - **Effort:** {S | M | L}
        - **Blast radius:** {one or more of internal | public-API | on-disk | cross-module | other — free-form allowed}
        - **Class:** {polish | redesign}     - **Entity / stage:** {System Model coordinate | —}
-       - **Verify:** {Verified | Weakened | Falsified}   - **Status:** {open -> triaged outcome}
+       - **Verify:** {Verified | Weakened | Unverifiable}   - **Status:** {open -> triaged outcome}
        - **Depends on:** {LX-YY, ...}        - **Cross-cut tag:** `T{N}-{theme-name}` _(optional)_
      The per-layer `### Layer N — tally` block is likewise store-rendered. -->
 

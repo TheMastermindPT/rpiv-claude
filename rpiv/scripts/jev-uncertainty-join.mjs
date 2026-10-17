@@ -110,8 +110,10 @@ function storeFilesAt(path, onDiagnostic) {
 	}
 }
 
-/** A store record died when it was falsified or withdrawn. */
+/** A store record died when it was falsified or withdrawn — except a Resolved record:
+ *  withdrawn because its fix landed, so the finding itself was real. */
 export function died(record) {
+	if (record.verify === "Resolved") return false;
 	return record.verify === "Falsified" || record.status === "withdrawn";
 }
 

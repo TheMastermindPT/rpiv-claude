@@ -16,7 +16,7 @@ import { bareAgentName, readAgentFrontmatter } from "./_shared.mjs";
 
 // Agents that always produce structured output.
 const STRUCTURED_AGENTS = {
-  "claim-verifier": { pattern: /FINDING\s+\S+\s+\|\s+(Verified|Weakened|Falsified)/, label: "FINDING rows" },
+  "claim-verifier": { pattern: /FINDING\s+\S+\s+\|\s+(Verified|Weakened|Falsified|Resolved|Unverifiable)/, label: "FINDING rows" },
   "diff-auditor":   { pattern: /\S+:\d+\s+\|/, label: "pipe-delimited rows (file:line | ...)" },
   "diff-analyst":   { pattern: /\S+:\d+\s+\|/, label: "pipe-delimited rows (file:line | ...)" },
   "slice-verifier": { pattern: /-\s*Decisions:[\s\S]*-\s*Cross-slice:[\s\S]*-\s*Research:/, label: "Decisions / Cross-slice / Research rows" },

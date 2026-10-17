@@ -183,8 +183,14 @@ source. Reuse this schema in `artifact-review-dispatch.md` and the three agents:
   target and starting SHA separately, not as a moving branch alias.
 - `candidate_revision`: immutable commit plus clean candidate state, or a
   frozen snapshot as described below. Omit only in intent mode.
-- `evidence_paths`: observed commands/results, previous acceptance records,
-  and review reports. Include the source revision to which each result belongs.
+- `patch_path`: the parent's read-only Git evidence, a file holding the actual
+  diff from `base_commit` to `candidate_revision` (for a frozen snapshot, its
+  complete patch). Required in candidate mode; reviewers have no Git of their own.
+- `requirements`: the acceptance criteria, Behaviors and oracles in scope, as
+  section references into `artifact_path` or the upstream FRD.
+- `evidence_paths`: observed commands/results and previous acceptance records.
+  Include the source revision to which each result belongs. Earlier review
+  reports stay out of the packet: each review forms its own view.
 
 If commits are authorized, pin a commit SHA and verify candidate files match it.
 Otherwise capture a frozen snapshot: base SHA, complete binary-capable patch,
@@ -217,9 +223,11 @@ branch name. Preserve the chain so final validation can inspect the whole change
    and get Build authorization if not already explicitly recorded for this scope.
 2. In the rigorous lane, run `slice-verifier` in `intent` mode against the
    proposed contract and real predecessors. It checks feasibility, commitments,
-   dependencies, and atomicity, not implementation correctness. Stabilized briefs
-   also receive the independent reviewer pair through `artifact-review-dispatch.md`,
-   in `intent` mode. Fast and normal skip intent review (**Lanes**). Reuse a
+   dependencies, base guarantees, and atomicity, not implementation correctness.
+   Stabilized briefs also receive the independent reviewer pair through
+   `artifact-review-dispatch.md`, in `intent` mode; the coverage reviewer owns
+   whether each Expected red is observable and each oracle catches a wrong
+   implementation, so an intent review that runs slice-verifier runs the pair too. Fast and normal skip intent review (**Lanes**). Reuse a
    still-current intent review; do not repeat it just because the skill changed.
 3. Write one failing behavior test through the agreed seam. Run the smallest
    relevant command and observe the contract's Expected red failure. Setup errors,

@@ -14,14 +14,14 @@ status: ready
 review_status: complete
 merge_status: {blocked | clear}
 severity: { critical: {C}, important: {I}, suggestion: {S} }
-verification: { verified: {V}, weakened: {W}, falsified: {F} }
+verification: { verified: {V}, weakened: {W}, falsified: {F}, resolved: {VR}, unverifiable: {VU} }
 blockers_count: {B}
 tags: [code-review]
 ---
 
 # Code Review — {Scope}
 
-**Commit:** `{hash}` · **Status:** `ready` · **Findings:** {C}🔴 · {I}🟡 · {S}🔵 · **Verification:** {V}✓ / {W}− / {F}✗
+**Commit:** `{hash}` · **Status:** `ready` · **Findings:** {C}🔴 · {I}🟡 · {S}🔵 · **Verification:** {V}✓ / {W}− / {F}✗ / {VR}↺ / {VU}?
 
 ## Top Blockers
 
@@ -35,7 +35,7 @@ tags: [code-review]
 ```text
 Severity    🔴 fix before merge   🟡 fix soon   🔵 nice to have   💭 discuss
 ID prefix   I interaction   Q quality   S security   G gap
-Verify      ✓ verified   − weakened (demoted)   ✗ falsified (dropped)
+Verify      ✓ verified   − weakened (demoted)   ✗ falsified (dropped)   ↺ resolved (withdrawn)   ? unverifiable (kept)
 Annotate    [precedent-weighted]   [cascade: <kind>]   [subsumed-by <ID>]
 ```
 

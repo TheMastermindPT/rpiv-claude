@@ -26,10 +26,12 @@
 
 ## Verification tag semantics & application (Step 6)
 
-**Before applying tags** — re-read every Weakened and Falsified justification (the tag is a summary; the justification is the evidence). Per `agents/claim-verifier.md` tag semantics: Weakened = narrower, Falsified = wrong direction, Verified = correct or understated. If a justification contradicts its tag (e.g. "inverted" / "opposite" under Weakened, or "worse than stated" under Weakened), override before applying the rules below. Also verify identity on the ID set — exactly one row per input finding; re-dispatch `claim-verifier` on any missing IDs before proceeding.
+**Before applying tags** — re-read every Weakened and Falsified justification (the tag is a summary; the justification is the evidence). Per `agents/claim-verifier.md` tag semantics: Weakened = narrower, Falsified = wrong direction, Resolved = real but already fixed, Unverifiable = reading cannot settle it, Verified = correct or understated. If a justification contradicts its tag (e.g. "inverted" / "opposite" under Weakened, or "worse than stated" under Weakened), override before applying the rules below. Also verify identity on the ID set — exactly one row per input finding; re-dispatch `claim-verifier` on any missing IDs before proceeding.
 
 **Apply the tags** (on the corrected tag):
 - **Falsified** findings — remove from the artifact entirely. Their ID is retired (never reused); the retirement is counted in the frontmatter `verification` string (`F` dropped) and nowhere else.
 - **Weakened** findings — demote one severity tier (🔴→🟡, 🟡→🔵, 🔵→💭). Rewrite the finding's evidence line to reflect the narrower claim.
+- **Resolved** findings — remove from the artifact body: the defect was real and is already fixed. Persist them with `status:"withdrawn"`; they are counted as `resolved`, never as false positives.
+- **Unverifiable** findings — carry through at their tier. Persist the verifier's justification, including the settling run, as `verifyNote`; `renderReview` shows it under the finding as "Unverifiable — settle by".
 - **Verified** findings — carry through unchanged to Step 7.
-- **Edge case**: if a 🔴 Cross-Finding Interaction bullet relies on constituents that are now Falsified or Weakened, re-evaluate the interaction. Drop the interaction if it no longer stands on ≥2 Verified constituents from different files.
+- **Edge case**: if a 🔴 Cross-Finding Interaction bullet relies on constituents that are now Falsified, Resolved or Weakened, re-evaluate the interaction. Drop the interaction if it no longer stands on ≥2 Verified constituents from different files.

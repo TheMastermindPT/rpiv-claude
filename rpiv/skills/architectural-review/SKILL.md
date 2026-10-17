@@ -336,14 +336,16 @@ System-Model ownership claims (from Step 2.7 — each `owner: NONE` entity, with
 
 For EACH ownership claim: re-find the write sites in the code (all of them — a single-writer reality falsifies the claim). Tag with the same vocabulary: Verified (>=2 live writers / genuinely no owner), Weakened (fewer writers than claimed but still >1), Falsified (one owner exists or the write sites are gone).
 
-Return ONE row per finding: `FINDING <id> | <Verified|Weakened|Falsified> | <one-sentence justification citing file:line>`.
+Return ONE row per finding: `FINDING <id> | <Verified|Weakened|Falsified|Resolved|Unverifiable> | <one-sentence justification citing file:line>`.
 - Verified — quote matches, claim reproducible.
 - Weakened — true but narrower than stated (severity drops one tier).
 - Falsified — quote does not match, or contradicted by code the lens did not read.
+- Resolved — the defect was real and its fix is already present in the cited code.
+- Unverifiable — after a trace was attempted, reading cannot settle it; name the run that would.
 Citation contract applies. No new findings.
 ```
 
-Apply: **Falsified -> drop** (ID retired, counted in frontmatter `verification.falsified`). **Weakened -> demote one severity tier**, rewrite the evidence to the narrower claim. **Verified -> carry**. Record `verified`/`weakened`/`falsified` counts in frontmatter. **Ownership claims**: a Falsified `owner: NONE` is corrected in the `## System Model` section via Edit (the entity gets its real owner) and MUST NOT seed an ownerless-entity theme (Step 10) or a Risk-Rollup promotion (Step 11) — the S lens already dispatched on the stale gate, so its findings answer for themselves at this same gate. Then apply standing-decision suppression per the Suppress section of `references/standing-decisions.md` — every suppressed candidate is recorded, never silently dropped. The surviving, verified slop findings now enter the Interaction Sweep and the per-layer loop alongside the dimension sweep (whose candidates get the same suppression check at 7.3).
+Apply: **Falsified -> drop** (ID retired, counted in frontmatter `verification.falsified`). **Resolved -> drop as already fixed** (counted in `verification.resolved`, never as a false positive). **Weakened -> demote one severity tier**, rewrite the evidence to the narrower claim. **Unverifiable -> carry at its severity**, with the settling run in its `verifyNote` (Step 7.5). **Verified -> carry**. Record `verified`/`weakened`/`falsified`/`resolved`/`unverifiable` counts in frontmatter. **Ownership claims**: a Falsified `owner: NONE` is corrected in the `## System Model` section via Edit (the entity gets its real owner) and MUST NOT seed an ownerless-entity theme (Step 10) or a Risk-Rollup promotion (Step 11) — the S lens already dispatched on the stale gate, so its findings answer for themselves at this same gate. Then apply standing-decision suppression per the Suppress section of `references/standing-decisions.md` — every suppressed candidate is recorded, never silently dropped. The surviving, verified slop findings now enter the Interaction Sweep and the per-layer loop alongside the dimension sweep (whose candidates get the same suppression check at 7.3).
 
 ### Step 6.5: Full Interaction Sweep (re-join ALL waves)
 
@@ -355,7 +357,7 @@ The lenses ran in two waves: Wave 1 lenses were isolated from each other (the Wa
 Target: {target}   Layers: {layer table, one line each}
 
 Verified finding set (each: id | lens | file:line | `verbatim line` | severity | one-line what-it-is):
-{paste every Verified/Weakened finding from Step 6, plus the 10dim candidates already in hand if any}
+{paste every Verified/Weakened/Unverifiable finding from Step 6 (mark each Unverifiable one with its settling run), plus the 10dim candidates already in hand if any}
 
 Co-change pairs (hidden coupling, no import edge): {paste ---co-change-candidates--- rows from Step 2}
 
@@ -418,9 +420,11 @@ Persist through the findings store the instant an outcome is chosen — never ha
 
    One call validates at insert (schema, unique ID, unambiguous evidence paths, content-hash fingerprint) and renders the finding block AND this layer's tally into the sentinel regions. Non-zero exit = rejected: fix the reported field and re-pipe — never bypass with a hand Edit. Maintain frontmatter `unresolved_finding_count` via Edit as before (counters stay Edit-based this iteration).
 
-   **Apply the Step-6 verify verdict via `store update` — a PERSISTED finding, never a hand-Edit.** The Step-6 initial gate (drop never-persisted Falsified candidates; carry Verified/Weakened to Step 7) is unchanged; findings persist at 7.5 with a provisional `verify:"Verified"` + raw severity. After the `store add`, apply each surviving finding's verdict:
+   **Apply the Step-6 verify verdict via `store update` — a PERSISTED finding, never a hand-Edit.** The Step-6 initial gate (drop never-persisted Falsified and Resolved candidates; carry Verified/Weakened/Unverifiable to Step 7) is unchanged; findings persist at 7.5 with a provisional `verify:"Verified"` + raw severity. After the `store add`, apply each surviving finding's verdict:
    - **Verified** → no update (the provisional stands).
    - **Weakened** → `echo '{"id":"L{X}-{YY}","verify":"Weakened","verifyNote":"<narrower claim>"}' | node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/store.mjs" update --artifact <artifact path> --root .` → severity demotes one tier; the layer re-renders.
+   - **Unverifiable** → `echo '{"id":"L{X}-{YY}","verify":"Unverifiable","verifyNote":"<the run that settles it>"}' | node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/store.mjs" update --artifact <artifact path> --root .` → the finding stays active at its severity, and the note carries the settling run.
+   - **Resolved → withdrawn** fires, like Falsified below, only on an ALREADY-PERSISTED finding whose fix later landed: `store update {id, verify:"Resolved", verifyNote}` retires it but keeps its drift history, and it never counts as a false positive.
    - **Falsified → withdrawn (retire-not-delete)** fires only on an ALREADY-PERSISTED finding later invalidated — a Step-13 follow-up re-verification or a DR falsification (Slice 8): `store update {id, verify:"Falsified", verifyNote}` flips `status:"withdrawn"`; the record is RETAINED (append-only, emitted as a SARIF suppression by `toSarif`) and still counted in the tally. It is NOT the Step-6 initial gate (those candidates were never stored). Frontmatter verified/weakened/falsified count recording is otherwise unchanged.
 
    **`store update` also accepts content-field patches** — the sanctioned way to fix a persisted finding's text or evidence, since hand-Edits inside sentinel regions are forbidden. Pipe `{id, <field>: <new value>, ...}` with any of `title`, `anchor`, `what`, `why`, `evidence`, `remediation`, `severity`, `effort`, `blastRadius`, `class`, `symbol`, `entityStage`, `crossCutTag`, `dependsOn`; each REPLACES the stored value wholesale and the record re-validates like `add` (evidence re-grounds; the fingerprint recomputes when evidence/symbol change; `verify` is optional in a content-only patch). `id`, `layer`, `lens`, and `kind` are immutable — a wrong one means withdraw-and-re-add. Unknown patch keys are a hard error, never silently dropped.
@@ -448,7 +452,7 @@ node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/store.mjs" diff --artifact <artifact 
 
 → classifies each finding `Still-open` / `Regressed` / `NEW`, persists `baselineState` + `driftClass` on current findings, and writes the frontmatter `drift:` counts + the store-managed `store:drift` region (the 4-class table + NEW/Regressed/Resolved id lists). The `path#symbol@lens` fallback is retired — stored fingerprints are always present.
 
-**Re-verify Resolved rows at HEAD (STAYS an AR-skill dispatch).** After `store diff`, dispatch `claim-verifier` over `store.drift.resolved` to confirm each prior finding is genuinely fixed at HEAD — a falsely-claimed fix must not hide a regression. A false-Resolved is re-added via `store add` (it then Regresses on the next diff).
+**Re-verify Resolved rows at HEAD (STAYS an AR-skill dispatch).** After `store diff`, dispatch `claim-verifier` over `store.drift.resolved` to confirm each prior finding is genuinely fixed at HEAD — a falsely-claimed fix must not hide a regression. A `Resolved` row confirms the fix, and so does a `Falsified` row (the quoted defect is gone at HEAD). A `Verified` or `Weakened` row means the defect is still present, in full or narrower: that false-Resolved is re-added via `store add` (a Weakened one with its narrower claim; it then Regresses on the next diff). An `Unverifiable` row is reported to the developer with its settling run, never assumed fixed.
 
 **Model drift (additive).** When BOTH this run and the prior review emitted LikeC4 models (`likec4_model` frontmatter on each), also compute the structural model diff per the "Model drift" section of `references/likec4-model.md` — one extra line in the Drift Delta, orchestrator set-arithmetic, no agent. Skip silently when either side lacks a model.
 
@@ -515,7 +519,7 @@ Architectural review written to:
 Health:       {health_score} — {file_count} files, median {loc_median} LOC, {outlier_count} outliers
 Slop:         {D} dup · {C} fragmentation · {G} god-file · {A} dead-abstraction · {T} test-theater · {L} leaky-boundary · {Sec} module-security · {M} missing-abstraction · {S} state-flow · {Lc} low-cohesion · {Fe} feature-envy · {Fp} failure-propagation · {Tc} hidden-coupling · {P} persistence
 Synthesis:    {IX} interaction compounds · {clusters_discovered} clusters discovered · {themes} root-caused themes
-Verification: {V} verified · {W} weakened · {F} falsified (dropped)
+Verification: {V} verified · {W} weakened · {F} falsified (dropped) · {VR} resolved · {VU} unverifiable
 Drift:        Resolved {R} · Regressed {Rg} · Still-open {S} · NEW {N} · Net Δ {+/-Δ}   (or "Baseline review")
 Findings:     {F} reviewed — {A} accepted, {Rj} rejected, {D} deferred, {W} withdrawn
 Plan:         {P} phases across {Files} files

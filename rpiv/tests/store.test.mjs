@@ -706,6 +706,8 @@ it("P2.3 Regressed rides the property bag.", () => {
 it("P2.4 triaged-away findings are suppressed, not active.", () => {
 	assert.equal(toSarif({ schema: 1, findings: [{ ...VALID_AR, fp: "f1", status: "rejected" }] }).runs[0].results[0].suppressions[0].kind, "external", "rejected -> suppressed");
 	assert.equal(toSarif({ schema: 1, findings: [{ ...VALID_AR, fp: "f2", verify: "Falsified" }] }).runs[0].results[0].suppressions[0].kind, "external", "Falsified -> suppressed");
+	assert.equal(toSarif({ schema: 1, findings: [{ ...VALID_AR, fp: "f3", verify: "Resolved", verifyNote: "fixed by abc123" }] }).runs[0].results[0].suppressions[0].justification, "fixed by abc123", "Resolved -> suppressed with its note");
+	assert.equal(toSarif({ schema: 1, findings: [{ ...VALID_AR, fp: "f4", verify: "Unverifiable", verifyNote: "settle with x" }] }).runs[0].results[0].suppressions, undefined, "Unverifiable stays an active result");
 	assert.equal(toSarif({ schema: 1, findings: [{ ...VALID_AR, fp: "f3", status: "accepted" }] }).runs[0].results[0].suppressions, undefined, "accepted -> not suppressed");
 });
 
@@ -925,6 +927,33 @@ it("P4.3 Falsified retires-not-deletes — record stays, status->withdrawn, veri
 	rmSync(fx2.tmp, { recursive: true, force: true });
 });
 
+// P4.3b Resolved retires a real-but-fixed finding without erasing its drift history;
+// Unverifiable keeps the finding active and its severity, with the run that settles it.
+it("P4.3b Resolved retires and keeps drift history; Unverifiable keeps severity; both require a note.", () => {
+	const fx = mkUpdateFixture();
+	const seeded = JSON.parse(readFileSync(fx.storePath, "utf8"));
+	Object.assign(seeded.findings[0], { baselineState: "unchanged", driftClass: "Still-open", priorFp: "prior-fp", priorId: "OLD-1" });
+	writeFileSync(fx.storePath, `${JSON.stringify(seeded, null, 2)}\n`);
+	const severity = seeded.findings[0].severity;
+	assert.throws(() => updateFinding(fx.artifact, fx.root, { id: "L0-01", verify: "Resolved" }), /Resolved requires a verifyNote/, "resolved without a note throws");
+	const resolved = updateFinding(fx.artifact, fx.root, { id: "L0-01", verify: "Resolved", verifyNote: "fixed by abc123 at a.ts:10" });
+	assert.equal(resolved.status, "withdrawn", "resolved is retired");
+	assert.equal(resolved.severity, severity, "resolved keeps its severity");
+	assert.equal(resolved.driftClass, "Still-open", "resolved keeps the drift history of a real finding");
+	assert.throws(
+		() => updateFinding(fx.artifact, fx.root, { id: "L0-01", verify: "Verified" }),
+		/changing a Resolved verdict requires an explicit status/,
+		"reopening a resolved finding needs an explicit status",
+	);
+	const fx2 = mkUpdateFixture();
+	assert.throws(() => updateFinding(fx2.artifact, fx2.root, { id: "L0-01", verify: "Unverifiable" }), /Unverifiable requires a verifyNote/, "unverifiable without a note throws");
+	const open = updateFinding(fx2.artifact, fx2.root, { id: "L0-01", verify: "Unverifiable", verifyNote: "settle with: run two callers in one tick" });
+	assert.notEqual(open.status, "withdrawn", "unverifiable stays active");
+	assert.equal(open.severity, severity, "unverifiable is not demoted");
+	rmSync(fx.tmp, { recursive: true, force: true });
+	rmSync(fx2.tmp, { recursive: true, force: true });
+});
+
 // P4.4 update rejects an unknown id and a bad verify value.
 it("P4.4 update rejects an unknown id and a bad verify value.", () => {
 	const fx = mkUpdateFixture();
@@ -1066,6 +1095,17 @@ it("P5.1 NEW vs Still-open + baselineState persisted.", () => {
 	assert.equal(byFp.B.driftClass, "NEW", "fp B new");
 	assert.equal(byFp.B.baselineState, "new", "fp B baselineState new");
 	assert.equal(byFp.B.priorFp, null, "fp B priorFp null");
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
+// P5.1b A prior finding the verifier tagged Resolved (withdrawn, already fixed) that
+// reappears is Regressed, not NEW: it was real and fixed, then came back.
+it("P5.1b a reappearing prior Resolved finding is Regressed, not NEW.", () => {
+	const fx = mkDiffFixture({ findings: [{ id: "L0-01", title: "t1", fp: "RS" }] });
+	diffReview(fx.artifact, writePrior(fx, { artifact: "prior.md", findings: [{ id: "L0-07", fp: "RS", title: "fixed once", verify: "Resolved", status: "withdrawn" }] }));
+	const f = JSON.parse(readFileSync(fx.storePath, "utf-8")).findings[0];
+	assert.equal(f.driftClass, "Regressed", "a fixed defect that came back is Regressed");
+	assert.equal(f.priorId, "L0-07", "prior identity carried");
 	rmSync(fx.tmp, { recursive: true, force: true });
 });
 
@@ -1278,7 +1318,36 @@ it("P8.1 DR validation arm — I/Q/S/G lens, per-tier why/fix, capitalized verif
 		),
 		"falsified finding keeps its verifier justification",
 	);
-	assert.ok(validateFinding({ ...DR_C, verify: "verified" }, new Map(), new Set()).includes("verify must be one of Verified | Weakened | Falsified (got: verified)"), "lowercase verify rejected");
+	assert.ok(validateFinding({ ...DR_C, verify: "verified" }, new Map(), new Set()).includes("verify must be one of Verified | Weakened | Falsified | Resolved | Unverifiable (got: verified)"), "lowercase verify rejected");
+});
+
+// P8.1b Resolved retires a real-but-fixed finding; Unverifiable keeps it active with the run that settles it.
+it("P8.1b Resolved is withdrawn with a note; Unverifiable stays active with a note.", () => {
+	const v = (f) => validateFinding({ ...DR_C, ...f }, new Map(), new Set());
+	assert.deepEqual(v({ verify: "Resolved", verifyNote: "fixed by abc123 at a.ts:10", status: "withdrawn" }), [], "resolved withdrawn finding is accepted");
+	assert.ok(v({ verify: "Resolved", verifyNote: "fixed" }).includes("kind:dr Resolved finding must have status withdrawn"), "resolved active finding is rejected");
+	assert.ok(v({ verify: "Resolved", status: "withdrawn" }).includes("kind:dr Resolved finding requires a verifyNote"), "resolved finding keeps its justification");
+	assert.deepEqual(v({ verify: "Unverifiable", verifyNote: "settle with: run the lock interleaving" }), [], "unverifiable active finding is accepted");
+	assert.ok(v({ verify: "Unverifiable" }).includes("kind:dr Unverifiable finding requires a verifyNote"), "unverifiable names the run that settles it");
+	assert.ok(v({ verify: "Unverifiable", verifyNote: "x", status: "withdrawn" }).includes("kind:dr withdrawn finding must be Falsified or Resolved"), "unverifiable is never withdrawn");
+	assert.ok(v({ verify: "Verified", status: "withdrawn" }).includes("kind:dr withdrawn finding must be Falsified or Resolved"), "verified is never withdrawn");
+});
+
+// P8.3b renderReview counts Resolved and Unverifiable; Resolved leaves the body, Unverifiable stays.
+it("P8.3b renderReview counts Resolved and Unverifiable separately from Falsified.", () => {
+	const store = { schema: 1, target: "lib/x", review: { status: "needs_changes", commit: "abc123" }, findings: [
+		{ ...DR_C, verify: "Verified" },
+		{ ...DR_C, id: "I1", lens: "I", severity: "important", why: "w", fix: "f2", verify: "Unverifiable", verifyNote: "settle with: interleave two callers" },
+		{ ...DR_C, id: "Q1", lens: "Q", severity: "suggestion", fix: "f3", status: "withdrawn", verify: "Resolved", verifyNote: "fixed by abc123" },
+		{ ...DR_C, id: "G1", status: "withdrawn", verify: "Falsified", verifyNote: "contradicted" },
+	] };
+	const out = renderReview(store);
+	assert.ok(out.includes("verification: { verified: 1, weakened: 0, falsified: 1, resolved: 1, unverifiable: 1 }"), "verification counts all five verdicts");
+	assert.ok(out.includes("**Verification:** 1✓ / 0− / 1✗ / 1↺ / 1?"), "summary verification line counts all five verdicts");
+	assert.ok(out.includes("severity: { critical: 1, important: 1, suggestion: 0 }"), "resolved leaves the active counts; unverifiable stays");
+	assert.ok(out.includes("### I1 🟡") && !out.includes("### Q1"), "unverifiable rendered, resolved omitted");
+	assert.ok(out.includes("**Unverifiable — settle by**\nsettle with: interleave two callers"), "unverifiable shows the run that settles it");
+	assert.ok(out.includes("↺ resolved (withdrawn)") && out.includes("? unverifiable (kept)"), "legend explains the new marks");
 });
 
 // P8.2 renderDrFinding degrades per tier + byte-preserves the emoji.
@@ -1306,7 +1375,7 @@ it("P8.3 renderReview assembles the whole document.", () => {
 	assert.ok(out.includes("date: 2026-07-20T00:00:00+0100"), "date");
 	assert.ok(out.includes("commit: abc123"), "commit");
 	assert.ok(out.includes("severity: { critical: 1, important: 1, suggestion: 1 }"), "severity counts (withdrawn excluded)");
-	assert.ok(out.includes("verification: { verified: 3, weakened: 0, falsified: 1 }"), "verification counts");
+	assert.ok(out.includes("verification: { verified: 3, weakened: 0, falsified: 1, resolved: 0, unverifiable: 0 }"), "verification counts");
 	assert.ok(out.includes("blockers_count: 2"), "blockers_count");
 	assert.ok(out.includes("review_status: complete"), "review completion is separate from merge readiness");
 	assert.ok(out.includes("merge_status: blocked"), "active blockers derive a blocked merge status");
@@ -1317,7 +1386,7 @@ it("P8.3 renderReview assembles the whole document.", () => {
 	assert.ok(out.includes("**S1**") && out.includes("**I1**"), "Top Blockers lists S1 + I1");
 	assert.ok(out.includes("**Commit:** `abc123`"), "post-heading summary commit");
 	assert.ok(out.includes("**Findings:** 1🔴 · 1🟡 · 1🔵"), "summary findings line");
-	assert.ok(out.includes("**Verification:** 3✓ / 0− / 1✗"), "summary verification line");
+	assert.ok(out.includes("**Verification:** 3✓ / 0− / 1✗ / 0↺ / 0?"), "summary verification line");
 	assert.ok(out.includes("[precedent-weighted]"), "Legend Annotate row");
 });
 
@@ -1369,7 +1438,7 @@ it("P8.4c falsified DR findings remain counted but stay out of blockers and body
 	addFinding(fx.artifact, fx.root, DR_C);
 	updateFinding(fx.artifact, fx.root, { id: "S1", verify: "Falsified", verifyNote: "contradicted" });
 	const out = renderReview(loadStore(fx.artifact).store);
-	assert.ok(out.includes("verification: { verified: 0, weakened: 0, falsified: 1 }"));
+	assert.ok(out.includes("verification: { verified: 0, weakened: 0, falsified: 1, resolved: 0, unverifiable: 0 }"));
 	assert.ok(out.includes("blockers_count: 0"));
 	assert.ok(!out.includes("### S1"));
 	rmSync(fx.tmp, { recursive: true, force: true });
@@ -1611,12 +1680,12 @@ const GOLDEN_DR_REVIEW = [
 	"review_status: complete",
 	"merge_status: blocked",
 	"severity: { critical: 1, important: 1, suggestion: 1 }",
-	"verification: { verified: 3, weakened: 0, falsified: 1 }",
+	"verification: { verified: 3, weakened: 0, falsified: 1, resolved: 0, unverifiable: 0 }",
 	"blockers_count: 2",
 	"tags: [code-review]",
 	"---",
 	"# Code Review — lib/x",
-	"**Commit:** `abc123` · **Status:** `needs_changes` · **Findings:** 1🔴 · 1🟡 · 1🔵 · **Verification:** 3✓ / 0− / 1✗",
+	"**Commit:** `abc123` · **Status:** `needs_changes` · **Findings:** 1🔴 · 1🟡 · 1🔵 · **Verification:** 3✓ / 0− / 1✗ / 0↺ / 0?",
 	"## Top Blockers",
 	"1. **S1** — race",
 	"2. **I1** — race",
@@ -1625,7 +1694,7 @@ const GOLDEN_DR_REVIEW = [
 	"```text",
 	"Severity    🔴 fix before merge   🟡 fix soon   🔵 nice to have   💭 discuss",
 	"ID prefix   I interaction   Q quality   S security   G gap",
-	"Verify      ✓ verified   − weakened (demoted)   ✗ falsified (dropped)",
+	"Verify      ✓ verified   − weakened (demoted)   ✗ falsified (dropped)   ↺ resolved (withdrawn)   ? unverifiable (kept)",
 	"Annotate    [precedent-weighted]   [cascade: <kind>]   [subsumed-by <ID>]",
 	"```",
 	"## 🔴 Critical",
@@ -1978,7 +2047,7 @@ const ERR_AR_BROKEN = [
 	"lens must be one of D/C/G/A/T/L/Sec/M/S/Lc/Fe/Fp/Tc/P/IX/10dim (got: undefined)",
 	"effort must be one of S | M | L (got: undefined)",
 	"class must be one of polish | redesign (got: undefined)",
-	"verify must be one of Verified | Weakened | Falsified (got: undefined)",
+	"verify must be one of Verified | Weakened | Falsified | Resolved | Unverifiable (got: undefined)",
 	"blastRadius must be a non-empty array of strings (recommended: internal | public-API | on-disk | cross-module | other; free-form allowed)",
 	"remediation must be an object",
 	"dependsOn must be a string array (may be empty)",
@@ -2001,7 +2070,7 @@ const ERR_DR_FIELDS = [
 	"lens must be one of I/Q/S/G for kind:dr (got: Z)",
 	"kind:dr critical finding requires a why",
 	"kind:dr critical finding requires a fix",
-	"verify must be one of Verified | Weakened | Falsified (got: undefined)",
+	"verify must be one of Verified | Weakened | Falsified | Resolved | Unverifiable (got: undefined)",
 ];
 
 const ERR_DRIFT = [
@@ -2320,12 +2389,12 @@ const GOLDEN_REVIEW_DEFAULTS = [
 	"review_status: complete",
 	"merge_status: blocked",
 	"severity: { critical: 1, important: 0, suggestion: 0 }",
-	"verification: { verified: 0, weakened: 0, falsified: 0 }",
+	"verification: { verified: 0, weakened: 0, falsified: 0, resolved: 0, unverifiable: 0 }",
 	"blockers_count: 1",
 	"tags: [code-review]",
 	"---",
 	"# Code Review — lib/z",
-	"**Commit:** `` · **Status:** `needs_changes` · **Findings:** 1🔴 · 0🟡 · 0🔵 · **Verification:** 0✓ / 0− / 0✗",
+	"**Commit:** `` · **Status:** `needs_changes` · **Findings:** 1🔴 · 0🟡 · 0🔵 · **Verification:** 0✓ / 0− / 0✗ / 0↺ / 0?",
 	"## Top Blockers",
 	"1. **S1** — t-S1",
 	"## Legend",
@@ -2333,7 +2402,7 @@ const GOLDEN_REVIEW_DEFAULTS = [
 	"```text",
 	"Severity    🔴 fix before merge   🟡 fix soon   🔵 nice to have   💭 discuss",
 	"ID prefix   I interaction   Q quality   S security   G gap",
-	"Verify      ✓ verified   − weakened (demoted)   ✗ falsified (dropped)",
+	"Verify      ✓ verified   − weakened (demoted)   ✗ falsified (dropped)   ↺ resolved (withdrawn)   ? unverifiable (kept)",
 	"Annotate    [precedent-weighted]   [cascade: <kind>]   [subsumed-by <ID>]",
 	"```",
 	"## 🔴 Critical",
@@ -2376,12 +2445,12 @@ const GOLDEN_REVIEW_EMPTY = [
 	"review_status: complete",
 	"merge_status: clear",
 	"severity: { critical: 0, important: 0, suggestion: 0 }",
-	"verification: { verified: 0, weakened: 0, falsified: 0 }",
+	"verification: { verified: 0, weakened: 0, falsified: 0, resolved: 0, unverifiable: 0 }",
 	"blockers_count: 0",
 	"tags: [code-review]",
 	"---",
 	"# Code Review — ",
-	"**Commit:** `` · **Status:** `needs_changes` · **Findings:** 0🔴 · 0🟡 · 0🔵 · **Verification:** 0✓ / 0− / 0✗",
+	"**Commit:** `` · **Status:** `needs_changes` · **Findings:** 0🔴 · 0🟡 · 0🔵 · **Verification:** 0✓ / 0− / 0✗ / 0↺ / 0?",
 	"## Top Blockers",
 	"_none_",
 	"## Legend",
@@ -2389,7 +2458,7 @@ const GOLDEN_REVIEW_EMPTY = [
 	"```text",
 	"Severity    🔴 fix before merge   🟡 fix soon   🔵 nice to have   💭 discuss",
 	"ID prefix   I interaction   Q quality   S security   G gap",
-	"Verify      ✓ verified   − weakened (demoted)   ✗ falsified (dropped)",
+	"Verify      ✓ verified   − weakened (demoted)   ✗ falsified (dropped)   ↺ resolved (withdrawn)   ? unverifiable (kept)",
 	"Annotate    [precedent-weighted]   [cascade: <kind>]   [subsumed-by <ID>]",
 	"```",
 ].join("\n");
@@ -2484,7 +2553,7 @@ it("MD6. addFinding duplicate-id rejection (in-process)", () => {
 // re-validate message be confused; freeze the guard's own text).
 it("MD7. updateFinding patch-guard exact messages", () => {
 	const fx = mkUpdateFixture();
-	assert.equal(throwMsg(() => updateFinding(fx.artifact, fx.root, { id: "L0-01", verify: "Maybe" })), "update: verify must be one of Verified | Weakened | Falsified (got: Maybe)", "bad verify -> the guard message (not the re-validate message)");
+	assert.equal(throwMsg(() => updateFinding(fx.artifact, fx.root, { id: "L0-01", verify: "Maybe" })), "update: verify must be one of Verified | Weakened | Falsified | Resolved | Unverifiable (got: Maybe)", "bad verify -> the guard message (not the re-validate message)");
 	assert.equal(throwMsg(() => updateFinding(fx.artifact, fx.root, { verify: "Verified" })), "update: patch.id (string) is required", "missing id");
 	assert.equal(throwMsg(() => updateFinding(fx.artifact, fx.root, { id: "ZZ", verify: "Verified" })), "update: no finding with id ZZ", "unknown id");
 	rmSync(fx.tmp, { recursive: true, force: true });

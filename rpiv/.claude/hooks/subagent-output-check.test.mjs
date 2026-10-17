@@ -124,6 +124,23 @@ const mkAgent = (repo, name, effort) => {
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
 
+// --- Test 7b: claim-verifier rows with only the new verdicts — silent -------
+
+{
+  const repo = mkdtempSync(join(tmpdir(), "soc-cv-new-tags-"));
+  try {
+    mkAgent(repo, "claim-verifier", "high");
+    const { stderr } = runHook(repo, {
+      agent_type: "claim-verifier",
+      result:
+        "FINDING Q7 | Resolved | resolved-by: 3a2b1c8 confirmed at tip via git show 3a2b1c8 -- src/services/OrderService.ts:51; the guard is present\n" +
+        "FINDING T1 | Unverifiable | release at src/lock.ts:41 schedules the wake-up on a later task; settle with: hold, queue A, release, call B, expect A first",
+    });
+    assert.equal(stderr.trim(), "", `Resolved/Unverifiable rows are the expected format, got: ${stderr}`);
+    console.log("OK — claim-verifier Resolved/Unverifiable rows: silent.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}
+
 // --- Test 8: low effort, short output — exempt from length check ------------
 
 {

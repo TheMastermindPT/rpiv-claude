@@ -346,7 +346,8 @@ Before writing the artifact, spawn ONE `claim-verifier` whose sole job is to gro
   1. `grep -n` the verbatim quote in the cited file. Absent → Falsified. Present at a different line → rewrite the citation to the actual line, then continue. Present at cited line → continue.
   2. If the finding makes a claim about behavior reachable elsewhere (consumer filters, dispatch registrations, peer aggregates, upstream guards, downstream sinks), Read those referenced files too. Do NOT trust the patch-only view.
   3. If the finding claims a state is "stranded" / a predicate is "false-promise" / a precondition is "missing" — construct a concrete 2–3 line reproducer trace: "caller at A:L invokes B:L with entity in state X; guard at C:L rejects; exit path would require D which the code does not provide." If you cannot construct it, the finding is Weakened.
-  4. If the finding was marked `resolved-by: <hash>` in Step 5, Read the resolving commit's changes on the reviewed branch (via `git show <hash> -- <file>`) and confirm the resolution is actually present at TIP.
+  4. If the finding was marked `resolved-by: <hash>` in Step 5, Read the resolving commit's changes on the reviewed branch (via `git show <hash> -- <file>`) and confirm the resolution is actually present at TIP. Present → Resolved.
+  5. If the finding says a test misses something, name the wrong implementation it implies and read the assertions of the tests in scope: does any of them fail on it?
 
   Return ONE tag per finding — output format:
 
@@ -355,16 +356,18 @@ Before writing the artifact, spawn ONE `claim-verifier` whose sole job is to gro
   Tags:
   - Verified — quote matches, claim is reproducible against the actual code, no contradiction found
   - Weakened — claim is partially true but narrower than stated (severity should drop one tier), OR it relies on a consumer-side assumption that the actual consumer does not make
-  - Falsified — quote does not match, OR the claimed behavior is contradicted by code the lens did not read (peer site, upstream guard, existing handler, resolution already applied)
+  - Falsified — quote does not match, OR the claimed behavior is contradicted by code the lens did not read (peer site, upstream guard, existing handler)
+  - Resolved — the defect was real and its fix is already present at TIP (a confirmed `resolved-by:` hash, or the cited code already changed)
+  - Unverifiable — after a trace was attempted, reading cannot settle the claim (runtime timing, load, rendering, environment); the justification names the run that would settle it
 
   Be explicit about contradictions. If finding A says "intentional by design" and finding B says "stranded state" about the same entity, mark the one whose claim the code does NOT support as Falsified and cite the contradicting line.
 
   Citation contract applies to every justification. No recommendations. No new findings.
   ```
 
-**Apply the verifier's tags** per §Verification tag semantics & application in `references/severity-model.md` (read at Step 5; re-open it if no longer in context): the tag-override check runs first, then the per-tag actions — Falsified removed + ID retired, Weakened demoted one tier + evidence rewritten, Verified carried through, and the Cross-Finding edge case re-evaluated.
+**Apply the verifier's tags** per §Verification tag semantics & application in `references/severity-model.md` (read at Step 5; re-open it if no longer in context): the tag-override check runs first, then the per-tag actions — Falsified removed + ID retired, Resolved removed as already fixed, Weakened demoted one tier + evidence rewritten, Unverifiable carried at its tier with the settling run in its `verifyNote`, Verified carried through, and the Cross-Finding edge case re-evaluated.
 
-Carry every verifier result into Step 7. Verified and Weakened findings remain active. Falsified findings remain in the store with `verify:"Falsified"` and `status:"withdrawn"`; rendering omits them from the body but preserves the audit count. Set review metadata to `status: ready` and `review_status: complete`; `merge_status` is derived from remaining critical + important findings.
+Carry every verifier result into Step 7. Verified, Weakened and Unverifiable findings remain active. Falsified and Resolved findings remain in the store with their `verify` value and `status:"withdrawn"`; rendering omits them from the body but preserves the audit counts, and only Falsified counts as a false positive. Set review metadata to `status: ready` and `review_status: complete`; `merge_status` is derived from remaining critical + important findings.
 
 **Do not skip this step** — claim verification runs in every lane; it is the only mechanism that stops confident-but-unread lens assertions from reaching the artifact.
 
@@ -381,7 +384,7 @@ Carry every verifier result into Step 7. Verified and Weakened findings remain a
    node "$RPIV_PLUGIN_ROOT/skills/_shared/store.mjs" init --review --artifact <review.md> --root . < <review-init.json>
    ```
 
-3. **Persist all verification outcomes atomically.** Pipe one JSON array to `add-many`; each record is `kind:"dr"`. Include Verified, Weakened, and Falsified records. Weakened/Falsified records carry the verifier's justification in `verifyNote`; Falsified records use `status:"withdrawn"` and remain auditable even though rendering omits them:
+3. **Persist all verification outcomes atomically.** Pipe one JSON array to `add-many`; each record is `kind:"dr"`. Include Verified, Weakened, Falsified, Resolved and Unverifiable records. Weakened, Falsified, Resolved and Unverifiable records carry the verifier's justification in `verifyNote`; Falsified and Resolved records use `status:"withdrawn"` and remain auditable even though rendering omits them:
    ```bash
    node "$RPIV_PLUGIN_ROOT/skills/_shared/store.mjs" add-many --artifact <review.md> --root . < <findings.json>
    ```
@@ -431,7 +434,7 @@ Review written to:
 
 Severity:     {C} critical · {I} important · {S} suggestions
 Lenses:       {Q} quality · {Se} security · {D} dependencies
-Verification: {V} verified · {W} weakened · {F} falsified (dropped)
+Verification: {V} verified · {W} weakened · {F} falsified (dropped) · {VR} resolved · {VU} unverifiable
 Advisor:      {adjudicated | inline}
 Spec:         {Spec Conformance status line}
 Review:       complete · Merge: {blocked | clear} · {B} blockers (🔴 + 🟡)
@@ -494,5 +497,5 @@ Ask follow-ups, or chain forward.
   - `diff-analyst` ×1 (Step 4a, gated) — predicate-trace (review-scope table).
   - `interaction-sweeper` ×1 (Step 4b, gated) — interaction sweep (`IX-<n>` blocks adopted as `I<n>` findings).
   - *(Step 4c, gated)* — gap-finder runs inline in the orchestrator (set arithmetic over coverage map; no agent).
-  - `claim-verifier` ×1 (Step 6, always) — verification pass (grounds every reconciled finding at its cited `file:line`; tags Verified / Weakened / Falsified; Falsified dropped, Weakened demoted one tier).
+  - `claim-verifier` ×1 (Step 6, always) — verification pass (grounds every reconciled finding at its cited `file:line`; tags Verified / Weakened / Falsified / Resolved / Unverifiable; Falsified and Resolved dropped, Weakened demoted one tier, Unverifiable kept with its settling run).
 

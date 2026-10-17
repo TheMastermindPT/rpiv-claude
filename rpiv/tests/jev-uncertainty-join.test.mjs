@@ -149,6 +149,11 @@ describe("inputs", () => {
 		expect(died({ status: "withdrawn" })).toBe(true);
 		expect(died({ verify: "Verified", status: "open" })).toBe(false);
 	});
+
+	it("a Resolved or Unverifiable finding did not die: it was real, or is still open", () => {
+		expect(died({ verify: "Resolved", status: "withdrawn" })).toBe(false);
+		expect(died({ verify: "Unverifiable", status: "open" })).toBe(false);
+	});
 });
 
 describe("join and report", () => {
