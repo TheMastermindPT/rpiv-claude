@@ -74,6 +74,45 @@ describe("lane rules", () => {
 		}
 	});
 
+	it("counts one intent round inside the cap and offers reopening the approach at the cap stop", () => {
+		for (const text of workflowTexts()) {
+			expect(text).toMatch(/Intent review gets at most 1 round, counted inside the 2-round cap/i);
+			expect(text).toMatch(/one more fix round[^.]*accept the post-round fixes as residual risk[^.]*pause[^.]*reopen the approach/i);
+			expect(text).toMatch(/skills\/_shared\/convergence\.mjs/);
+			expect(text).toMatch(/`convergence: reopen`[^.]*first choice/i);
+			expect(text).toMatch(/`convergence: broken:`[^.]*never[^.]*keep/i);
+			expect(text).toMatch(/\| Approach check \| no \| yes \| yes \|/);
+			expect(text).toMatch(/skills\/_shared\/slice-preflight\.mjs/);
+			expect(text).toMatch(/exit 2 is a broken gate that blocks/i);
+			expect(text).toMatch(/`preflight: not run \(no slice commit\)`, never a pass/i);
+			expect(text).toMatch(/--artifact <brief> --slice <slice-id> --base <base> --candidate <candidate>/);
+			expect(text).toMatch(/That round includes its confirming rerun/i);
+			expect(text).toMatch(/Reopening the approach starts a new 2-round cap/i);
+			expect(text).toMatch(/`convergence: not run \(one candidate round\)`/);
+		}
+		const revise = joined(readFileSync(new URL("../skills/revise/SKILL.md", import.meta.url), "utf8"));
+		expect(revise).toMatch(/within the shared \*\*Lanes\*\* round cap/i);
+		const dispatch = joined(readFileSync(dispatchPath, "utf8"));
+		expect(dispatch).toMatch(/an intent review that needed fixes counts as one of them; a clean intent review spends none/i);
+		expect(dispatch).toMatch(/start it with one of `fixed`, `dismissed`, `deferred`, `residual` or `follow-up`/);
+		expect(dispatch).toMatch(/skills\/_shared\/review-yield\.mjs/);
+		const plan = joined(readFileSync(new URL("../skills/plan/SKILL.md", import.meta.url), "utf8"));
+		expect(plan).toMatch(/Rerun intent review only when the projection splits, merges or reorders slices/i);
+		expect(plan).toMatch(/The rerun stays inside the slice's one intent round/i);
+		const design = joined(readFileSync(new URL("../skills/design/SKILL.md", import.meta.url), "utf8"));
+		expect(design).toMatch(/Approach check/);
+		expect(design).toMatch(/never blocks/i);
+		expect(design).toMatch(/Only Verified rows count as verified upstream facts/);
+		expect(design).toMatch(/rerun stays inside the one intent round/i);
+		const checkpoint = joined(readFileSync(new URL("../skills/_shared/dimension-sweep-and-checkpoint.md", import.meta.url), "utf8"));
+		for (const state of ["approach check: unavailable", "approach check: broken:", "approach check: not run (no rejected options)", "ungrounded: no citation"]) {
+			expect(checkpoint).toContain(state);
+		}
+		expect(checkpoint).toMatch(/a missing row is never read as Verified/i);
+		expect(checkpoint).toMatch(/`<decision>\.R<n>~RR<m>`/);
+		expect(checkpoint).toMatch(/duplicate or unknown row ID[^.]*malformed/i);
+	});
+
 	it("caps fix loops at two rounds, then asks the developer", () => {
 		const [claude, opencode] = workflowTexts();
 		for (const text of [claude, opencode]) {

@@ -14,7 +14,8 @@
 // `lane: broken: <detail>` on stderr and exits 2, never a lane.
 //
 // Importable: DEFAULT_LANE_THRESHOLDS, LANES, classifyLane, loadLaneThresholds, mergeLane,
-// laneInput (the files a CLI call judges, S8).
+// laneInput (the files a CLI call judges, S8), rangeSourceLines (slice-source size of a
+// range, for the convergence trigger).
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { lstatSync, readFileSync, statSync } from "node:fs";
@@ -616,6 +617,38 @@ const cliInput = (argv, cwd) => {
 export const laneInput = (argv, cwd) => {
 	const { options, files } = cliInput(argv, cwd);
 	return { mode: options.mode, files: files.map((file) => slashed(file.path)), slices: options.slices };
+};
+
+/** Files of `git diff --numstat -z -M`: like parseNumstat, except that a rename is
+    `added<TAB>deleted<TAB>` followed by its old and new paths as two NUL-ended fields;
+    it is counted once, under the new path, with only the lines that changed. */
+const parseNumstatRenames = (text) => {
+	const fields = text.split("\0");
+	const files = [];
+	for (let i = 0; i < fields.length; i++) {
+		if (!fields[i]) continue;
+		// Split on the first two tabs only: a path may hold a tab.
+		const [, added, deleted, inline] = /^([^\t]*)\t([^\t]*)\t(.*)$/s.exec(fields[i]) ?? [];
+		const path = inline || fields[(i += 2)];
+		files.push(added === "-" ? { path } : { path, added: Number(added), deleted: Number(deleted) });
+	}
+	return files;
+};
+
+/** Changed files of a revision range with rename detection, so a moved file is not
+    measured as a deletion plus an addition. */
+const renamedRangeFiles = (root, range) =>
+	parseNumstatRenames(gitIn(root, ["diff", "--numstat", "-z", "-M", "--end-of-options", range, "--"]));
+
+/** The slice-source size of a revision range: added plus deleted lines over the
+    changed files lane counts toward its size limits (generated, media, test and
+    fixture files left out). `lines` is null when a counted file has no line counts
+    (a binary file), never 0. Throws on a broken git call. */
+export const rangeSourceLines = (root, range) => {
+	const isSupport = (p) => isTest(slashed(p)) || isFixture(slashed(p));
+	const sized = renamedRangeFiles(root, range).filter((f) => !isDropped(f.path) && !isSupport(f.path));
+	if (!sized.every(isCounted)) return { lines: null, files: sized.length };
+	return { lines: sized.reduce((sum, f) => sum + f.added + f.deleted, 0), files: sized.length };
 };
 
 /** The CLI's stdout for `argv`, run in `cwd`; throws on a broken call. */

@@ -129,15 +129,44 @@ predecessor; the rigorous lane means the human-accepted one.
 | Code/coverage reviewer pair | no | no | yes |
 | Per-slice human acceptance | no | no | yes |
 | Deep-review depth | light | full | rigorous |
+| Approach check | no | yes | yes |
 
 A fast slice falls back to a linked worktree when the main working tree has
 uncommitted changes unrelated to the slice; never stash, move, or commit them.
 Run the deterministic checks (tests, types, lint, and CodeScene where available)
 before dispatching any candidate-mode review agent.
+Those checks include the slice preflight on a committed candidate, run from the
+folder the contract's paths are relative to:
+`node "$RPIV_PLUGIN_ROOT/skills/_shared/slice-preflight.mjs" --artifact <brief> --slice <slice-id> --base <base> --candidate <candidate> [--evidence <log>]...`.
+Exit 1 lists findings to fix before any reviewer runs (no fix round is spent),
+and exit 2 is a broken gate that blocks. A frozen snapshot has no slice commit,
+so record `preflight: not run (no slice commit)`, never a pass. Save its output
+as `<slice-id>-preflight.log` in the feature's evidence folder; that log joins
+`evidence_paths`, and its `unchecked:` lines go to the reviewers as tests nothing
+deterministic has checked.
 
 A fix round is one review of the candidate followed by its fixes, in any lane.
+Intent review gets at most 1 round, counted inside the 2-round cap: a slice
+whose intent review needed fixes has one candidate round left before the stop.
+That round includes its confirming rerun on the fixed brief, wherever the rerun
+happens (design, plan or revise); if the rerun still finds a blocker, stop with
+the cap choices below instead of starting another intent round.
+Reopening the approach starts a new 2-round cap for the revised contract; the
+earlier rounds stay in evidence.
 After 2 fix rounds, stop and ask the developer with `question`,
-presenting the open findings and the choices; never start a third round unasked.
+presenting the open findings and the choices: one more fix round, accept the
+post-round fixes as residual risk, pause, or reopen the approach (route the
+slice to revise with a drafted alternative, keeping all prior evidence); never
+start a third round unasked.
+Before asking, run `node "$RPIV_PLUGIN_ROOT/skills/_shared/convergence.mjs"`
+with one `--round <base>..<candidate>=<blockers>` per reviewed candidate (blocker
+rows are the pair's `blocker` rows plus slice-verifier `VIOLATION` entries). On
+`convergence: reopen`, offer reopening the approach as the first choice, with one
+alternative drafted from the open findings' mechanisms. A `convergence: broken:`
+answer is reported with its diagnostic and never treated as `keep`. With a
+single reviewed candidate (the intent round used the other), record
+`convergence: not run (one candidate round)`: neither keep nor broken, and the
+reopen choice is still offered, without the trigger behind it.
 The cap never turns unresolved findings or an incomplete inspection into
 acceptance. At that stop the developer may accept fixes made after the last round
 without a further review; record the unreviewed delta as residual risk.
@@ -185,7 +214,8 @@ source. Reuse this schema in `artifact-review-dispatch.md` and the three agents:
   frozen snapshot as described below. Omit only in intent mode.
 - `patch_path`: the parent's read-only Git evidence, a file holding the actual
   diff from `base_commit` to `candidate_revision` (for a frozen snapshot, its
-  complete patch). Required in candidate mode; reviewers have no Git of their own.
+  complete patch). Required in candidate mode: the one frozen view every reviewer
+  shares, even though reviewers can also read Git through their read-only allowlist.
 - `requirements`: the acceptance criteria, Behaviors and oracles in scope, as
   section references into `artifact_path` or the upstream FRD.
 - `evidence_paths`: observed commands/results and previous acceptance records.

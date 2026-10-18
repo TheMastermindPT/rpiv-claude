@@ -17,17 +17,55 @@ const MODEL_MAP = Object.freeze({
 	sonnet: "openai/gpt-5.6-luna",
 });
 
+// Denied in every allowlisted command (mirrors FORBIDDEN_IN_ALLOWLISTED in
+// .claude/hooks/_shared.mjs). OpenCode applies the last matching rule, so these
+// follow every allow.
+const BASH_DENY_TAIL = Object.freeze({
+	"*;*": "deny",
+	"*|*": "deny",
+	"*&*": "deny",
+	"*>*": "deny",
+	"*<*": "deny",
+	"*$*": "deny",
+	"*`*": "deny",
+	// Globs cannot read quotes the way bash does (`--'pre'` is `--pre`), so any quote or
+	// backslash is denied here; Claude Code's hook reads them quote-aware instead.
+	"*'*": "deny",
+	'*"*': "deny",
+	"*\\*": "deny",
+	"*--ext-diff*": "deny",
+	"*--output*": "deny",
+	"*--textconv*": "deny",
+	"*--pre*": "deny",
+	"*--search-zip*": "deny",
+	// `-z` alone or bundled (`-iz`); fails closed on any short-flag word holding a z.
+	"rg -*z*": "deny",
+	"rg * -*z*": "deny",
+});
+
+// Review agents read diffs, base files and history; they never write (mirrors the
+// Claude Code allowlist in .claude/hooks/_shared.mjs).
+const REVIEWER_BASH = Object.freeze({
+	"*": "deny",
+	"git diff *": "allow",
+	"git show *": "allow",
+	"git log *": "allow",
+	"git rev-parse *": "allow",
+	"git merge-base *": "allow",
+	"git ls-files *": "allow",
+	"git blame *": "allow",
+	"rg *": "allow",
+	...BASH_DENY_TAIL,
+});
+
 const BASH_PERMISSIONS = Object.freeze({
+	"artifact-code-reviewer": REVIEWER_BASH,
+	"artifact-coverage-reviewer": REVIEWER_BASH,
+	"slice-verifier": REVIEWER_BASH,
 	"claim-verifier": Object.freeze({
 		"*": "deny",
 		"git show *": "allow",
-		"*&&*": "deny",
-		"*;*": "deny",
-		"*|*": "deny",
-		"*>*": "deny",
-		"*--ext-diff*": "deny",
-		"*--output*": "deny",
-		"*--textconv*": "deny",
+		...BASH_DENY_TAIL,
 	}),
 	"precedent-locator": Object.freeze({
 		"*": "deny",
@@ -35,13 +73,7 @@ const BASH_PERMISSIONS = Object.freeze({
 		"git log *": "allow",
 		"git rev-parse *": "allow",
 		"git show *": "allow",
-		"*&&*": "deny",
-		"*;*": "deny",
-		"*|*": "deny",
-		"*>*": "deny",
-		"*--ext-diff*": "deny",
-		"*--output*": "deny",
-		"*--textconv*": "deny",
+		...BASH_DENY_TAIL,
 	}),
 });
 

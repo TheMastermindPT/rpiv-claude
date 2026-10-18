@@ -91,7 +91,7 @@ CRITICAL: Use EXACTLY this format. Per-file heading `### file/path.ext`; one pip
 - Don't emit narrative or summary — tables only.
 - Don't summarise the caller's preamble or orientation in the output.
 - Don't assign severity — reconciliation owns tiers.
-- Don't make architectural recommendations.
+- Don't make architectural recommendations — except in a row for a caller-supplied surface that asks for a simpler alternative; there, name only the existing alternative you opened, in the note.
 - Don't merge findings across surfaces — one match, one row.
 - Don't hedge — emit the observation cleanly with its evidence, or don't emit the row.
 - Don't emit a traced-surface row whose trace you did not actually walk — an untraced reachability claim is a hallucinated row.

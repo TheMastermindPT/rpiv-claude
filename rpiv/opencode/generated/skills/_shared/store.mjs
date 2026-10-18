@@ -69,6 +69,7 @@ export const AR_ENUMS = {
 // Verdicts that retire a finding (status "withdrawn"), and verdicts whose
 // justification must be stored in verifyNote.
 const RETIRING_VERDICTS = new Set(["Falsified", "Resolved"]);
+const ADVISORY_TIERS = new Set(["suggestion", "discuss"]);
 const NOTED_VERDICTS = new Set(["Weakened", "Falsified", "Resolved", "Unverifiable"]);
 // Back-compat union export — ENUMS.severity/blastRadius keep the pilot's keys (the
 // recommended vocabularies) so any importer of the flat ENUMS is unaffected.
@@ -191,16 +192,26 @@ function validateDrFields(f) {
 	if (DR_NEEDS_WHY.has(sev) && !isNonEmptyStr(f.why)) errors.push(`kind:dr ${sev} finding requires a why`);
 	if (DR_NEEDS_FIX.has(sev) && !isNonEmptyStr(f.fix)) errors.push(`kind:dr ${sev} finding requires a fix`);
 	if (invalidWhenPresent(f.alt, isNonEmptyStr)) errors.push("alt must be a non-empty string or null (kind:dr)");
-	if (!AR_ENUMS.verify.includes(f.verify)) errors.push(`verify must be one of ${AR_ENUMS.verify.join(" | ")} (got: ${f.verify})`);
-	if (RETIRING_VERDICTS.has(f.verify) && f.status !== "withdrawn") {
-		errors.push(`kind:dr ${f.verify} finding must have status withdrawn`);
-	} else if (!RETIRING_VERDICTS.has(f.verify) && f.status === "withdrawn") {
-		errors.push("kind:dr withdrawn finding must be Falsified or Resolved");
-	}
-	if (NOTED_VERDICTS.has(f.verify) && !isNonEmptyStr(f.verifyNote)) {
-		errors.push(`kind:dr ${f.verify} finding requires a verifyNote`);
-	}
+	errors.push(...verdictErrors(f), ...advisoryErrors(f));
 	return errors;
+}
+
+/** A DR verdict's rules: a known value, retiring verdicts and only they withdraw the
+    finding, and every non-Verified verdict keeps its justification. */
+function verdictErrors(f) {
+	if (!AR_ENUMS.verify.includes(f.verify)) return [`verify must be one of ${AR_ENUMS.verify.join(" | ")} (got: ${f.verify})`];
+	const errors = [];
+	const retiring = RETIRING_VERDICTS.has(f.verify);
+	if (retiring && f.status !== "withdrawn") errors.push(`kind:dr ${f.verify} finding must have status withdrawn`);
+	if (!retiring && f.status === "withdrawn") errors.push("kind:dr withdrawn finding must be Falsified or Resolved");
+	if (NOTED_VERDICTS.has(f.verify) && !isNonEmptyStr(f.verifyNote)) errors.push(`kind:dr ${f.verify} finding requires a verifyNote`);
+	return errors;
+}
+
+/** Deep-review surface 15 (simpler design) is advisory: it can never block a merge. */
+function advisoryErrors(f) {
+	const advisory = String(f.title ?? "").includes("[advisory]");
+	return advisory && !ADVISORY_TIERS.has(f.severity) ? ["kind:dr [advisory] finding must be suggestion or discuss"] : [];
 }
 
 /** Prose fields that RENDER as body text: an ambiguous bare-basename cite in any of

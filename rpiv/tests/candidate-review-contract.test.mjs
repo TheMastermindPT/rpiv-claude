@@ -25,13 +25,21 @@ describe("candidate reviewer contract", () => {
 				read: true,
 				grep: true,
 				glob: true,
+				bash: true,
 			});
-			expect(adapted.config.permission).toEqual({
-				edit: "deny",
-				bash: "deny",
-				task: "deny",
-				todowrite: "deny",
-			});
+			// Bash is read-only: diffs, base files and history, never a write.
+			const { bash, ...rest } = adapted.config.permission;
+			expect(rest).toEqual({ edit: "deny", task: "deny", todowrite: "deny" });
+			expect(bash["*"]).toBe("deny");
+			for (const read of ["git diff *", "git show *", "git log *", "rg *"]) expect(bash[read]).toBe("allow");
+			for (const write of ["*>*", "*<*", "*&*", "*--output*", "*--ext-diff*", "*--textconv*", "*--pre*", "*--search-zip*", "*;*", "*|*", "*$*", "*`*", "*'*", '*"*', "*\\*", "rg -*z*", "rg * -*z*"]) expect(bash[write]).toBe("deny");
+			// OpenCode applies the last matching rule, so every deny must follow every allow.
+			const keys = Object.keys(bash);
+			const last = (v) => Math.max(...keys.map((k, i) => (bash[k] === v && k !== "*" ? i : -1)));
+			const first = (v) => Math.min(...keys.map((k, i) => (bash[k] === v && k !== "*" ? i : Number.POSITIVE_INFINITY)));
+			expect(keys[0]).toBe("*");
+			expect(first("deny")).toBeGreaterThan(last("allow"));
+			expect(source).toMatch(/^tools: Read, Grep, Glob, Bash$/m);
 			for (const prompt of [source, adapted.config.prompt]) {
 				expect(prompt).toContain("workflow_path");
 				expect(prompt).toMatch(/absolute path/i);

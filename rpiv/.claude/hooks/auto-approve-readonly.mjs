@@ -3,7 +3,8 @@
 // Fires when a permission dialog would appear. If the request comes from
 // an rpiv subagent and the tool is read-only (Read, Glob, Grep, WebSearch,
 // WebFetch, or the context-mode analysis tools ctx_search/ctx_execute_file,
-// matched by their EXACT registered names), returns an "allow" decision so the
+// matched by their EXACT registered names — or a Bash command that keeps the agent's
+// read-only allowlist in _shared.mjs), returns an "allow" decision so the
 // user isn't bombarded with permission dialogs during parallel agent dispatch
 // (e.g., architectural-review dispatching 7 lens agents simultaneously).
 //
@@ -16,7 +17,7 @@
 
 import { readFileSync } from "node:fs";
 
-import { agentFilePath } from "./_shared.mjs";
+import { agentFilePath, keepsBashAllowlist, readAgentFrontmatter } from "./_shared.mjs";
 
 // Auto-approvable read-only tools, matched by EXACT name. The context-mode analysis
 // tools are listed under both their direct (mcp__context-mode__*) and plugin-scoped
@@ -33,6 +34,19 @@ const READONLY_TOOLS = new Set([
 
 const isReadonly = (toolName) => READONLY_TOOLS.has(toolName);
 
+/** A Bash call is read-only only for an agent whose definition grants Bash and whose
+    shared allowlist (_shared.mjs BASH_ALLOWLIST) the command keeps: the same check
+    enforce-readonly-agent denies by, so nothing it would deny is ever approved. */
+const isReadonlyBash = (agentType, input) => {
+  if (input.tool_name !== "Bash") return false;
+  const tools = String(readAgentFrontmatter(agentType)?.tools ?? "").split(",").map((t) => t.trim());
+  return tools.includes("Bash") && keepsBashAllowlist(agentType, String(input.tool_input?.command ?? ""));
+};
+
+/** True for a read-only tool, or a Bash call the agent's read-only allowlist keeps. */
+const isApprovable = (agentType, input) =>
+  Boolean(input.tool_name) && (isReadonly(input.tool_name) || isReadonlyBash(agentType, input));
+
 function main() {
   let input;
   try {
@@ -44,7 +58,6 @@ function main() {
   }
 
   const agentType = input.agent_type;
-  const toolName = input.tool_name;
 
   // Only auto-approve for rpiv subagents, not the main session
   if (!agentType) { process.exit(0); return; }
@@ -55,7 +68,7 @@ function main() {
   if (!agentFilePath(agentType)) { process.exit(0); return; }
 
   // Only auto-approve read-only tools
-  if (!toolName || !isReadonly(toolName)) { process.exit(0); return; }
+  if (!isApprovable(agentType, input)) { process.exit(0); return; }
 
   // Auto-approve: PermissionRequest answers with decision.behavior
   process.stdout.write(JSON.stringify({

@@ -262,3 +262,114 @@ const mkAgent = (repo, name, tools) => {
     console.log("OK — traversal agent_type: no fs probe, defers to normal flow.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
+
+// --- Test 17: review agents read git history and diffs, never write -------------
+{
+  const repo = mkdtempSync(join(tmpdir(), "era-reviewer-"));
+  try {
+    for (const name of ["artifact-code-reviewer", "artifact-coverage-reviewer", "slice-verifier"]) {
+      mkAgent(repo, name, "Read, Grep, Glob, Bash");
+      for (const command of [
+        "git diff d490024..65a10bb -- apps/harness/src",
+        "git show d490024:apps/harness/src/storage/permit-lock.ts",
+        "git log --oneline -5 -- src/lock.ts",
+        "git merge-base main HEAD",
+        "git ls-files src",
+        "git blame -L 10,20 src/lock.ts",
+        "git rev-parse HEAD",
+        "rg -n withPermits apps",
+      ]) {
+        const { decision } = runHook(repo, { agent_type: name, tool_name: "Bash", tool_input: { command } });
+        assert.equal(decision, null, `${name}: read allowed: ${command}`);
+      }
+      for (const command of [
+        "git diff > out.patch",
+        "git diff --output=out.patch",
+        "git show --ext-diff HEAD",
+        "git log -p --textconv",
+        "git -c core.pager=sh show HEAD",
+        "git checkout main",
+        "git diff && git commit -m x",
+        "node scripts/anything.mjs",
+        "rg --pre sh pattern .",
+        "rg --pre=sh pattern .",
+        "rg --search-zip pattern .",
+        "rg -z pattern .",
+        "git diff & touch pwned",
+        "git diff &touch pwned",
+        "git diff --no-index f <(touch pwned)",
+        "git show HEAD\nrm -rf x",
+        "git show $(rm -rf x)",
+        "git show `rm -rf x`",
+      ]) {
+        const { decision } = runHook(repo, { agent_type: name, tool_name: "Bash", tool_input: { command } });
+        assert.ok(decision, `${name}: must deny: ${command}`);
+        assert.equal(decision.hookSpecificOutput.permissionDecision, "deny");
+      }
+    }
+    console.log("OK — review agents: read-only git and rg allowed; writes, redirections and other commands denied.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}
+
+// --- Test 18: an allowed prefix never smuggles a write through a redirection ----
+{
+  const repo = mkdtempSync(join(tmpdir(), "era-redirect-"));
+  try {
+    mkAgent(repo, "precedent-locator", "Read, Grep, Glob, Bash");
+    mkAgent(repo, "claim-verifier", "Read, Grep, Glob, Bash");
+    for (const [agent, command] of [
+      ["precedent-locator", "git diff HEAD~1 > notes.txt"],
+      ["precedent-locator", "git log --output=log.txt"],
+      ["claim-verifier", "git show abc123 --ext-diff"],
+    ]) {
+      const { decision } = runHook(repo, { agent_type: agent, tool_name: "Bash", tool_input: { command } });
+      assert.ok(decision, `${agent}: must deny: ${command}`);
+      assert.equal(decision.hookSpecificOutput.permissionDecision, "deny");
+    }
+    console.log("OK — allowlisted agents: redirection, --output and --ext-diff denied.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}
+
+// --- Test 19: round-2 bypasses — the shell's reading, not the raw text, decides ----
+{
+  const repo = mkdtempSync(join(tmpdir(), "era-r2-"));
+  try {
+    for (const name of ["artifact-code-reviewer", "slice-verifier", "precedent-locator", "claim-verifier"])
+      mkAgent(repo, name, "Read, Grep, Glob, Bash");
+    const verdict = (agent, command) => runHook(repo, { agent_type: agent, tool_name: "Bash", tool_input: { command } }).decision;
+    for (const command of [
+      "git diff HEAD -- ->victim.txt",
+      "git log HEAD x=>out.txt",
+      "rg PWNED a.sh -->w.txt",
+      "rg --'pre'=sh x .",
+      "rg -'z' x .",
+      'rg --"search-zip" x',
+      "git diff --'output'=out HEAD",
+      "rg --pr\\e=sh x .",
+      "rg --p${x}re=sh x .",
+      "rg -iz x .",
+      'git log --format="$(id)"',
+    ]) {
+      const decision = verdict("slice-verifier", command);
+      assert.ok(decision, `must deny: ${command}`);
+      assert.equal(decision.hookSpecificOutput.permissionDecision, "deny");
+    }
+    for (const command of [
+      'node -e "require(\'child_process\').execSync(\'calc\')" structural.mjs',
+      "node evil.mjs structural.mjs",
+      "node --import=./evil.mjs structural.mjs",
+    ]) {
+      const decision = verdict("claim-verifier", command);
+      assert.ok(decision, `claim-verifier must deny: ${command}`);
+    }
+    for (const [agent, command] of [
+      ["slice-verifier", 'rg -n "=>" src'],
+      ["slice-verifier", "rg -n 'a|b' src"],
+      ["slice-verifier", "git log --format='%h %s' -3"],
+      ["claim-verifier", "node /plugin/skills/_shared/structural.mjs --tool ast-grep --pattern '$A => $B'"],
+    ]) {
+      assert.equal(verdict(agent, command), null, `${agent}: still allowed: ${command}`);
+    }
+    console.log("OK — round-2 bypasses denied; quoted searches and the structural helper still allowed.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}

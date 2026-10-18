@@ -96,7 +96,7 @@ Plan reads the lane from the brief or design frontmatter (`normal` when absent).
 
 1. Dispatch `slice-verifier` with `mode=intent`, the exact `artifact_path` identity, and each active `slice_id`. Review the projection against the canonical commitments and predecessor constraints.
 2. Dispatch independent `artifact-code-reviewer` and `artifact-coverage-reviewer` agents in parallel on the same stabilized intent. Read `$RPIV_PLUGIN_ROOT/skills/_shared/artifact-review-dispatch.md` for dispatch and persistence.
-3. Present verified findings for user triage. Fix scheduling faults here; change a contract only at its owner after explicitly reopening it. Re-record the body hash and rerun affected reviews after changes.
+3. Present verified findings for user triage. Fix scheduling faults here; change a contract only at its owner after explicitly reopening it. Re-record the body hash after changes. Rerun intent review only when the projection splits, merges or reorders slices (the old-to-new mapping changes); other scheduling edits that pass the shared append-only check keep the current review, as **Candidate Identity** allows. The rerun stays inside the slice's one intent round (**Lanes**), even when design or revise ran the first review; if the rerun still finds a blocker, stop with the cap choices instead of starting another intent round.
 4. Preserve distinct unavailable, broken, failed, and passed states. Filling a `resolution` cell does not waive missing review or a failed gate; apply **States And Evidence** before finalization.
 
 Done when required intent reviews pass on the current projection and authoritative references. This is not candidate-mode review or acceptance of code.
@@ -105,7 +105,7 @@ Done when required intent reviews pass on the current projection and authoritati
 
 1. Verify links and hashes, behavior-ID coverage, dependency mappings, review evidence, and both phase counts.
 2. Preserve standing-decision ownership upstream. If an explicitly reopened decision is opted into promotion, read `$RPIV_PLUGIN_ROOT/skills/_shared/decision-ledger.md`; promote at its owner only with `scope: standing`, `key`, and `rule`, within authorized scope. Do not duplicate or automatically promote inherited decisions.
-3. Run `node "$RPIV_PLUGIN_ROOT/skills/_shared/validate-artifact.mjs" <plan-path> --finalizing --stamp`. Fix faults and rerun; retain `content_hash` as the final body identity. A body change during finalization that the shared append-only check does not allow reopens approval. Re-record the body hash and re-review any changed intent.
+3. Run `node "$RPIV_PLUGIN_ROOT/skills/_shared/validate-artifact.mjs" <plan-path> --finalizing --stamp`. Fix faults and rerun; retain `content_hash` as the final body identity. A body change during finalization that the shared append-only check does not allow reopens approval. Re-record the body hash, and re-review only a change to the slice split, merge or order.
 4. Flip `status: in-review` to `status: ready` only after required intent gates and finalization lint pass. Readiness describes reviewed planning intent; build approval and execution gates remain separate.
 5. Present the path, next slice, executable/unresolved counts, review outcome, and deferred scope. Never imply automatic commits, pushes, or merges.
 
@@ -115,7 +115,7 @@ Done when required intent reviews pass on the current projection and authoritati
 
 ## Follow-Ups
 
-Update the projection in place for scheduling changes, keeping behavior IDs stable. Update `last_updated`, `last_updated_by`, and `last_updated_note`; reopen affected commitments and approval records, recompute counts, and repeat review/finalization.
+Update the projection in place for scheduling changes, keeping behavior IDs stable. Update `last_updated`, `last_updated_by`, and `last_updated_note`; reopen affected commitments and approval records, recompute counts, and repeat finalization; repeat intent review only when the change splits, merges or reorders slices.
 
 Verify upstream staleness before replacing references. A new canonical hash invalidates dependent evidence until reviewed. Use `/rpiv:revise` for surgical plan changes when requested; a plan is never permission to weaken TDD or rewrite an oracle to fit a candidate.
 

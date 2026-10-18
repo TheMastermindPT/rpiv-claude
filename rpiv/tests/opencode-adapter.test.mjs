@@ -73,35 +73,46 @@ describe("OpenCode agent adapter", () => {
 			"utf8",
 		);
 
-		expect(
+		// Exactly these reads are allowed; every write, chain, redirection, substitution
+		// and program-running option is denied after them (OpenCode's last match wins).
+		const DENIED = [
+			"*;*",
+			"*|*",
+			"*&*",
+			"*>*",
+			"*<*",
+			"*$*",
+			"*`*",
+			"*'*",
+			'*"*',
+			"*\\*",
+			"rg -*z*",
+			"rg * -*z*",
+			"*--ext-diff*",
+			"*--output*",
+			"*--textconv*",
+			"*--pre*",
+			"*--search-zip*",
+		];
+		const expectReadOnly = (bash, allowed) => {
+			const keys = Object.keys(bash);
+			expect(keys[0]).toBe("*");
+			expect(bash["*"]).toBe("deny");
+			expect(keys.filter((k) => bash[k] === "allow")).toEqual(allowed);
+			for (const k of DENIED) expect(bash[k], k).toBe("deny");
+			const lastAllow = Math.max(...allowed.map((k) => keys.indexOf(k)));
+			expect(
+				keys.findIndex((k, i) => i > 0 && bash[k] === "deny"),
+			).toBeGreaterThan(lastAllow);
+		};
+		expectReadOnly(
 			adaptAgent(claimSource, "claim-verifier").config.permission.bash,
-		).toEqual({
-			"*": "deny",
-			"git show *": "allow",
-			"*&&*": "deny",
-			"*;*": "deny",
-			"*|*": "deny",
-			"*>*": "deny",
-			"*--ext-diff*": "deny",
-			"*--output*": "deny",
-			"*--textconv*": "deny",
-		});
-		expect(
+			["git show *"],
+		);
+		expectReadOnly(
 			adaptAgent(precedentSource, "precedent-locator").config.permission.bash,
-		).toEqual({
-			"*": "deny",
-			"git diff *": "allow",
-			"git log *": "allow",
-			"git rev-parse *": "allow",
-			"git show *": "allow",
-			"*&&*": "deny",
-			"*;*": "deny",
-			"*|*": "deny",
-			"*>*": "deny",
-			"*--ext-diff*": "deny",
-			"*--output*": "deny",
-			"*--textconv*": "deny",
-		});
+			["git diff *", "git log *", "git rev-parse *", "git show *"],
+		);
 	});
 
 	it("prefers Exa in the generated web researcher", () => {

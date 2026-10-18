@@ -94,9 +94,40 @@ Use the grounded-questions-one-at-a-time pattern. Use a **❓ Question:** prefix
 **Scope adjustment** (e.g., "skip the UI, backend only", "include tests"):
 - Record in Developer Context. Adjust scope.
 
+## Approach Check (design, normal and rigorous lanes)
+
+The checkpoint is where a better approach can still change the outcome, so test the
+reasons behind the alternatives this design turned down. Run the check only when a
+Decision rejects an option or the developer settled a genuine ambiguity; inherited
+decisions are checked too (their evidence is re-grounded, the developer is not
+re-asked). Otherwise record `approach check: not run (no rejected options)`.
+
+1. **Build the claims in memory.** Give each rejected option an ID `<decision>.R<n>`
+   and resolve its cited evidence to `path:line` plus a verbatim quote (a `research §N`
+   cite is the `### N.` heading of the parent research artifact). Give each accepted
+   residual risk (`Residual risk:`, "accepted residual risk", in Decisions, Verification
+   Notes or Developer Context, upstream included) an ID `RR<n>`. A rejection with no
+   cite, or a cite that does not resolve (an external log, a missing section), is shown
+   as `ungrounded: no citation` or `unresolvable cite: <token>`, never as verified.
+2. **Ask two questions as claims**, in one `claim-verifier` dispatch:
+   - (i) per rejection: "Rejecting `<option>` is grounded: `<cited evidence>` shows `<the risk it defends against>`."
+   - (ii) per rejection and accepted residual that share a seam or owner, with the ID `<decision>.R<n>~RR<m>` (for example `D2.R1~RR1`) so every claim has a unique ID: "The risk defended by rejecting `<option>` is no easier to exploit than accepted residual `<RR>`." When no residual shares a seam, write one line: `(ii): no accepted residual shares a seam`.
+   Verified means the rejection stands; Weakened shows a narrower reason; Falsified or
+   Resolved (the reason no longer holds, or its risk is already fixed) and an
+   inconsistent pair are reasons to reopen; Unverifiable carries the run that settles it.
+3. **Show the rows in the summary below**, at most 5, with "+N more" pointing at the
+   saved file. The check never blocks and adds no stop: its stale rejections are
+   evidence for the "adjust a decision" answer the developer already has.
+4. **Keep the states distinct.** No dispatch possible: `approach check: unavailable`.
+   Fewer or malformed rows than claims: `approach check: broken: <n> of <m> rows` — a
+   missing row is never read as Verified, and a duplicate or unknown row ID counts as malformed. Save the claims and the raw `FINDING` rows to
+   `.rpiv/evidence/<design-slug>_<topic>/approach-check.md` (the design's own evidence
+   folder; the design body does not exist yet) and reference that path from Developer
+   Context.
+
 **After next-slice blockers are resolved**, present a brief summary (under 15
-lines), including remaining deferred questions rather than implying all future
-work is decided:
+lines plus at most 5 approach-check rows), including remaining deferred questions
+rather than implying all future work is decided:
 
 ```
 Design: {feature name}
@@ -109,6 +140,8 @@ Decisions:
 
 Scope: {what's in} | Not building: {what's out}
 Files: {N} new, {M} modified
+
+Approach check (advisory): {rows like "D2.R1 Verified — research §5 still shows barging (path:line)", or the not-run / unavailable / broken state}
 ```
 
 Use `question` when approval is not already explicit. Ask whether to

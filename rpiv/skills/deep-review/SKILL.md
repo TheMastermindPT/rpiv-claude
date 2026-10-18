@@ -183,9 +183,9 @@ Dispatch all shard lenses in one parallel wave. Spawn one Quality `diff-analyst`
 
 **Self-check before dispatching Wave-2**: read your outgoing Agent prompt. If it contains any content from Wave-1 agent RESULTS beyond the Discovery Map you synthesised, strip it. The Discovery Map is the contract; raw outputs are reconciliation-only.
 
-**Quality lens** (`diff-analyst`) — **file-oriented**. Before dispatching: Read `references/quality-surfaces.md`, strip its leading `<!-- -->` comment, and substitute the remainder for the `{{QUALITY_SURFACES}}` line below — the dispatched prompt must carry the full 14-surface block verbatim, never the placeholder:
+**Quality lens** (`diff-analyst`) — **file-oriented**. Before dispatching: Read `references/quality-surfaces.md`, strip its leading `<!-- -->` comment, and substitute the remainder for the `{{QUALITY_SURFACES}}` line below — the dispatched prompt must carry the full 15-surface block verbatim, never the placeholder:
   ```
-  Analyse changes file by file. For each file in this shard patch, read its diff region (the patch has `-U30`, or `-U10` only when size-bounded), form a mental model of the file and its change, then apply the 14 surfaces below. Cite `file:line` with verbatim line text for every finding. Omit findings not traceable to a diff-touched change. No severity.
+  Analyse changes file by file. For each file in this shard patch, read its diff region (the patch has `-U30`, or `-U10` only when size-bounded), form a mental model of the file and its change, then apply the 15 surfaces below. Cite `file:line` with verbatim line text for every finding. Omit findings not traceable to a diff-touched change. No severity.
 
   **File order strategy**: prioritise by role tag — `[boundary]` files first (security-sensitive), then `[persistence]` (durable-state surfaces), then `[hub]` (blast-radius amplifiers), then `[code]`, then `[config]`, then `[test]` last. Within the same tag, prioritise files with the largest diffs.
 
@@ -421,6 +421,7 @@ Carry every verifier result into Step 7. Verified, Weakened and Unverifiable fin
 - `[precedent-weighted]` — severity bumped by Step 5's precedent follow-up weighting.
 - `[cascade: <kind>]` — severity set by Step 5's cascade-detection triple (`stranded-state`, `duplicate-processing`, `contradictory-predicate-deadlock`).
 - `[subsumed-by <ID>]` — root-cause subsumed by another finding but kept because its specific evidence is independently actionable.
+- `[advisory]` — surface 15 (simpler design); capped at 🔵/💭, never counts toward `merge_status`, and the store rejects it at a higher tier.
 
 **Section-omission rules**: omit entirely (no empty placeholders) when —
 - `## 💭 Discussion` — no 💭 findings.

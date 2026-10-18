@@ -53,6 +53,7 @@ Read and apply `$RPIV_PLUGIN_ROOT/skills/_shared/dimension-sweep-and-checkpoint.
 - Ask grounded questions about material ambiguities that affect the next slice. Record the answer and its consequences in Developer Context and Decisions.
 - Put distant questions in Deferred Work with their decision trigger. They need not be settled to review today's intent.
 - Confirm the architectural approach, exclusions, public seam, and next behavior with the user before stabilizing the brief.
+- In normal and rigorous (**Lanes**), when a decision rejects an option or settles a genuine ambiguity, run the **Approach check** in `dimension-sweep-and-checkpoint.md` and show its rows at this same confirmation. It never blocks and adds no stop: a rejection it finds stale is evidence for the "adjust a decision" answer. In rigorous, pass its rows to the intent review below with each row's state unchanged. Only Verified rows count as verified upstream facts; Weakened, Falsified, Resolved, Unverifiable, ungrounded and broken rows are open questions for that review.
 
 Done when the next slice has no unresolved material ambiguity; the rest is an honest roadmap rather than invented certainty.
 
@@ -92,7 +93,7 @@ Intent review runs only in the rigorous lane (**Lanes** table). In fast and norm
 
 1. Dispatch `slice-verifier` with `mode=intent`, the exact `artifact_path` identity, and the next `slice_id`. It reviews commitments, dependencies, base guarantees, atomicity, and verified upstream facts, not hypothetical implementation correctness. Seam and oracle sufficiency (an observable Expected red, an oracle that fails on a wrong implementation) belongs to `artifact-coverage-reviewer` in step 2, so an oracle edit reruns that review.
 2. Dispatch independent `artifact-code-reviewer` and `artifact-coverage-reviewer` agents in parallel on that same intent identity. Read `$RPIV_PLUGIN_ROOT/skills/_shared/artifact-review-dispatch.md` for dispatch and evidence persistence.
-3. Present verified findings to the user. Fix gaps or explicitly reopen the affected commitment; then re-record the body hash and rerun affected reviews. A changed contract cannot inherit approval for the old hash.
+3. Present verified findings to the user. Fix gaps or explicitly reopen the affected commitment; then re-record the body hash and rerun affected reviews (the rerun stays inside the one intent round **Lanes** allows). A changed contract cannot inherit approval for the old hash.
 4. Apply **States And Evidence**: unavailable, broken, failed, and passed remain distinct. Missing review or a blocker cannot be waived by filling a `resolution` cell. Hold the gate until the required evidence supports it.
 
 Done when the required intent reviews pass on the stabilized brief and the user confirms that intent; on that approval, save its approved copy per the shared workflow. Candidate-mode review belongs to the later real source revision.

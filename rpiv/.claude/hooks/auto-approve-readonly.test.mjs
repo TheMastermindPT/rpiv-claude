@@ -182,3 +182,26 @@ const assertAllow = (decision, label) => {
     console.log("OK — traversal agent_type: declines to auto-approve (fail-safe).");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
+
+// --- Test 20: a review agent's read-only git call is approved, nothing else -----
+{
+  const repo = mkdtempSync(join(tmpdir(), "aar-reviewer-bash-"));
+  try {
+    mkdirSync(join(repo, "agents"), { recursive: true });
+    writeFileSync(join(repo, "agents", "artifact-code-reviewer.md"), `---\ntools: Read, Grep, Glob, Bash\n---\n`);
+    writeFileSync(join(repo, "agents", "test-agent.md"), `---\ntools: Read, Bash\n---\n`);
+    const ok = runHook(repo, { agent_type: "artifact-code-reviewer", tool_name: "Bash", tool_input: { command: "git show d490024:src/lock.ts" } });
+    assertAllow(ok.decision, "reviewer git show");
+    for (const [agent, command] of [
+      ["artifact-code-reviewer", "git diff > out.patch"],
+      ["artifact-code-reviewer", "git checkout main"],
+      ["artifact-code-reviewer", "rg --pre sh pattern ."],
+      ["artifact-code-reviewer", "git diff & touch pwned"],
+      ["test-agent", "git show HEAD"],
+    ]) {
+      const { decision } = runHook(repo, { agent_type: agent, tool_name: "Bash", tool_input: { command } });
+      assert.equal(decision, null, `${agent}: not auto-approved: ${command}`);
+    }
+    console.log("OK — reviewer read-only git: approved; writes and agents without an allowlist: normal flow.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}

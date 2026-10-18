@@ -1321,6 +1321,15 @@ it("P8.1 DR validation arm — I/Q/S/G lens, per-tier why/fix, capitalized verif
 	assert.ok(validateFinding({ ...DR_C, verify: "verified" }, new Map(), new Set()).includes("verify must be one of Verified | Weakened | Falsified | Resolved | Unverifiable (got: verified)"), "lowercase verify rejected");
 });
 
+// P8.1c An [advisory] finding (deep-review surface 15) can never block a merge.
+it("P8.1c an [advisory] finding must be suggestion or discuss.", () => {
+	const v = (f) => validateFinding({ ...DR_C, ...f }, new Map(), new Set());
+	assert.ok(v({ title: "[advisory] reuse fetchJson", severity: "important" }).includes("kind:dr [advisory] finding must be suggestion or discuss"), "advisory important is rejected");
+	assert.ok(v({ title: "[advisory] reuse fetchJson", severity: "critical" }).includes("kind:dr [advisory] finding must be suggestion or discuss"), "advisory critical is rejected");
+	assert.ok(!v({ title: "[advisory] reuse fetchJson", severity: "suggestion", fix: "f" }).some((e) => e.includes("[advisory]")), "advisory suggestion passes");
+	assert.ok(!v({ title: "[advisory] reuse fetchJson", severity: "discuss", why: "w" }).some((e) => e.includes("[advisory]")), "advisory discuss passes");
+});
+
 // P8.1b Resolved retires a real-but-fixed finding; Unverifiable keeps it active with the run that settles it.
 it("P8.1b Resolved is withdrawn with a note; Unverifiable stays active with a note.", () => {
 	const v = (f) => validateFinding({ ...DR_C, ...f }, new Map(), new Set());

@@ -53,7 +53,7 @@ Update `last_updated`, `last_updated_by`, and a concise `last_updated_note` wher
 
 ## 4. Review and Resume
 
-Where the slice's lane requires intent review (shared **Lanes**), dispatch independent read-only intent review with `mode=intent` and the exact input fields in the shared workflow. Freeze and verify the revised contract identity: the revised document's body hash and the referenced document hashes. Resolve findings and repeat review after edits. Capture human approval of the exact revised contract, not merely permission to edit the document, and save its approved copy per the shared workflow.
+Where the slice's lane requires intent review (shared **Lanes**), dispatch independent read-only intent review with `mode=intent` and the exact input fields in the shared workflow. Freeze and verify the revised contract identity: the revised document's body hash and the referenced document hashes. Resolve findings and repeat review after edits, within the shared **Lanes** round cap (the confirming rerun is part of the one intent round; a reopened approach starts a new cap). Capture human approval of the exact revised contract, not merely permission to edit the document, and save its approved copy per the shared workflow.
 
 Before finalizing a revised artifact, use `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <absolute-artifact-path> --root <repository-path> --finalizing --stamp` after reconciling the old identity and preserving history. Verify the new `content_hash` without `--stamp`. This document hash is not a candidate approval and does not replace the human approval of the revised contract.
 

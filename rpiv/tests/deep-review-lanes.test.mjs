@@ -42,6 +42,19 @@ describe("deep-review depth by lane", () => {
 		expect.soft(trailing[0]).toContain("Reconciliation Notes");
 	});
 
+	it("the advisory simpler-design surface is counted, capped and never blocks", () => {
+		const surfaces = read("skills/deep-review/references/quality-surfaces.md");
+		const numbered = [...surfaces.matchAll(/^\s+(\d{1,2})\.\s+\*\*/gm)].map((m) => Number(m[1]));
+		expect(numbered).toEqual(Array.from({ length: numbered.length }, (_, i) => i + 1));
+		expect(numbered.at(-1)).toBe(15);
+		expect(deepReview).toContain(`full ${numbered.length}-surface block`);
+		expect(deepReview).toContain(`apply the ${numbered.length} surfaces`);
+		expect(surfaces).toMatch(/^\s+15\. \*\*Simpler design\*\* \(advisory;[^)]*\) — .*This surface never blocks\.$/m);
+		expect(read("skills/deep-review/references/severity-model.md")).toMatch(/Simpler design\* \(surface 15\)[^\n]*Never 🟡 or 🔴/);
+		expect(deepReview).toMatch(/`\[advisory\]` — surface 15/);
+		expect(read("agents/diff-analyst.md")).toMatch(/except in a row for a caller-supplied surface that asks for a simpler alternative/);
+	});
+
 	it("the fast lane runs gates, one Quality agent per shard and the claim-verifier", () => {
 		for (const phrase of [
 			/In the fast lane \(light\), dispatch no `integration-scanner`, no `precedent-locator`, no Security lens, no sink-candidate sweep and no Wave-3 agent/i,
