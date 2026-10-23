@@ -290,6 +290,30 @@ describe("parseTestContract edge cases (review round 1)", () => {
 		expect(parsed.behaviors[0].hasTest).toBe(false);
 	});
 
+	it("reads a Behavior header with a parenthetical or its colon inside the bold", async () => {
+		const { parseTestContract } = await import(
+			"../skills/_shared/slice-preflight.mjs"
+		);
+		const parsed = parseTestContract(
+			one(
+				[
+					"- **Behavior B1 (X-1):** paren, colon inside",
+					"  - Test: `t1` -> `p.test.mjs`",
+					"- **Behavior B2:** colon inside",
+					"  - Test: `t2` -> `p.test.mjs`",
+					"- **Behavior B3 (finding (nested) id)**: paren, colon outside",
+					"  - Test: `t3` -> `p.test.mjs`",
+				].join("\n"),
+			),
+			"s",
+		);
+		expect(parsed.behaviors.map((b) => [b.id, b.tests[0]?.title])).toEqual([
+			["B1", "t1"],
+			["B2", "t2"],
+			["B3", "t3"],
+		]);
+	});
+
 	it("an empty Test line is no Test line", async () => {
 		const { parseTestContract } = await import(
 			"../skills/_shared/slice-preflight.mjs"
@@ -379,7 +403,7 @@ describe("slice-preflight CLI edge cases (review round 1)", () => {
 			put(
 				f.outside,
 				"empty.md",
-				"### Test Contract: s\n\n- **Behavior B1:** misformatted\n",
+				"### Test Contract: s\n\n- Behavior B1: misformatted, no bold\n",
 			);
 			for (const [args, detail] of [
 				[

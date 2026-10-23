@@ -22,7 +22,10 @@ import { parseFences } from "./fences.mjs";
 import { isMain } from "./is-main.mjs";
 
 const HEADING = /^(#{2,6})\s+(.*)$/;
-const BEHAVIOR = /^- \*\*Behavior ([A-Za-z0-9-]+)\*\*: (.+)$/;
+// `**Behavior B1**: x`, also with a parenthetical after the ID and/or the colon inside
+// the bold (`**Behavior B1 (X-1):** x`), as briefs from the design skill write it.
+const BEHAVIOR =
+	/^- \*\*Behavior ([A-Za-z0-9-]+)(?: \(.*?\))?(?:\*\*:|:\*\*) (.+)$/;
 const EXEMPT = /^- \*\*TDD-exempt\*\*/;
 const SUB = /^ {2}- (Test|Expected red[^:]*):\s*(.*)$/;
 const RED_AT = /\bat `?([0-9a-f]{7,40})`?/gi;
