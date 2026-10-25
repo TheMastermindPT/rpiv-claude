@@ -23,11 +23,15 @@ import { isMain } from "./is-main.mjs";
 
 const HEADING = /^(#{2,6})\s+(.*)$/;
 // `**Behavior B1**: x`, also with a parenthetical after the ID and/or the colon inside
-// the bold (`**Behavior B1 (X-1):** x`), as briefs from the design skill write it.
+// the bold (`**Behavior B1 (X-1):** x`), as briefs from the design skill write it. The
+// word Behavior may be left out (`**B1: x**`) when the ID holds a digit, so a bold
+// label such as `**Note:**` is never read as a behavior.
 const BEHAVIOR =
-	/^- \*\*Behavior ([A-Za-z0-9-]+)(?: \(.*?\))?(?:\*\*:|:\*\*) (.+)$/;
+	/^- \*\*(?:Behavior ([A-Za-z0-9-]+)|([A-Za-z]+-?\d[A-Za-z0-9-]*))(?: \(.*?\))?(?:\*\*:|:\*\*|:) (.+)$/;
 const EXEMPT = /^- \*\*TDD-exempt\*\*/;
-const SUB = /^ {2}- (Test|Expected red[^:]*):\s*(.*)$/;
+const SUB = /^ {2}- (Tests?|Expected red[^:]*):\s*(.*)$/;
+// One item of the nested list under a `Tests:` sub-bullet, read as its own Test clause.
+const NESTED = /^ {4,}- (.*)$/;
 const RED_AT = /\bat `?([0-9a-f]{7,40})`?/gi;
 const PIN = /^none\s*[—-]\s*pin\b/i;
 
@@ -165,10 +169,21 @@ const newBehavior = (id, line) => ({
 });
 
 /** Apply one contract-section line to the behaviors and TDD exemptions read so far. */
-const readLine = (parsed, { line, no }) => {
+const readLine = (parsed, entry) => {
+	const nested = parsed.listing && NESTED.exec(entry.line);
+	if (nested) {
+		addTests(parsed.current, nested[1], entry.no);
+		return;
+	}
+	parsed.listing = false;
+	readEntry(parsed, entry);
+};
+
+/** A behavior header, TDD exemption, or Test / Expected-red sub-bullet. */
+const readEntry = (parsed, { line, no }) => {
 	const b = BEHAVIOR.exec(line);
 	if (b) {
-		parsed.current = newBehavior(b[1], no);
+		parsed.current = newBehavior(b[1] ?? b[2], no);
 		parsed.behaviors.push(parsed.current);
 		return;
 	}
@@ -179,15 +194,16 @@ const readLine = (parsed, { line, no }) => {
 	}
 	const sub = SUB.exec(line);
 	if (!sub || !parsed.current) return;
-	if (sub[1] === "Test") addTests(parsed.current, sub[2], no);
-	else addRed(parsed.current, sub[2]);
+	if (!sub[1].startsWith("Test")) return addRed(parsed.current, sub[2]);
+	addTests(parsed.current, sub[2], no);
+	parsed.listing = true;
 };
 
 /** The Test Contract of `sliceId` in brief `text`:
     `{ behaviors: [{ id, line, tests: [{ title, path }], unchecked: [{ line, text }],
     pin, redAt: [sha] }], exempt: [line] }`. Throws on a missing or duplicate section. */
 export const parseTestContract = (text, sliceId) => {
-	const parsed = { behaviors: [], exempt: [], current: null };
+	const parsed = { behaviors: [], exempt: [], current: null, listing: false };
 	for (const entry of contractSection(unfenced(text), sliceId))
 		readLine(parsed, entry);
 	return { behaviors: parsed.behaviors, exempt: parsed.exempt };

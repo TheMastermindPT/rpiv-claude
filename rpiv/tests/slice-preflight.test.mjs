@@ -314,6 +314,67 @@ describe("parseTestContract edge cases (review round 1)", () => {
 		]);
 	});
 
+	it("reads a bare-ID Behavior header and never a bold label without a digit", async () => {
+		const { parseTestContract } = await import(
+			"../skills/_shared/slice-preflight.mjs"
+		);
+		const parsed = parseTestContract(
+			one(
+				[
+					"- **B1: whole header in bold.**",
+					"  - Test: `t1` -> `p.test.mjs`",
+					"- **S3-B2:** colon inside",
+					"  - Test: `t2` -> `p.test.mjs`",
+					"- **B3 (X-1)**: paren, colon outside",
+					"  - Test: `t3` -> `p.test.mjs`",
+					"- **Note: not a behavior.**",
+				].join("\n"),
+			),
+			"s",
+		);
+		expect(parsed.behaviors.map((b) => [b.id, b.tests[0]?.title])).toEqual([
+			["B1", "t1"],
+			["S3-B2", "t2"],
+			["B3", "t3"],
+		]);
+	});
+
+	it("reads a plural Tests line and the nested list under it, never a list under another label", async () => {
+		const { parseTestContract } = await import(
+			"../skills/_shared/slice-preflight.mjs"
+		);
+		const parsed = parseTestContract(
+			one(
+				[
+					"- **Behavior B1 (pin):** x",
+					"  - Tests:",
+					"    - `t1` in `a.test.ts`",
+					"    - `t2` -> `b.test.ts`",
+					"    - not a test",
+					"  - Oracle:",
+					"    - `t3` in `c.test.ts`",
+					"- **Behavior B2**: y",
+					"  - Tests: `t4` -> `d.test.ts`",
+				].join("\n"),
+			),
+			"s",
+		);
+		expect(
+			parsed.behaviors.map((b) => [b.id, b.hasTest, b.tests, b.unchecked]),
+		).toEqual([
+			[
+				"B1",
+				true,
+				[
+					{ title: "t1", path: "a.test.ts" },
+					{ title: "t2", path: "b.test.ts" },
+				],
+				[{ line: 7, text: "not a test" }],
+			],
+			["B2", true, [{ title: "t4", path: "d.test.ts" }], []],
+		]);
+	});
+
 	it("an empty Test line is no Test line", async () => {
 		const { parseTestContract } = await import(
 			"../skills/_shared/slice-preflight.mjs"
