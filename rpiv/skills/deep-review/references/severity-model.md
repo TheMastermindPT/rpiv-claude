@@ -1,4 +1,4 @@
-<!-- Read by code-review SKILL.md at Step 5 start; §Verification tag semantics & application also governs Step 6. Content moved verbatim from SKILL.md — apply as written, do not reword. -->
+<!-- Read by deep-review SKILL.md at Step 5 start; §Verification tag semantics & application also governs Step 6. Content moved verbatim from SKILL.md — apply as written, do not reword. -->
 
 # Severity & verification model
 
@@ -7,7 +7,7 @@
    - **Quality** — 🔴 traced flow contradiction (dropped error path, missing validation on a sink, null-deref); 🟡 blast-radius × complexity-delta (hot path + new allocation, ABI change without migration); 🔵 pattern divergence with nearby template; 💭 composite-lesson architecture concern.
      - *CodeScene regression* (Discovery Map `Code Health` regressions) — 🟡 by default for a failed quality gate, `degraded` verdict, or score drop on an in-scope file; 🔴 when the map's `declared threshold` exists and the file's new score breaches it (cite the threshold's `file:line` in the evidence). A file already below the threshold at base whose score did not drop stays 🟡 (pre-existing debt, not this diff's regression). An improved/stable file is never a finding.
      - *Test quality* (surface 4) — 🟡 a test that cannot fail, or mocks the unit under test, while it is the only coverage of risk-bearing behaviour (false coverage); 🔵 otherwise, and for private-internal assertions beside a real behavioural assertion.
-     - *Documented standards* (surface 14) — 🟡 violation of a `hard` rule or a standing decision; 🔵 a `preference` rule. Never 🔴 on the rule alone — reach 🔴 only through a traced defect another surface proves. Every such finding's evidence names the rule id and its `source-file:line`.
+     - *Documented standards* (surface 14) — 🟡 violation of a `hard` rule or a standing decision; 🔵 a `preference` rule. Never 🔴 on the rule alone — reach 🔴 only through a traced defect another surface proves. Every such finding's evidence names the rule id and its `source-file:line`.
      - *Simpler design* (surface 15) — 🔵 when the cited alternative already exists in the repo or its installed dependencies; 💭 for a simplification with no existing alternative. Never 🟡 or 🔴: precedent weighting, cascade detection and the interaction-sweep promotion never raise it, and it is never an interaction constituent. Mark its title line `[advisory]`.
    - **Security** — 🔴 concrete user-reachable source→sink trace via Discovery Map auth-boundary (reject hits without explicit trace; the trace must CITE the boundary/guard site's `file:line` so Step 6 can re-walk the guard claim — an uncited boundary promotion is unverifiable and stays 🟡); 🟡 concrete crypto issue (weak hash in auth/integrity role, non-constant-time compare, hardcoded key material); 🔵 divergence from a secure example in the same file; 💭 architectural question.
    - **Dependencies** — 🔴 Critical/High CVE in touched dep OR lockstep-contract violation; 🟡 Moderate CVE, outdated major with migration path, license incompatibility; 🔵 minor/transitive drift; 💭 architectural dep question.
@@ -17,7 +17,13 @@
    - **Precedents** → compile into `## Precedents` (table: `hash | subject | 30d-follow-ups | note`), composite lessons below. **Severity weighting** (skipped in the fast lane, where Precedents is not dispatched and `## Precedents` is omitted): for each current finding, count precedent commits touching the same symbol/file that had ≥1 follow-up fix within 30 days. If count ≥ 2, bump the finding one severity tier (🔵→🟡, 🟡→🔴); cap at 🔴. Record the bump by annotating the finding's title line `[precedent-weighted]` — do NOT emit a separate reconciliation section.
    - **CodeScene business case** (tool-gated, when the `codescene_code_health_refactoring_business_case` tool is available AND the Discovery Map has per-file CodeScene scores): for each 🔴 finding whose cited file has a Discovery Map score < 9.0, run `codescene_code_health_refactoring_business_case` on that file. The tool returns optimistic/pessimistic ROI estimates (% development speed improvement, % defect reduction). Annotate the finding's title line `[roi: +{X}% velocity, −{Y}% defects]` and cite the estimates in the artifact's `## Recommendation` table. This does NOT bump severity — ROI is corroboration, not a tier change — but it transforms "fix before merge" from a hand-wavy opinion into a data-driven argument. If the tool is unavailable, skip silently — no degradation.
 
-## Cascade detection (Step 5.5)
+## Design-accepted findings (Step 5.2)
+
+   - A finding whose flagged behavior an approved design decision explicitly chooses (the decision names the same entity, flow or trade-off, not merely the same area) moves to 💭 and its title line gets `[accepted-by-<ID>]`. This applies to every lens, Interaction-sweep included — the one exception to its no-💭 rule. Precedent weighting, cascade detection and interaction promotion never raise it again.
+   - It keeps its severity when the code diverges from what the decision chose (the decision says X, the code does Y): that divergence is the defect. Cite the decision's line in the evidence either way.
+   - Record each move in `## Reconciliation Notes` as `<finding ID> → 💭 (accepted by <ID>: <one line>)`, so the reader can contest the decision rather than the finding.
+
+## Cascade detection (Step 5.4)
 
    - **Cascade detection** (load-bearing): before emitting severities, scan findings for these triples and emit a 🔴 Cross-Finding bullet if any fires —
        • *{entity reaches state X} + {no event on that transition} + {consumer filter excludes X}* = **silent stranded state**

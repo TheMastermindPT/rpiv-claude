@@ -15,7 +15,7 @@ metadata:
 
 # Code Review
 
-Review changes across **Quality**, **Security**, **Dependencies** lenses with optional advisor adjudication. Valid scopes: `commit` | `staged` | `working` | hash | `A..B` | PR branch. **Empty scope defaults to feature-branch-vs-default-branch first-parent review** (default branch auto-detected; see Step 1).
+Review changes across **Quality**, **Security**, **Dependencies** lenses. Valid scopes: `commit` | `staged` | `working` | hash | `A..B` | PR branch. **Empty scope defaults to feature-branch-vs-default-branch first-parent review** (default branch auto-detected; see Step 1).
 
 ## Input
 
@@ -168,7 +168,7 @@ Dispatch all shard lenses in one parallel wave. Spawn one Quality `diff-analyst`
 - precedent-locator output
 - Dependencies lens output
 - CVE lens output
-- any prior Wave-2 or Wave-3 output from earlier runs in the same Pi session
+- any prior Wave-2 or Wave-3 output from earlier runs in the same session
 
 **Why this is load-bearing**: summary context induces *narrativisation* — the agent treats the preamble as "the orchestrator already framed the findings, I just classify them" instead of independently reading the patch file. Observed failure signatures when this is violated: Quality drops from ~40 tool calls / 3M tokens / 500s to ~5-15 tool calls / 300k tokens / 100-200s, and returns hallucinated findings (invented statuses, mis-cited line numbers, claims that files are "missing from patch" when they are in fact present).
 
@@ -309,24 +309,20 @@ No agent dispatch. Compute inline while 4a / 4b run:
 
 1. **Compile and classify evidence** per lens — Read `references/severity-model.md` NOW (it also governs Step 6's tag application). Apply its per-lens classification (Quality, Security, Dependencies, Interaction-sweep, Gap-finder, Peer-mirror — including the peer-mirror severity bumps), its Precedents compilation + severity-weighting rule, and the tool-gated CodeScene business-case annotation.
 
-2. **Probe advisor availability** — attempt a probe by checking whether `advisor` is in the active tool set (main-thread visibility). If yes, proceed to advisor path; otherwise take the inline path.
+2. **Weigh approved design decisions before severity.** When a `design=<design-path>` token was passed, Read that artifact's `Decisions` section now and list each settled decision as `<ID> — <one line>`. A finding whose flagged behavior a decision explicitly chooses moves to 💭 with the title annotation `[accepted-by-<ID>]` (§Design-accepted findings in `references/severity-model.md`); it keeps its severity when the code diverges from what the decision chose. Without a `design=` token, record `design decisions: not supplied` under `## Reconciliation Notes` and skip this check — never guess a design from the branch.
 
-3. **Advisor path** (when advisor is active):
-   - Print a main-thread `## Pre-Adjudication Findings` block first — the advisor reads `getBranch()`, so evidence must be flushed before the call.
-   - Call `advisor()` (zero-param). If it returns usable prose, paste it verbatim as a blockquote at the top of `## Recommendation` and skip the inline path. Otherwise fall through.
-
-4. **Inline path** (advisor unavailable or errored):
+3. **Adjudicate inline:**
    - Run a dimension-sweep modeled on `skills/_shared/dimension-sweep-and-checkpoint.md` (Step 3): Data model / API surface / Integration / Scope / Verification / Performance.
    - For every finding, ask: does another finding contradict this severity given the Discovery Map? If yes, note the tension.
    - Record every severity move as a title-line annotation on the affected finding (`[precedent-weighted]`, `[cascade: <kind>]`, `[subsumed-by <ID>]`). No standalone reconciliation section.
 
-5. **Emit the reconciled severity map** — authoritative severity per finding, carrying the advisor's guidance when present. Keep the per-pass grouping (do NOT tag each finding with its originating lens in prose; the H2 it sits under is the tag).
-   - Interaction findings carry `I<n>` IDs and appear under the severity H2 that matches their final tier (`## 🔴 Critical`, `## 🟡 Important`). The old `### Cross-Finding Interactions` sub-heading is retired — severity is the top-level grouping.
+4. **Emit the reconciled severity map** — authoritative severity per finding. Keep the per-pass grouping (do NOT tag each finding with its originating lens in prose; the H2 it sits under is the tag).
+   - Interaction findings carry `I<n>` IDs and appear under the severity H2 that matches their final tier (`## 🔴 Critical`, `## 🟡 Important`, or `## 💭 Discussion` when design-accepted). The old `### Cross-Finding Interactions` sub-heading is retired — severity is the top-level grouping.
    - When an interaction finding subsumes a local finding at the root-cause level, keep the local finding only if its evidence is independently actionable; annotate the local finding's title line `[subsumed-by I<n>]`.
    - Distinct structural defects MUST remain distinct findings even when related. Specifically: a *stranded state* (entity reaches X, no exit path) and a *false-promise predicate* (TRUE branch promises unreachable behavior) are separate defects even when they arise in the same subsystem — do NOT collapse them. Collapse only when the narrative, fix, and evidence locations are identical.
    - **Cascade detection** (load-bearing — missed cascades are the biggest historical quality regression): apply §Cascade detection from `references/severity-model.md` verbatim — scan findings for its three defect triples and emit a 🔴 Cross-Finding bullet if any fires; it also mandates the prior-review cascade-reproduction check.
 
-6. **Scope assist (optional, Jev-backed — pre-existing re-badge detection).** When `scripts/jev-pair-judge.mjs` exists under `$RPIV_PLUGIN_ROOT/scripts/` and a TypeSafe key is configured, run one advisory pass over the reconciled map: write `findings.json` (per finding: `id`, `file`, `line`, `verbatim`, `note`) and invoke
+5. **Scope assist (optional, Jev-backed — pre-existing re-badge detection).** When `scripts/jev-pair-judge.mjs` exists under `$RPIV_PLUGIN_ROOT/scripts/` and a TypeSafe key is configured, run one advisory pass over the reconciled map: write `findings.json` (per finding: `id`, `file`, `line`, `verbatim`, `note`) and invoke
    ```bash
    node "$RPIV_PLUGIN_ROOT/scripts/jev-pair-judge.mjs" --check scope --findings findings.json --patches "<review-patch>" --out scope.json
    ```
@@ -421,9 +417,7 @@ Carry every verifier result into Step 7. Verified, Weakened and Unverifiable fin
 - `## Precedents` — precedent-locator returned no precedents.
 - `## Spec Conformance` is NEVER omitted: it always carries its status line (§Spec Conformance in `references/gated-prompts.md`), and its rows are unranked — they never become findings.
 
-**What is NOT emitted to the artifact**: verification outcomes in prose (frontmatter `verification` string is the only channel), advisor availability / dispatch path / tool failures (skill trace, not review content), `last_updated` / `last_updated_by` (git mtime + git author carry this for a write-once artifact).
-
-**Advisor prose**, when advisor ran, is pasted verbatim as a blockquote at the top of `## Recommendation`, not as a standalone section.
+**What is NOT emitted to the artifact**: verification outcomes in prose (frontmatter `verification` string is the only channel), dispatch path / tool failures (skill trace, not review content), `last_updated` / `last_updated_by` (git mtime + git author carry this for a write-once artifact).
 
 **Template shape**: `templates/review.md` (house pattern per `.rpiv/guidance/skills/architecture.md:66` — `templates/` subfolder, runtime-read, never inlined) is the byte-shape reference `renderReview` matches — the store now PRODUCES this shape rather than a hand fill-and-strip. `renderReview` emits the frontmatter, the post-heading summary line, the Legend, Top Blockers, and the per-tier severity sections (degrade-per-tier finding blocks); the section-omission rules are intrinsic to it (a tier/section with no findings is not emitted). The trailing analysis sections (Pattern/Impact/Precedents/Recommendation) ride the envelope's `review.sections` (pre-rendered by this skill, with the same omission rules applied) and are appended verbatim.
 
@@ -476,7 +470,7 @@ Ask follow-ups, or chain forward.
 ## Important Notes
 
 - **Read-only review**: deep-review stays read-only — it never edits code; findings become fix commits on the branch through `/rpiv:implement <review-path>`, one fix round at most before the developer decides (Step 8). Fix rounds are counted from the fix commits on the branch: the commits carrying a `Review:` trailer, as `git log --format='%(trailers:key=Review,valueonly)' <range>` prints them (Step 8).
-- **Frontmatter**: `allowed-tools` is intentionally omitted — the skill inherits `task`, `question`, `advisor`, `Write`, `web_search`, `todo`. Do NOT re-add the line.
+- **Frontmatter**: `allowed-tools` is intentionally omitted — the skill inherits `task`, `question`, `Write`, `web_search`, `todo`. Do NOT re-add the line.
 - **Security-lens precision stance**: prefer false negatives. Evidence must carry `confidence ≥ 8`; 🔴 requires an explicit source→sink trace. Missing hardening without a traced sink is NOT a finding.
 - **Load-bearing invariants** (each is enforced in the cited step; this is the do-not-break checklist):
   - Wave-1 fans out at T=0; integration-scanner (not in the fast lane) + peer-mirror gate Wave-2; Precedents is a **hard gate on Step 5** (drives severity weighting; not dispatched in the fast lane); Dependencies + CVE soft-gate Step 5 (Steps 2, 5).
@@ -484,7 +478,6 @@ Ask follow-ups, or chain forward.
   - Manifest shards cover every reviewable file exactly once. Their patches use `-U30` (never `-U0`; `-U10` fallback >1MB); findings organise per file, not per hunk (Step 1, lenses).
   - **Wave-2 isolation**: lens prompts carry Discovery Map + one shard patch path ONLY — no Wave-1 raw output. Violation → narrativisation (~5× speedup, hallucinated/mis-cited findings) (Step 3).
   - Step 6 verification runs between reconcile and write — never skip it; it also validates `resolved-by` via `git merge-base --is-ancestor` (Step 6).
-  - Advisor: emit `## Pre-Adjudication Findings` to the main branch before `advisor()` (reads `getBranch()`, main-thread-only, `advisor.ts:336`); probe availability first (`advisor.ts:463-472`); NEVER call from a sub-agent or parse its prose (paste verbatim).
   - PRESERVE severity emoji + frontmatter keys verbatim — `artifacts-locator`/`artifacts-analyzer` grep these. Scope is orchestrator-owned; agent contracts (`claim-verifier.md:11-30`) stay scope-blind.
   - **References are load-bearing**: read each `references/*.md` at the step its pointer names (see Conventions); the placeholders `{{QUALITY_SURFACES}}` / `{{SECURITY_SINKS}}` must NEVER reach a dispatched prompt — substitute the reference file's contents verbatim (leading `<!-- -->` comment stripped), never a paraphrase (Steps 2, 3, 5).
 - **Row-only specialists** at narrativisation-prone sites: `diff-analyst` (Wave-2 Q+S + Step 4a predicate-trace — judgment tier, row output), `diff-auditor` (Wave-1 sink sweep — mechanical recall tier), `peer-comparator` (Wave-1 PM), `interaction-sweeper` (Step 4b — IX-block output), `claim-verifier` (Step 6). See `.rpiv/guidance/agents/architecture.md`.

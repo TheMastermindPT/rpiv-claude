@@ -308,11 +308,11 @@ Before the Verify Gate, fact-check the lens narratives against the deterministic
 When the gate fires:
 1. **Assemble the record** from the Step 2 ground truth (save the linter's JSON output):
    ```bash
-   node "$RPIV_PLUGIN_ROOT/scripts/jev-rel-audit.mjs" --depcruise <depcruise.json> [--astgrep <astgrep.json>] --out relations.json
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/jev-rel-audit.mjs" --depcruise <depcruise.json> [--astgrep <astgrep.json>] --out relations.json
    ```
 2. **Write findings.json** from the candidate slop findings (per finding: `id`, `file`, `line`, `verbatim`, `note`), then audit:
    ```bash
-   node "$RPIV_PLUGIN_ROOT/scripts/jev-rel-audit.mjs" --findings findings.json --record relations.json --out rel-audit.json
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/jev-rel-audit.mjs" --findings findings.json --record relations.json --out rel-audit.json
    ```
 3. **Digest the verdicts** — `no-record` findings pass untouched (asymmetry of evidence: a silent record is never proof of a wrong claim). `RECORD-CONTRADICTION` and `UNCERTAIN` lines accompany the findings into Step 6's Verify Gate as advisory context; they never demote or drop a finding by themselves, and the claim-verifier remains the authority.
 

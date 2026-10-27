@@ -155,8 +155,6 @@ Annotate    [precedent-weighted]   [cascade: <kind>]   [subsumed-by <ID>]
 
 ## Recommendation
 
-> (advisor prose pasted verbatim here as a blockquote when advisor ran; omit the blockquote otherwise)
-
 | # | ID     | Action                      | Alt / Note        |
 | - | ------ | --------------------------- | ----------------- |
 | 1 | {ID}   | {action, one sentence}      | {alternative}     |
