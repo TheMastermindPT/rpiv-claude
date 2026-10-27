@@ -43,7 +43,7 @@ Every Wave-2 agent prompt contains EXACTLY `Known Context:` + the Discovery Map 
 
 - **Citation contract** (every Wave-2+ agent, every step): every `file:line` citation MUST carry the literal line text in backticks — `file:line — \`<verbatim line>\` — <note>`. Omit any finding whose line you cannot quote verbatim.
 - **Severity**: 🔴 fix before merge · 🟡 fix soon · 🔵 nice-to-have · 💭 discuss.
-- **References** (progressive disclosure — read each file at the step its pointer names, never earlier; resolve paths against this skill's directory, i.e. `$RPIV_PLUGIN_ROOT/skills/deep-review/`): `references/pre-wave-gates.md` (Step 2, after preflight) · `references/discovery-map.md` (Step 2, at map synthesis) · `references/quality-surfaces.md` + `references/security-sinks.md` (Step 3, at Wave-2 dispatch — inlined verbatim into the lens prompts) · `references/gated-prompts.md` (Waves 1–3, only when the owning gate fires) · `references/severity-model.md` (Step 5 start; also governs Step 6 tag application).
+- **References** (progressive disclosure — read each file at the step its pointer names, never earlier; resolve paths against this skill's directory, i.e. `$RPIV_PLUGIN_ROOT/skills/deep-review/`): `references/pre-wave-gates.md` (Step 2, after preflight) · `references/discovery-map.md` (Step 2, at map synthesis) · `references/quality-surfaces.md` + `references/security-sinks.md` (Step 3, at Wave-2 dispatch — inlined verbatim into the lens prompts) · `references/gated-prompts.md` (Waves 1–3, when the owning gate fires — read it BEFORE composing the dispatch message that sends that agent, never after) · `references/severity-model.md` (Step 5 start; also governs Step 6 tag application).
 
 ## Steps
 
@@ -112,6 +112,8 @@ node "$RPIV_PLUGIN_ROOT/skills/deep-review/_helpers/review-preflight.mjs" "."
 
 Read `references/pre-wave-gates.md` NOW and execute only gates supported by this snapshot and repository configuration. Digest successful results into the Discovery Map. Record each unavailable capability once; its matching lens retains full coverage. Structured diagnostics from non-zero commands are findings, while empty/malformed output is an unavailable gate.
 
+**Build the gated prompts first.** Before writing the dispatch message, check the Wave-1 gates (`PeerPairs` non-empty, `ManifestChanged`, opengrep unavailable, linked issue resolved). If any fired, Read `references/gated-prompts.md` NOW and build each fired agent's full prompt from its fenced block, substituting its `{placeholders}`. Never send an task call whose prompt still holds a `{placeholder}`, the word `PLACEHOLDER`, or a "Read §…" instruction in place of the prompt text.
+
 Spawn ALL of the following in parallel at T=0 in a **single message with multiple task tool calls**. Do NOT wait for integration-scanner before dispatching precedents / dependencies / CVE — they do not consume Discovery-Map output, only `ChangedFiles` and the manifest diff (both orchestrator-produced in Step 1).
 
 **task — Integration map:**
@@ -124,7 +126,7 @@ Spawn ALL of the following in parallel at T=0 in a **single message with multipl
 
 **task — CVE / advisory** (only when `ManifestChanged`): use the `web-search-researcher` prompt defined in Step 3 below — dispatch here. Input it needs: parsed `name@version` list from the manifest diff (orchestrator extracts and hands over directly).
 
-**task — Peer-Mirror** (only when `len(PeerPairs) > 0`): `subagent_type: rpiv:peer-comparator`. Input: the `PeerPairs` list verbatim, nothing else — no Discovery Map (it isn't built yet and the agent doesn't need it), no patch path (the work is peer-vs-new entity comparison, not diff analysis). Prompt: Read §Peer-Mirror in `references/gated-prompts.md` and use its fenced block byte-for-byte, substituting only the `{list of (new_file, peer_file) tuples}` placeholder.
+**task — Peer-Mirror** (only when `len(PeerPairs) > 0`): `subagent_type: rpiv:peer-comparator`. Input: the `PeerPairs` list verbatim, nothing else — no Discovery Map (it isn't built yet and the agent doesn't need it), no patch path (the work is peer-vs-new entity comparison, not diff analysis). Prompt: the §Peer-Mirror fenced block you built above, byte-for-byte, with only the `{list of (new_file, peer_file) tuples}` placeholder substituted.
 
 **task — Spec conformance** (optional — only when the branch/PR links an external issue and `gh` resolves it): Read §Spec Conformance in `references/gated-prompts.md` before dispatch — it owns issue resolution, the always-emitted status line (no issue / `gh` unavailable / `gh` failed are distinct), and the prompt. Its output is a separate, unranked artifact section; it never enters the Discovery Map, Wave-2, or the severity map.
 
@@ -402,7 +404,7 @@ Carry every verifier result into Step 7. Verified, Weakened and Unverifiable fin
    ```
    `renderReview` derives severity, verification, blockers, and merge status from the persisted records.
 
-6. **Run the citation-path gate:** `node "$RPIV_PLUGIN_ROOT/skills/_shared/check-citations.mjs" <review.md> --root .`. For each ambiguous basename, update the corresponding finding's repo-relative evidence path through `store update`, rerender, and repeat until the gate exits 0. Never hand-edit the rendered body.
+6. **Run the citation-path gate:** `node "$RPIV_PLUGIN_ROOT/skills/_shared/check-citations.mjs" <review.md> --root .`. For each ambiguous basename in a finding, update its repo-relative evidence path through `store update`; for one in a trailing section (Reconciliation Notes, Impact, ...), pipe the full corrected sections array through `store update --sections --artifact <review.md> < {"sections":[...]}`. Rerender and repeat until the gate exits 0. Never hand-edit the rendered body.
 
 **Finding IDs**: lens-prefix + ordinal, stable across severity moves. `I` = interaction, `Q` = quality, `S` = security, `G` = gap. Ordinals never renumber — if a finding is dropped by Step 6, its ID is retired, not reused.
 

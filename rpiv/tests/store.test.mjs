@@ -15,6 +15,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { validateFinding, toSarif, initStore, initReviewStore, addFinding, addFindings, updateFinding, diffReview, queryClusters, renderClusters, renderDrFinding, renderDrift, renderReview, renderFinding, renderTally, spliceRegion, sentinelsFor, renderInto, loadStore, deriveStorePath, checkEvidenceGrounding, finalizeReview } from "../skills/_shared/store.mjs";
+import { withReviewSections } from "../skills/_shared/review-sections.mjs";
 // Namespace import so the Phase-7 dispatch tests read `store.dispatch` — before the
 // extraction lands that is `undefined` (a clean runtime "not a function" red), not an
 // ESM load-time error that would break the whole suite.
@@ -1568,6 +1569,29 @@ it("dispatch init --review and add-many", () => {
 	assert.match(batch.out, /^added 2 finding\(s\)/);
 	assert.equal(runDispatch(["add-many", "--artifact", fx.artifact, "--root", fx.root], "{}").code, 1);
 	assert.equal(runDispatch(["add-many", "--artifact", fx.artifact], "").code, 2);
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
+it("P3.3c withReviewSections replaces only the DR trailing sections.", () => {
+	const store = { schema: 1, review: { scope: "main..HEAD", sections: ["## Impact\n\nTouches `schema.ts`."] }, findings: [{ id: "C1" }] };
+	const fixed = ["## Impact\n\nTouches `src/db/schema.ts`."];
+	const updated = withReviewSections(store, fixed);
+	assert.deepEqual(updated, { ...store, review: { ...store.review, sections: fixed } }, "only review.sections changes");
+	assert.deepEqual(store.review.sections[0].includes("`schema.ts`"), true, "input store is not mutated");
+	assert.throws(() => withReviewSections(store, ["ok", 3]), /sections must be a string array/);
+	assert.throws(() => withReviewSections(store, "## Impact"), /sections must be a string array/);
+	assert.throws(() => withReviewSections({ schema: 1, layers: [], findings: [] }, []), /not a DR review store/);
+});
+
+it("dispatch update --sections", () => {
+	const fx = mkLayersFixture();
+	runDispatch(["init", "--review", "--artifact", fx.artifact], JSON.stringify({ target: "main..HEAD", review: { sections: [] } }));
+	const r = runDispatch(["update", "--sections", "--artifact", fx.artifact], JSON.stringify({ sections: ["## Impact\n\nNone."] }));
+	assert.equal(r.code, 0, r.err);
+	assert.match(r.out, /^updated DR review sections \(1\)/);
+	assert.deepEqual(loadStore(fx.artifact).store.review.sections, ["## Impact\n\nNone."], "the new sections are persisted");
+	assert.equal(runDispatch(["update", "--sections", "--artifact", fx.artifact], "").code, 2, "empty stdin -> 2");
+	assert.equal(runDispatch(["update", "--sections", "--artifact", fx.artifact], JSON.stringify({ sections: [1] })).code, 1, "bad sections -> 1");
 	rmSync(fx.tmp, { recursive: true, force: true });
 });
 

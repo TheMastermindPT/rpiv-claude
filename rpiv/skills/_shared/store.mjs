@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { basenameCounts, citesIn, fileIndex, isAmbiguous, resolveInIndex } from "./citation-grammar.mjs";
 import { splitFrontmatter } from "./frontmatter.mjs";
 import { isMain } from "./is-main.mjs";
+import { withReviewSections } from "./review-sections.mjs";
 import { extOf } from "./source-vocab.mjs";
 import { stampArtifact, validateArtifact } from "./validate-artifact.mjs";
 
@@ -1367,6 +1368,7 @@ const USAGE = [
 	"           (content fields — title, anchor, what, why, evidence, remediation, severity, effort,",
 	"            blastRadius, class, symbol, entityStage, crossCutTag, dependsOn, fix, alt — each",
 	"            REPLACES the stored value and the record re-validates like add)",
+	"       store.mjs update --sections --artifact <review.md> < {sections:[string, ...]}.json   (DR trailing sections)",
 	"       store.mjs diff --artifact <review.md> --prior <prior-review.json> [--root <dir>]",
 	"       store.mjs query --clusters --artifact <review.md>",
 	"       store.mjs query --plan --artifact <review.md>",
@@ -1422,8 +1424,19 @@ function cmdAdd(ctx) {
 	return 0;
 }
 
+function cmdUpdateSections(ctx) {
+	const raw = stdinOrNull(ctx, "store update --sections: empty stdin — pipe { sections: [string, ...] } JSON\n");
+	if (raw === null) return 2;
+	const { storePath, store } = loadStore(resolve(ctx.artifact));
+	const updated = withReviewSections(store, JSON.parse(raw).sections);
+	saveStore(storePath, updated);
+	ctx.stdout.write(`updated DR review sections (${updated.review.sections.length}) -> ${storePath}\n`);
+	return 0;
+}
+
 function cmdUpdate(ctx) {
 	if (!ctx.artifact) return usageExit(ctx);
+	if (ctx.rest.includes("--sections")) return cmdUpdateSections(ctx);
 	const raw = stdinOrNull(ctx, "store update: empty stdin — pipe { id, verify?, verifyNote?, status?, statusNote?, <content fields> } JSON\n");
 	if (raw === null) return 2;
 	const rec = updateFinding(resolve(ctx.artifact), ctx.root, JSON.parse(raw));

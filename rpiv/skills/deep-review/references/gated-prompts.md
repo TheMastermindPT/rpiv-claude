@@ -1,4 +1,4 @@
-<!-- Read by code-review SKILL.md ONLY when the owning gate fires (progressive disclosure — never read this file at skill start). Each § holds a dispatch-prompt body moved verbatim from SKILL.md: use the applicable fenced block byte-for-byte as the agent prompt, substituting only the {placeholders}. Do not reword. -->
+<!-- Read by deep-review SKILL.md ONLY when the owning gate fires (progressive disclosure — never read this file at skill start), and BEFORE the dispatch message that sends the gated agent: Wave-1 gates fire at Step 2, so read it there, ahead of the T=0 dispatch. Each § holds a dispatch-prompt body moved verbatim from SKILL.md: use the applicable fenced block byte-for-byte as the agent prompt, substituting only the {placeholders}. Do not reword. -->
 
 # Gated dispatch prompts
 
