@@ -189,6 +189,42 @@ describe("lane CLI (S5)", () => {
 	);
 
 	it(
+		"grades a migration by what its diff adds",
+		() => {
+			const repo = newRepo();
+			const commit = (message) => {
+				git(repo, "add", "-A");
+				git(repo, "commit", "-q", "-m", message);
+				return git(repo, "rev-parse", "HEAD");
+			};
+			put(repo, "src/a.ts", "a\n");
+			const c0 = commit("c0");
+			put(repo, "db/migrations/0002_idx.sql", "CREATE INDEX idx_a ON a (b);\n");
+			const c1 = commit("c1");
+			put(repo, "db/migrations/0003_drop.sql", "DROP TABLE a;\n");
+			const c2 = commit("c2");
+			const range = (from, to) => runLane(["--range", `${from}..${to}`, "--slices", "1"], { cwd: repo });
+			expect.soft(range(c0, c1), "additive range").toEqual(
+				printed(
+					"lane: normal",
+					"reason: additive migration: db/migrations/0002_idx.sql",
+					"reason: weak sensitive word: migration (db/migrations/0002_idx.sql)",
+					"diagnostic: hub signal unavailable",
+				),
+			);
+			expect.soft(range(c1, c2).stdout, "risky range").toMatch(
+				/^lane: rigorous\nreason: migration: db\/migrations\/0003_drop\.sql\n/,
+			);
+			// An untracked migration is judged from its content on disk.
+			put(repo, "db/migrations/0004_idx.sql", "CREATE INDEX idx_b ON a (c);\n");
+			expect.soft(runLane(["--working", "--slices", "1"], { cwd: repo }).stdout, "untracked additive").toMatch(/^lane: normal\n/);
+			put(repo, "db/migrations/0004_idx.sql", "UPDATE a SET c = 1;\n");
+			expect.soft(runLane(["--working", "--slices", "1"], { cwd: repo }).stdout, "untracked risky").toMatch(/^lane: rigorous\n/);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
 		"classifies a commit range from numstat",
 		() => {
 			const repo = newRepo();

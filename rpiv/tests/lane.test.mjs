@@ -208,6 +208,24 @@ describe("lane classifier (S4)", () => {
 		}
 	});
 
+	it("grades an additive migration normal and anything else rigorous", () => {
+		const migration = (kind) =>
+			classify([{ path: "db/migrations/002.sql", added: 1, deleted: 0, ...(kind && { migration: kind }) }]);
+		expect(migration("additive")).toMatchObject({
+			lane: "normal",
+			reasons: [
+				"additive migration: db/migrations/002.sql",
+				"weak sensitive word: migration (db/migrations/002.sql)",
+			],
+		});
+		for (const kind of ["risky", undefined]) {
+			expect.soft(migration(kind).lane, String(kind)).toBe("rigorous");
+		}
+		expect(() =>
+			classify([{ path: "db/migrations/002.sql", added: 1, deleted: 0, migration: "safe" }]),
+		).toThrow(/migration must be additive or risky/);
+	});
+
 	it("raises the lane on each sensitive-signal family", () => {
 		const one = (path, extra) =>
 			classify([{ path, added: 1, deleted: 0 }], extra);

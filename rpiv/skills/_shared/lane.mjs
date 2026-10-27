@@ -9,7 +9,8 @@
 //                 [--slices <n>] [--graph <depcruise-or-madge.json>]
 // prints `lane: <lane>`, then `reason: …` and `diagnostic: …` lines, exit 0. Line
 // counts come from `git diff --numstat -z`; generated and media paths are dropped;
-// hubs come only from a graph file (no analysis tool is run). The limits are the
+// hubs come only from a graph file (no analysis tool is run); a changed migration is
+// graded by what its diff adds (migration-kind.mjs: additive -> normal). The limits are the
 // stricter of the disk `.rpiv-lanes.json` and the base revision's (D33, S22). A broken call prints
 // `lane: broken: <detail>` on stderr and exits 2, never a lane.
 //
@@ -21,6 +22,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { lstatSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { isMain } from "./is-main.mjs";
+import { diffLines, migrationKind } from "./migration-kind.mjs";
 import {
 	isCiConfig,
 	isContainerFile,
@@ -92,23 +94,35 @@ const RIGOROUS_KINDS = [
 ];
 // Words with known false positives (design tokens, schema definitions): normal only.
 const WEAK_WORDS = new Set(["token", "schema"]);
+const isAdditiveMigration = (file) => file.migration === "additive";
+
+/** The rigorous file kinds of one file; an additive migration (migration-kind.mjs)
+    is normal instead. */
+const kindFindings = (file) =>
+	RIGOROUS_KINDS.filter(([, is]) => is(file.path)).map(([kind]) =>
+		kind === "migration" && isAdditiveMigration(file)
+			? ["normal", `additive migration: ${file.path}`]
+			: ["rigorous", `${kind}: ${file.path}`],
+	);
+
+/** A sensitive word is weak when it has known false positives, or when it only
+    names the additive migration it sits in. */
+const isWeakWord = (word, file) =>
+	WEAK_WORDS.has(word) || (word === "migration" && isAdditiveMigration(file));
 
 /** Sensitive-signal rules (FR3), per file in input order. A manifest only blocks
     fast ("possible new dependency", developer choice, D16). */
 const signalFindings = ({ files, hubs }, diagnostics) => {
 	if (hubs === undefined) diagnostics.push("hub signal unavailable");
 	const hubSet = new Set((hubs ?? []).map(slashed));
-	return files.flatMap(({ path }) => [
-		...(hubSet.has(slashed(path)) ? [["rigorous", `hub: ${path}`]] : []),
-		...RIGOROUS_KINDS.filter(([, is]) => is(path)).map(([kind]) => [
-			"rigorous",
-			`${kind}: ${path}`,
-		]),
-		...(isManifest(path) ? [["normal", `manifest: ${path}`]] : []),
-		...sensitiveWords(path).map((word) =>
-			WEAK_WORDS.has(word)
-				? ["normal", `weak sensitive word: ${word} (${path})`]
-				: ["rigorous", `sensitive word: ${word} (${path})`],
+	return files.flatMap((file) => [
+		...(hubSet.has(slashed(file.path)) ? [["rigorous", `hub: ${file.path}`]] : []),
+		...kindFindings(file),
+		...(isManifest(file.path) ? [["normal", `manifest: ${file.path}`]] : []),
+		...sensitiveWords(file.path).map((word) =>
+			isWeakWord(word, file)
+				? ["normal", `weak sensitive word: ${word} (${file.path})`]
+				: ["rigorous", `sensitive word: ${word} (${file.path})`],
 		),
 	]);
 };
@@ -131,6 +145,10 @@ const assertFile = (file) => {
 			`${key} must be a non-negative integer (${file.path})`,
 		);
 	}
+	check(
+		optional(file.migration, (kind) => kind === "additive" || kind === "risky"),
+		`migration must be additive or risky (${file.path})`,
+	);
 };
 
 /** Throws a TypeError naming the first malformed field: a broken call never
@@ -651,9 +669,30 @@ export const rangeSourceLines = (root, range) => {
 	return { lines: sized.reduce((sum, f) => sum + f.added + f.deleted, 0), files: sized.length };
 };
 
+/** The added lines and deleted-line count of `path` against `base`; an untracked
+    file has no diff, so all of its lines on disk are added. */
+const migrationChange = (root, base, path) => {
+	const diff = gitIn(root, ["diff", "-U0", "--no-renames", "--end-of-options", base, "--", path]);
+	if (diff) return diffLines(diff);
+	return { added: readFileSync(join(root, path), "utf8").split("\n"), deleted: 0 };
+};
+
+/** `files` with each migration graded by what its diff adds (migration-kind.mjs).
+    A `--paths` call has no diff, so its migrations stay ungraded (rigorous). */
+const withMigrationKinds = (options, root, files) => {
+	if (options.mode === "paths") return files;
+	const base = options.mode === "range" ? options.range : headBase(root);
+	return files.map((file) =>
+		isMigration(slashed(file.path))
+			? { ...file, migration: migrationKind(file.path, migrationChange(root, base, file.path)) }
+			: file,
+	);
+};
+
 /** The CLI's stdout for `argv`, run in `cwd`; throws on a broken call. */
 const runCli = (argv, cwd) => {
-	const { options, root, listed, files } = cliInput(argv, cwd);
+	const { options, root, listed, files: changed } = cliInput(argv, cwd);
+	const files = withMigrationKinds(options, root, changed);
 	const signal =
 		options.graph === undefined
 			? {}
