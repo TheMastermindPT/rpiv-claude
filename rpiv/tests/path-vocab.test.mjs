@@ -458,13 +458,31 @@ describe("path vocabulary (S3)", () => {
 				"DIST/a.js",
 				// The directory word at the end of the path (mutation hardening).
 				"pkg/dist",
+				// Tool-written files in target repos: migration metadata and codegen output.
+				"drizzle/meta/0002_snapshot.json",
+				"db/migrations/meta/_journal.json",
+				"src/__generated__/schema.ts",
+				"src/routeTree.gen.ts",
+				"src/api.generated.ts",
+				"vendor/jquery.min.js",
+				"styles/site.MIN.css",
 			];
 			expect.soft(mismatches(isGenerated, generated, true)).toEqual([]);
 			expect
 				.soft(
 					mismatches(
 						isGenerated,
-						["src/distance.ts", "builder/x.ts", "src/a.ts", "distribution.md"],
+						[
+							"src/distance.ts",
+							"builder/x.ts",
+							"src/a.ts",
+							"distribution.md",
+							"src/meta/x.ts",
+							"migrations/0001_add_index.sql",
+							"src/general.ts",
+							"src/generator.ts",
+							"src/admin.ts",
+						],
 						false,
 					),
 				)

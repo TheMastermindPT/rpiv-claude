@@ -180,16 +180,21 @@ export const sensitiveWords = (p) =>
 	[...new Set(pathTokens(p).map((t) => SENSITIVE_TOKENS.get(t)).filter(Boolean))].sort();
 
 // Generated/vendored paths and media files (D17 of the risk-lanes design, S5):
-// review-range.mjs's former GENERATED_PATH_RE and MEDIA_EXT, moved unchanged so
-// review-range and the lane CLI drop the same files. metrics.mjs keeps its own,
-// different "generated" rule (D15 note).
+// review-range.mjs's former GENERATED_PATH_RE and MEDIA_EXT, so review-range and
+// the lane CLI drop the same files. metrics.mjs keeps its own, different
+// "generated" rule (D15 note). Target repos add tool-written files: migration
+// metadata (`<migrations|drizzle>/meta/`), codegen output (`__generated__/`,
+// `*.gen.*`, `*.generated.*`) and minified bundles — reviewing them only produces
+// false peers and inflated line counts.
 const GENERATED_PATH_RE =
-	/(^|\/)(\.rpiv\/artifacts|opencode\/generated|coverage|dist|build|node_modules)(\/|$)/i;
+	/(^|\/)(\.rpiv\/artifacts|opencode\/generated|coverage|dist|build|node_modules|__generated__|(migrations?|drizzle)\/meta)(\/|$)/i;
+const GENERATED_NAME_RE = /\.(gen|generated|min)\.[a-z0-9]+$/i;
 const MEDIA_EXT = new Set([
 	"avif", "bmp", "gif", "ico", "jpeg", "jpg", "mov", "mp3",
 	"mp4", "pdf", "png", "svg", "webm", "webp", "woff", "woff2",
 ]);
 /** A generated or vendored path (build output, coverage, dependencies, artifacts). */
-export const isGenerated = (p) => GENERATED_PATH_RE.test(p);
+export const isGenerated = (p) =>
+	GENERATED_PATH_RE.test(p) || GENERATED_NAME_RE.test(p);
 /** A media file (image, video, audio, font, PDF). */
 export const isMedia = (p) => MEDIA_EXT.has(extOf(p));

@@ -620,9 +620,11 @@ const lockstep = (() => {
 // Pair each file ADDED by the diff with an existing peer at HEAD. Heuristics, in
 // priority order: interface-impl (I<Name>/<Name>.impl/<Name>{Abstract,Base,Protocol}),
 // shared suffix from the peer-noun vocabulary, stem similarity (longest common
-// substring / SHORTER stem >= 0.6, shorter stem >= 4 chars — the shorter-stem
+// substring / SHORTER stem >= 0.6, shared substring >= 4 chars — the shorter-stem
 // denominator is what makes PhysicalProductSubscription <-> Subscription pair, per
-// the skill's canonical example). Tests are never peers; capped per new file.
+// the skill's canonical example). Generic stems (index, utils, types, ...) never
+// pair by stem: on a 5-letter stem three shared letters met the ratio, so
+// AdminDashboard <-> i18n/index paired. Tests are never peers; capped per new file.
 const PEER_SUFFIXES = [
 	"Handler",
 	"Service",
@@ -649,6 +651,22 @@ const PEER_SUFFIXES = [
 	"Factory",
 	"Builder",
 ];
+const STEM_MIN_SHARED = 4;
+const GENERIC_STEMS = new Set([
+	"index",
+	"main",
+	"mod",
+	"lib",
+	"util",
+	"utils",
+	"helper",
+	"helpers",
+	"type",
+	"types",
+	"constant",
+	"constants",
+	"__init__",
+]);
 const stemOf = (p) => {
 	const b = p.slice(p.lastIndexOf("/") + 1);
 	const dot = b.lastIndexOf(".");
@@ -669,6 +687,15 @@ const lcsLen = (a, b) => {
 		prev = cur;
 	}
 	return best;
+};
+const similarStems = (ns, ps) => {
+	const a = ns.toLowerCase();
+	const b = ps.toLowerCase();
+	if (GENERIC_STEMS.has(a) || GENERIC_STEMS.has(b)) return false;
+	const shared = lcsLen(a, b);
+	return (
+		shared >= STEM_MIN_SHARED && shared / Math.min(a.length, b.length) >= 0.6
+	);
 };
 const suffixOf = (stem) =>
 	PEER_SUFFIXES.find((s) => stem.endsWith(s) && stem !== s) ?? null;
@@ -714,10 +741,7 @@ if (addedRaw && result.strategy !== "unrecognised") {
 				candidates.push({ pf, heuristic: `suffix:${nSuf}`, rank: 1 });
 				continue;
 			}
-			const a = ns.toLowerCase();
-			const b = ps.toLowerCase();
-			const shorter = Math.min(a.length, b.length);
-			if (shorter >= 4 && lcsLen(a, b) / shorter >= 0.6) {
+			if (similarStems(ns, ps)) {
 				candidates.push({ pf, heuristic: "stem", rank: 2 });
 			}
 		}

@@ -453,6 +453,32 @@ try {
 		console.log("OK — peer-pairs reject cross-category stem/suffix matches.");
 	}
 
+	// ── PeerPairs: stem similarity needs a real shared name, not a generic stem ──
+	{
+		mkdirSync(join(repo, "src", "i18n"), { recursive: true });
+		commit(repo, "src/i18n/index.ts", "generic index");
+		commit(repo, "src/Subscription.ts", "stem peer");
+		const dashboard = run(
+			repo,
+			commit(repo, "src/AdminDashboard.tsx", "new page"),
+		);
+		assert.ok(
+			!dashboard.peers.some((row) => row.includes("src/i18n/index.ts")),
+			"a generic stem (index) never pairs on three shared letters",
+		);
+		const physical = run(
+			repo,
+			commit(repo, "src/PhysicalProductSubscription.ts", "new subscription"),
+		);
+		assert.ok(
+			physical.peers.includes(
+				"src/PhysicalProductSubscription.ts\tsrc/Subscription.ts\tstem",
+			),
+			"a long shared stem still pairs",
+		);
+		console.log("OK — peer-pairs stem heuristic rejects generic and short overlaps.");
+	}
+
 	// ── Small homogeneous scopes preserve their category for lens dispatch ──
 	{
 		appendFileSync(join(repo, "docs", "LegacyService.md"), "docs-only edit\n");
