@@ -66,7 +66,7 @@ Every Wave-2 agent prompt contains EXACTLY `Known Context:` + the Discovery Map 
    node "${CLAUDE_PLUGIN_ROOT}/skills/deep-review/_helpers/review-range.mjs" "<scope-spec>"
    ```
 
-   The helper emits labeled scope fields plus `changed_files_manifest`, reviewable/excluded counts, shard metadata, and `prior_review`, followed by the changed/in-scope/peer/companion blocks. Read these as authoritative; never re-derive them by hand. The JSON manifest is the complete, uncapped file contract and includes path categories and shards. If `strategy: unrecognised` appears, clarify using its `note:` and re-invoke.
+   The helper emits labeled scope fields plus `changed_files_manifest`, reviewable/excluded counts, shard metadata, and `prior_review`, followed by the changed/in-scope/peer/companion blocks. Read these as authoritative; never re-derive them by hand. The JSON manifest is the complete, uncapped file contract and includes path categories and shards. If `strategy: unrecognised` appears, clarify using its `note:` and re-invoke. When it also prints `worktree: <path>`, the branch is checked out in another worktree: tell the user to run the review from a session opened in that path, and STOP — never fall back to an `A..B` range from this checkout, which widens the scope and makes every agent read this checkout's files. When it prints `warnings:`, show each warning to the user before continuing, record them under `## Reconciliation Notes`, and offer `auto` from the branch's own checkout when a warning names merge commits or the default branch.
 
    `<scope-spec>` translation table — map the user's substituted argument to one of these forms:
 
@@ -77,7 +77,7 @@ Every Wave-2 agent prompt contains EXACTLY `Known Context:` + the Discovery Map 
    | hex commit hash (4-40 chars, e.g. `abc1234`) | the hash verbatim |
    | `<A>..<B>` (e.g. `HEAD~5..HEAD`, `main..feature`) | the range verbatim |
    | comma- or whitespace-separated hashes (`h1,h2,h3` or `h1 h2 h3`) | the list verbatim |
-   | branch name (must be checked out at HEAD locally) | the branch name verbatim |
+   | branch name (must be checked out at HEAD in this checkout) | the branch name verbatim |
    | anything else (prose, mixed list, unresolvable ref) | clarify via `ask_user_question`, then re-invoke |
 
 2. **Confirm strategy** from the helper output. The mapping into the rest of the skill:

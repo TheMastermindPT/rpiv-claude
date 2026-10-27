@@ -16,7 +16,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HELPER = join(
@@ -158,6 +158,25 @@ try {
 			"an existing but inactive branch is rejected",
 		);
 		assert.match(inactive.note, /not checked out at HEAD/);
+		const wtPath = join(repo, "..", `${basename(repo)}-wt`);
+		git(repo, "worktree", "add", "-q", wtPath, "main");
+		const elsewhere = run(repo, "main");
+		assert.equal(
+			elsewhere.strategy,
+			"unrecognised",
+			"a branch in another worktree is still refused here",
+		);
+		assert.match(
+			elsewhere.note,
+			/checked out in another worktree/,
+			"the refusal names the worktree, not a generic not-at-HEAD",
+		);
+		assert.equal(
+			resolve(elsewhere.worktree),
+			resolve(wtPath),
+			"the worktree path is emitted so the review can run from there",
+		);
+		git(repo, "worktree", "remove", "--force", wtPath);
 		console.log(
 			"OK — auto/empty/branch resolve first-parent from the merge-base.",
 		);
@@ -385,8 +404,30 @@ try {
 	// ── InScopeFiles: back-merge inflation drops sidecar files ──
 	{
 		git(repo, "checkout", "-q", "feat");
+		assert.equal(
+			run(repo, `${c2}..feat`).warnings,
+			undefined,
+			"a plain feature range ending at HEAD carries no warning",
+		);
 		git(repo, "merge", "-q", "main", "-m", "back-merge main");
 		commit(repo, "f3.txt", "F3 after back-merge");
+		const widened = run(repo, "main..feat");
+		assert.equal(widened.strategy, "explicit-range");
+		assert.match(
+			widened.warnings,
+			/1 merge commit/,
+			"a range holding a back-merge warns that other branches' changes are in scope",
+		);
+		assert.match(
+			widened.warnings,
+			/starts at the default branch/,
+			"a range starting at the default branch warns that its tip commit is included",
+		);
+		assert.match(
+			run(repo, `${c1}..${c2}`).warnings,
+			/tip is not HEAD/,
+			"a range whose tip is not checked out warns that file reads come from this checkout",
+		);
 		const r = run(repo, "auto");
 		assert.equal(
 			r.strategy,
@@ -476,7 +517,9 @@ try {
 			),
 			"a long shared stem still pairs",
 		);
-		console.log("OK — peer-pairs stem heuristic rejects generic and short overlaps.");
+		console.log(
+			"OK — peer-pairs stem heuristic rejects generic and short overlaps.",
+		);
 	}
 
 	// ── Small homogeneous scopes preserve their category for lens dispatch ──

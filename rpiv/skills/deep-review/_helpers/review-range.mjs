@@ -14,7 +14,8 @@
 //   <hash>              — single commit (~7+ hex chars)
 //   <A>..<B>            — range; A is verified ancestor of B, swapped if reversed
 //   <h1>,<h2>,<h3>      — comma- or whitespace-separated commit list; helper finds endpoints
-//   <branch-name>       — assumed PR branch checked out at HEAD
+//   <branch-name>       — assumed PR branch checked out at HEAD (a branch checked out in
+//                         another worktree is refused with `worktree:` naming its path)
 //
 // Output (labeled key/value lines, then `---changed-files---` block):
 //
@@ -31,6 +32,9 @@
 //   manifest_changed: yes|no          (any changed file is a dependency manifest/lockfile)
 //   manifest_files: <comma list>      (only when manifest_changed: yes)
 //   lockstep_self_review: yes|no      (sync-versions.js + uniform packages/*/package.json version + diff touches one)
+//   warnings:       <w1> | <w2>       (explicit A..B only: merge commits in range,
+//                                      range starts at the default branch, tip != HEAD)
+//   worktree:       <path>            (only when a branch scope is checked out in another worktree)
 //   note:           <reason>          (only when strategy=unrecognised)
 //   ---changed-files---
 //   <deduplicated file list, capped at 2000 entries OR 40 KB whichever first>
@@ -392,6 +396,51 @@ const setWorkingTree = (oldest = "(n/a)", newest = "(n/a)") => {
 
 const isHexHash = (s) => /^[0-9a-f]{4,40}$/i.test(s);
 
+// The worktree (other than this one) that has `branch` checked out, or "".
+// Every later step reads files from THIS checkout, so a branch living elsewhere
+// is refused with its path instead of being reviewed against the wrong tree.
+const worktreeOf = (branch) => {
+	const here = resolve(gitCwd() || process.cwd());
+	const entries = safe(["worktree", "list", "--porcelain"])
+		.split(/\n\s*\n/)
+		.map((block) => ({
+			path: block.match(/^worktree (.+)$/m)?.[1] ?? "",
+			ref: block.match(/^branch (.+)$/m)?.[1],
+		}));
+	const other = entries.find(
+		(e) => e.ref === `refs/heads/${branch}` && resolve(e.path) !== here,
+	);
+	return other?.path ?? "";
+};
+
+// Explicit ranges keep OLDEST^ as base by design; these warnings make the
+// ways that widens or misreads a review visible instead of silent.
+const explicitRangeWarnings = (startRef) => {
+	const warnings = [];
+	const merges = safe(["rev-list", "--merges", result.range])
+		.split("\n")
+		.filter(Boolean);
+	if (merges.length > 0) {
+		warnings.push(
+			`range holds ${merges.length} merge commit(s) — changes merged in from other branches are in scope; for a feature branch run scope auto from its checkout`,
+		);
+	}
+	if (
+		startRef &&
+		safe(["rev-parse", startRef]) === safe(["rev-parse", defaultBranch])
+	) {
+		warnings.push(
+			`range starts at the default branch — explicit ranges include their start commit (base = ${defaultBranch}^), so ${defaultBranch}'s tip commit is in scope`,
+		);
+	}
+	if (result.tip !== safe(["rev-parse", "HEAD"])) {
+		warnings.push(
+			"range tip is not HEAD — agents read files from this checkout, not from the reviewed tip",
+		);
+	}
+	return warnings;
+};
+
 if (defaultBranch === "(unresolved)" && (lower === "" || lower === "auto")) {
 	result.strategy = "unrecognised";
 	result.note =
@@ -412,6 +461,9 @@ if (defaultBranch === "(unresolved)" && (lower === "" || lower === "auto")) {
 		if (isAncestor(aHash, bHash)) setExplicitRange(aHash, bHash);
 		else if (isAncestor(bHash, aHash)) setExplicitRange(bHash, aHash);
 		else result.note = `neither ${a} nor ${b} is an ancestor of the other`;
+		if (result.strategy === "explicit-range") {
+			result.warnings = explicitRangeWarnings(isAncestor(aHash, bHash) ? a : b);
+		}
 	} else {
 		result.note = `range endpoint(s) do not resolve: ${a}..${b}`;
 	}
@@ -459,7 +511,11 @@ if (defaultBranch === "(unresolved)" && (lower === "" || lower === "auto")) {
 	const headHash = safe(["rev-parse", "HEAD"]);
 	const oldest =
 		scopeHash === headHash ? safe(["merge-base", defaultBranch, "HEAD"]) : "";
-	if (scopeHash !== headHash) {
+	const worktree = scopeHash === headHash ? "" : worktreeOf(scope);
+	if (worktree) {
+		result.worktree = worktree;
+		result.note = `branch ${scope} is checked out in another worktree (${worktree}) — run the review from that worktree; an A..B range from here reads this checkout's files`;
+	} else if (scopeHash !== headHash) {
 		result.note = `branch/ref ${scope} is not checked out at HEAD`;
 	} else if (oldest) setFirstParent(oldest, headHash);
 	else
@@ -874,6 +930,10 @@ const lines = [
 if (manifestFiles.length > 0)
 	lines.push(`manifest_files: ${manifestFiles.join(", ")}`);
 lines.push(`lockstep_self_review: ${lockstep ? "yes" : "no"}`);
+if (result.warnings?.length) {
+	lines.push(`warnings:       ${result.warnings.join(" | ")}`);
+}
+if (result.worktree) lines.push(`worktree:       ${result.worktree}`);
 if (result.strategy === "unrecognised" && result.note) {
 	lines.push(`note:           ${result.note}`);
 }
