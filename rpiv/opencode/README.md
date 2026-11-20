@@ -59,6 +59,8 @@ OpenCode has no reliable equivalent for Claude's `PostToolBatch`, `SubagentStart
 
 Local hooks run through absolute, trusted Node and Sonar executable paths. Child processes receive an allowlisted environment without application credentials. Generated subagents deny every tool by default, then enable only their declared read/search tools; the two Git-history agents also deny command chaining, redirection, external diffs, text conversion, and output-file options.
 
+Hook processes run asynchronously with explicit stdin EOF, bounded output, and the existing per-hook deadlines. This avoids premature `spawnSync` timeouts after idle in affected Windows Bun runtimes and keeps the host responsive. Genuine process timeouts remain failures, including when the child produced partial output. Plugin changes require an OpenCode restart; already-running sessions keep their loaded runner.
+
 Sonar blocks only explicit structured denials. If the local scanner process crashes, times out, or exits without a denial payload, the adapter fails open and records a warning instead of misreporting the operational failure as a detected secret.
 
 The plugin publishes one immutable runtime snapshot as `RPIV_CAPABILITIES` through `shell.env`. It reports whether CodeScene, SonarQube, and Context Mode MCPs are configured plus whether local Node/Sonar hook executables were found. Workflow helpers combine this snapshot with repository-local detection instead of repeatedly probing MCP availability or treating an operational failure as an absent capability.
