@@ -94,7 +94,7 @@ Use the grounded-questions-one-at-a-time pattern. Use a **❓ Question:** prefix
 **Scope adjustment** (e.g., "skip the UI, backend only", "include tests"):
 - Record in Developer Context. Adjust scope.
 
-## Approach Check (design, normal and rigorous lanes)
+## Approach Check (design, normal lane)
 
 The checkpoint is where a better approach can still change the outcome, so test the
 reasons behind the alternatives this design turned down. Run the check only when a

@@ -14,7 +14,7 @@ a second source tree. Implementation bodies live only in repository files.
 Use a short signature or consumer example only when it explains a decision.
 
 Give behaviors stable IDs. Read `test-contract-authoring.md` in this directory
-before authoring their public seam, exact oracle, and Expected red reason.
+before authoring their expectations and exact examples.
 The human approves intended behavior before production implementation begins.
 Expected outcomes come from that agreement, not from the candidate's output.
 
@@ -25,11 +25,22 @@ The contract identity is the `content_hash` of the whole document body, as
 or decision on which the slice depends; a document without `content_hash` is
 identified by the sha256 of its bytes. There is no hash per section.
 
-Whoever records an approval stamps the approved text with
-`validate-artifact.mjs --finalizing --stamp` before saving the exact file as the
-approved copy, `.rpiv/evidence/<artifact-stem>/approved-<content_hash>.md`, so
-its `content_hash` equals the hash in its name; the approval names that hash.
-The latest approved copy of a document governs; earlier copies stay history.
+Approvals go through one helper; nobody computes hashes or copies approved files
+by hand. Whoever records an approval runs
+`node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/approval.mjs" record <artifact> [--slice <id>]...`:
+it validates with `--finalizing`, stamps `content_hash`, and saves the exact file
+as the approved copy, `.rpiv/evidence/<artifact-stem>/approved-<content_hash>.md`;
+the approval names that hash. The latest approved copy of a document governs;
+earlier copies stay history.
+
+Before asking the developer to approve a later version, run
+`node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/approval.mjs" check <artifact>`.
+`approval: keep` means the approval holds: the helper has re-stamped the
+artifact, and nobody is asked. `approval: ask` lists each `change:`; ask about
+the decision in plain words and show those changed lines with the question, so
+the developer never approves a summary that differs from the text. Never put a
+hash in an approval question. `approval: invalid` lists validation errors to
+fix. A broken call (exit 2) is never a keep.
 A later version keeps the approval only when
 `git diff --no-index --ignore-cr-at-eol <approved copy> <artifact>`
 shows nothing but added lines inside `## Developer Context`,
@@ -65,8 +76,8 @@ Keep these three decisions separate and record their exact scope:
 - **Build authorization:** permission to implement a specified contract in a
   named workspace, with bounded commands, effects, and continuation scope.
 - **Candidate acceptance:** the human accepts the exact reviewed result: each
-  slice in the rigorous lane, the combined result in fast and normal
-  (**Lanes**). Passing tests is not this decision.
+  slice in the normal lane, the combined result in fast (**Lanes**). Passing
+  tests is not this decision.
 - **Integration authorization:** explicit permission to integrate a specified
   accepted candidate into a named target. Candidate acceptance alone grants none.
 
@@ -100,7 +111,12 @@ never try to avoid it (any bypass would make the hook trust the agent).
 
 ## Lanes
 
-Every slice runs in one lane: `fast`, `normal` or `rigorous`. A feature's lane
+Every slice runs in one lane: `fast` or `normal`. An older artifact's
+`rigorous` reads as `normal`. `lane.mjs` judges only size and the file kinds a
+path names for certain (migrations, CI, containers, env files, manifests, graph
+hubs), never words in file names. A slice is fast only when `lane.mjs` says so
+and the developer confirms it: state in one sentence what the change touches,
+in the same question that approves the fast slice. A feature's lane
 lives in the frontmatter of its discover, research and design artifacts as
 `lane:` with `lane_reasons:` (the classifier's reasons as one inline list);
 discover estimates it, research confirms it with `lane.mjs --paths`, design
@@ -118,23 +134,25 @@ A raise is recorded as an appended `## Developer Context` entry (the approved
 raised lane needed earlier (a linked worktree, intent review) are re-run or
 recorded as residual risk by the developer's decision.
 
-Wherever rpiv says accepted predecessor, fast and normal mean the gate-passed
-predecessor; the rigorous lane means the human-accepted one.
+Wherever rpiv says accepted predecessor, fast means the gate-passed
+predecessor; the normal lane means the human-accepted one.
 
-| Step | fast | normal | rigorous |
-| --- | --- | --- | --- |
-| Workspace | branch in the main working tree | linked worktree | linked worktree |
-| Intent review | no | no | yes |
-| slice-verifier | yes | yes | yes |
-| Code/coverage reviewer pair | no | no | yes |
-| Per-slice human acceptance | no | no | yes |
-| Deep-review depth | light | full | rigorous |
-| Approach check | no | yes | yes |
+| Step | fast | normal |
+| --- | --- | --- |
+| Workspace | branch in the main working tree | linked worktree |
+| Intent review | no | yes |
+| slice-verifier | yes | yes |
+| Code/coverage reviewer pair | no | yes |
+| Per-slice human acceptance | no | yes |
+| Deep-review depth | light | full |
+| Approach check | no | yes |
 
 A fast slice falls back to a linked worktree when the main working tree has
 uncommitted changes unrelated to the slice; never stash, move, or commit them.
 Run the deterministic checks (tests, types, lint, and CodeScene where available)
-before dispatching any candidate-mode review agent.
+before dispatching any candidate-mode review agent. These are the repository's
+normal checks, not its deepest pre-push gate; that one runs once, on the final
+candidate.
 Those checks include the slice preflight on a committed candidate, run from any
 folder of the repository (it resolves the contract's paths from the root), with
 `--base` the commit the slice started from, even when the slice spans several
@@ -190,9 +208,9 @@ whose checks and reviews re-run. Never amend a pushed commit: a fix after the
 slice commit was pushed is a stop, and the developer decides whether a follow-up
 commit is allowed. The commit message carries the red and green evidence summary.
 
-In fast and normal, a slice whose gates pass becomes the predecessor for the
-next slice without a human stop, and the developer accepts the combined result
-once before integration. In the rigorous lane, the human accepts each slice.
+In fast, a slice whose gates pass becomes the predecessor for the next slice
+without a human stop, and the developer accepts the combined result once before
+integration. In the normal lane, the human accepts each slice.
 Every lane still stops for scope or contract changes, findings left after the fix-round cap (2 for slice reviews, 1 for
 deep-review), missing authority, and required gates that are missing, failed, broken,
 unavailable, pending, or stale (**States And Evidence**).
@@ -253,13 +271,13 @@ branch name. Preserve the chain so final validation can inspect the whole change
 1. Read current source, applicable guidance, approved intent, and predecessor
    evidence. Select the next bounded slice. Resolve its open behavior questions
    and get Build authorization if not already explicitly recorded for this scope.
-2. In the rigorous lane, run `slice-verifier` in `intent` mode against the
+2. In the normal lane, run `slice-verifier` in `intent` mode against the
    proposed contract and real predecessors. It checks feasibility, commitments,
    dependencies, base guarantees, and atomicity, not implementation correctness.
    Stabilized briefs also receive the independent reviewer pair through
    `artifact-review-dispatch.md`, in `intent` mode; the coverage reviewer owns
-   whether each Expected red is observable and each oracle catches a wrong
-   implementation, so an intent review that runs slice-verifier runs the pair too. Fast and normal skip intent review (**Lanes**). Reuse a
+   whether each example catches a wrong implementation, so an intent review
+   that runs slice-verifier runs the pair too. Fast skips intent review (**Lanes**). Reuse a
    still-current intent review; do not repeat it just because the skill changed.
 3. Write one failing behavior test through the agreed seam. Run the smallest
    relevant command and observe the contract's Expected red failure. Setup errors,
@@ -270,7 +288,7 @@ branch name. Preserve the chain so final validation can inspect the whole change
 4. Enter a **separate independent review/refactor gate** after green. Capture
    the candidate identity. After the deterministic checks, dispatch
    `slice-verifier` in `candidate` mode in every lane, and the independent code
-   and coverage reviewers in `candidate` mode in the rigorous lane, against actual
+   and coverage reviewers in `candidate` mode in the normal lane, against actual
    source, tests, and evidence. Keep reviewers read-only. Triage findings per the shared dispatch.
    Refactor only in this separate gate; rerun checks and obtain fresh candidate
    reviews after any source, test, contract, or relevant configuration change;
@@ -285,11 +303,11 @@ branch name. Preserve the chain so final validation can inspect the whole change
    rather than inventing them from a script name. Add deep review where required.
 6. Present the behavior now demonstrated, differences from agreed expectations,
    remaining uncertainty, findings/resolutions, and exact candidate identity.
-   In the rigorous lane, ask the human to accept, revise, or discard this
-   candidate; in fast and normal, keep this report for the combined acceptance
+   In the normal lane, ask the human to accept, revise, or discard this
+   candidate; in fast, keep this report for the combined acceptance
    (**Lanes**). A discard choice is not blanket permission for destructive
    cleanup; preserve other work.
-7. After acceptance (rigorous) or passing gates (fast, normal), make this exact
+7. After acceptance (normal) or passing gates (fast), make this exact
    candidate the next predecessor. Continue
    only within recorded build authority. Detail the next slice just in time;
    scope/behavior/permissions or major decision changes need renewed approval.
@@ -365,7 +383,9 @@ record clearance separately; do not relabel their historical outcome as clean.
 Link evidence once from the brief; keep logs/source out of it. Record red then
 green at their actual intermediate identities (for an uncommitted state, the
 identity **Lanes** defines), and final verification at the
-reviewed candidate. Preserve prior results and decisions as history. Later fixes
+reviewed candidate. Beyond these, only the current candidate's preflight
+log and deterministic-check result go to the reviewers; reruns while working are
+not logged. Preserve prior results and decisions as history. Later fixes
 produce new evidence and reviews; do not rewrite earlier failures into passes.
 Validation reports facts and remediation needs without editing implementation.
 ## rpiv Problems

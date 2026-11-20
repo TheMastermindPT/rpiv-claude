@@ -13,7 +13,7 @@
 //
 // Checks (all ERRORS):
 //   - missing a required frontmatter field
-//   - a `lane` that is not fast, normal or rigorous, a lane without non-empty `lane_reasons`,
+//   - a `lane` that is not fast or normal (an older `rigorous` reads as normal), a lane without non-empty `lane_reasons`,
 //     or `lane_reasons` without a lane (no lane fields at all is valid)
 //   - `status: ready` but body still holds unfilled `{template tokens}` in prose
 //   - TODO / TBD / FIXME left in prose
@@ -46,7 +46,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { parseFences } from "./fences.mjs";
 import { splitFrontmatter } from "./frontmatter.mjs";
 import { isMain } from "./is-main.mjs";
-import { LANES } from "./lane.mjs";
+import { laneOf } from "./lane.mjs";
 import { contractProblems, contractSections } from "./test-contract.mjs";
 
 // Universal core — every artifact template's frontmatter carries these.
@@ -113,7 +113,7 @@ const sectionKey = ({ id, body }) =>
 
 /** The approved copies of `artifactPath`: `.rpiv/evidence/<stem>/approved-*.md` beside
     the `.rpiv/artifacts/` folder that holds it (candidate-workflow.md). */
-function approvedCopies(artifactPath) {
+export function approvedCopies(artifactPath) {
 	const p = artifactPath.replaceAll("\\", "/");
 	const at = p.lastIndexOf("/.rpiv/artifacts/");
 	if (at === -1) return [];
@@ -122,6 +122,18 @@ function approvedCopies(artifactPath) {
 	const homes = [home, mainWorktreeTwin(home)].filter(Boolean);
 	const dirs = new Set(homes.map((h) => resolve(h, ".rpiv", "evidence", stem)));
 	return [...dirs].flatMap(listApproved);
+}
+
+/** Where a new approved copy of `artifactPath` goes: `.rpiv/evidence/<stem>/` in the main
+    worktree (the folder is gitignored, so a linked worktree's copy would be lost), else
+    beside the artifact's own `.rpiv/`. Null for a file outside `.rpiv/artifacts/`. */
+export function approvedCopyDir(artifactPath) {
+	const p = artifactPath.replaceAll("\\", "/");
+	const at = p.lastIndexOf("/.rpiv/artifacts/");
+	if (at === -1) return null;
+	const home = p.slice(0, at);
+	const stem = basename(p).replace(/\.md$/, "");
+	return resolve(mainWorktreeTwin(home) ?? home, ".rpiv", "evidence", stem);
 }
 
 /** The `approved-*.md` files in `dir`; none when it does not exist. */
@@ -195,7 +207,7 @@ function laneErrors(fm) {
 	}
 	const lane = fm.lane.trim();
 	const errors = [];
-	if (!LANES.includes(lane)) errors.push(`invalid lane: ${lane} (expected fast, normal or rigorous)`);
+	if (laneOf(lane) === null) errors.push(`invalid lane: ${lane} (expected fast or normal)`);
 	if (/^(?:\[\s*\])?$/.test((fm.lane_reasons ?? "").trim())) errors.push(`missing lane_reasons for lane: ${lane}`);
 	return errors;
 }

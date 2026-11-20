@@ -175,9 +175,8 @@ describe("contractSections and contractProblems", () => {
 			["s1", 2],
 			["s2", 8],
 		]);
-		expect(contractProblems(sections[0].body)).toEqual([
-			{ line: 5, problem: "B2 has no Test line" },
-		]);
+		// B2 has no Test line: allowed, its tests are found by ID at the candidate.
+		expect(contractProblems(sections[0].body)).toEqual([]);
 		expect(contractProblems(sections[1].body)).toEqual([
 			{
 				line: 10,
@@ -209,7 +208,7 @@ describe("validate-artifact --finalizing gate on Test Contracts", () => {
 	const gate = (path) =>
 		validateArtifact(path, dirname(path), { finalizing: true });
 
-	it("rejects an unreadable Test line or a Behavior without one in a section not yet approved", () => {
+	it("rejects an unreadable Test line, and accepts a Behavior without one, in a section not yet approved", () => {
 		const { errors } = gate(brief(`${OLD}\n${NEW_BAD}`));
 		expect(errors).toContain(
 			"Test Contract s-old line 12: B1 unreadable Test clause: two rows added to the existing table in `x.test.ts`",
@@ -219,7 +218,7 @@ describe("validate-artifact --finalizing gate on Test Contracts", () => {
 		);
 		expect(
 			gate(brief("#### Test Contract: s\n\n- **Behavior B9**: x\n")).errors,
-		).toEqual(["Test Contract s line 11: B9 has no Test line"]);
+		).toEqual([]);
 	});
 
 	it("only warns on a section an approved copy holds verbatim, so an append-only brief can take its next slice", () => {

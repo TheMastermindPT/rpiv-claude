@@ -9,8 +9,8 @@
 //     `## Follow-up` (a `## Follow-up <suffix>` heading counts as Follow-up);
 //   - changed `status`, `last_updated`, `last_updated_by`, `last_updated_note` and
 //     `content_hash` frontmatter lines;
-//   - changed `lane` and `lane_reasons` lines that raise the lane (fast < normal <
-//     rigorous; an absent approved lane is `normal`), with an added
+//   - changed `lane` and `lane_reasons` lines that raise the lane (fast < normal;
+//     an older `rigorous` ranks as normal; an absent approved lane is `normal`), with an added
 //     `## Developer Context` line naming the lane and the raised value.
 // An unchanged line must also stay in the same section: an added heading that moves
 // approved lines into an allowed section reopens approval.
@@ -33,7 +33,8 @@ const BOOKKEEPING_KEYS = new Set([
 	"content_hash",
 ]);
 const LANE_KEYS = new Set(["lane", "lane_reasons"]);
-const LANE_RANK = { fast: 0, normal: 1, rigorous: 2 };
+// An older artifact's `rigorous` ranks as `normal` (lane.mjs laneOf).
+const LANE_RANK = { fast: 0, normal: 1, rigorous: 1 };
 const DEVELOPER_CONTEXT = "Developer Context";
 const FRONTMATTER = "frontmatter";
 
@@ -197,8 +198,9 @@ const sideOf = (path, where) => {
 	return { lines, sections: sectionsOf(lines), where };
 };
 
-/** The offending changes from the approved copy to the artifact; empty means keep. */
-const appendOnlyProblems = (approvedPath, artifactPath) => {
+/** The offending changes from the approved copy to the artifact; empty means keep.
+    Throws when git cannot diff the two (a broken check, never a keep). */
+export const appendOnlyProblems = (approvedPath, artifactPath) => {
 	const before = sideOf(approvedPath, "approved");
 	const after = sideOf(artifactPath, "artifact");
 	const hunks = parseHunks(gitDiff(approvedPath, artifactPath));

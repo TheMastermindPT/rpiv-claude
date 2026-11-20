@@ -248,14 +248,13 @@ const parseBody = (body) => {
 export const parseTestContract = (text, sliceId) =>
 	parseBody(contractSection(text, sliceId));
 
-/** What a reader cannot check in one section body: `[{ line, problem }]`. */
+/** What a reader cannot check in one section body: `[{ line, problem }]`. A behavior
+    without a Test line is fine: its tests are found at the candidate by the behavior ID
+    that starts their titles (slice-preflight.mjs). */
 export const contractProblems = (body) =>
-	parseBody(body).behaviors.flatMap((b) => [
-		...(b.hasTest
-			? []
-			: [{ line: b.line, problem: `${b.id} has no Test line` }]),
-		...b.unchecked.map((u) => ({
+	parseBody(body).behaviors.flatMap((b) =>
+		b.unchecked.map((u) => ({
 			line: u.line,
 			problem: `${b.id} unreadable Test clause: ${u.text}`,
 		})),
-	]);
+	);

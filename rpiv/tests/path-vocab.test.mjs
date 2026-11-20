@@ -25,7 +25,6 @@ import {
 	isManifest,
 	isMedia,
 	isMigration,
-	sensitiveWords,
 } from "../skills/_shared/source-vocab.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -169,66 +168,6 @@ const KINDS = {
 	},
 };
 
-const SENSITIVE = [
-	["src/auth/index.ts", ["auth"]],
-	["src/authService.ts", ["auth"]],
-	["lib/oauth-client.js", ["auth"]],
-	["AuthenticationController.cs", ["auth"]],
-	["src/JWTToken.ts", ["jwt", "token"]],
-	["utils/passwd.py", ["password"]],
-	["src/encryption/aes.go", ["crypto"]],
-	["scripts/migrate_users.py", ["migration"]],
-	["electron/preload-ipc.ts", ["ipc", "preload"]],
-	["app/sessions/permissions.rb", ["permission", "session"]],
-	["tls/certificates.pem", ["cert"]],
-	["src/author.ts", []],
-	["blog/authored-posts.md", []],
-	["lib/tokenizer.ts", []],
-	["db/schemaless.ts", []],
-	["secretary/notes.md", []],
-	["src/service.ts", []],
-	// S3 revision 1: derived forms and acronym plurals.
-	["src/middleware/authenticated.ts", ["auth"]],
-	["lambda/authorizer.ts", ["auth"]],
-	["src/guards/Authorized.tsx", ["auth"]],
-	["lib/authenticator.ts", ["auth"]],
-	["lib/encrypted-storage.ts", ["crypto"]],
-	["services/decryption.go", ["crypto"]],
-	["utils/decrypted.ts", ["crypto"]],
-	["src/cryptographic/hash.rs", ["crypto"]],
-	["secured/area.ts", ["security"]],
-	["db/migrator.ts", ["migration"]],
-	["db/migrated.ts", ["migration"]],
-	["src/utils/parseJWTs.ts", ["jwt"]],
-	["src/IPCs.ts", ["ipc"]],
-	// S3 revision 1 pins: every remaining word and form, and the rule's edges.
-	["security/policy.md", ["security"]],
-	["config/secrets.yaml", ["secret"]],
-	["aws/credentials", ["credential"]],
-	["billing/payments.ts", ["payment"]],
-	["db/schema.prisma", ["schema"]],
-	["deploy/ssh_config", ["ssh"]],
-	["creds.json", ["credential"]],
-	["perm/check.ts", ["permission"]],
-	["perms.ts", ["permission"]],
-	["authn.go", ["auth"]],
-	["authz.go", ["auth"]],
-	["authorization.ts", ["auth"]],
-	["authenticate.ts", ["auth"]],
-	["authorize.ts", ["auth"]],
-	["secure-store.ts", ["security"]],
-	["crypt.c", ["crypto"]],
-	["cryptography.py", ["crypto"]],
-	["encrypt.ts", ["crypto"]],
-	["decrypt.ts", ["crypto"]],
-	["sshes.ts", ["ssh"]],
-	["auth/authService.ts", ["auth"]],
-	[String.raw`src\auth\x.ts`, ["auth"]],
-	["my secret notes.md", ["secret"]],
-	["lib/x509cert.pem", ["cert"]],
-	["src/oauth2client.js", ["auth"]],
-];
-
 const git = (repo, ...args) =>
 	execFileSync("git", args, {
 		cwd: repo,
@@ -370,17 +309,6 @@ describe("path vocabulary (S3)", () => {
 		}
 	});
 
-	it("finds sensitive path words as whole tokens", () => {
-		const wrong = SENSITIVE.filter(
-			([path, want]) =>
-				JSON.stringify(sensitiveWords(path)) !== JSON.stringify(want),
-		).map(
-			([path, want]) =>
-				`${path}: got ${JSON.stringify(sensitiveWords(path))}, want ${JSON.stringify(want)}`,
-		);
-		expect.soft(wrong).toEqual([]);
-	});
-
 	it(
 		"categorizes every manifest-only change as manifest",
 		() => {
@@ -419,17 +347,6 @@ describe("path vocabulary (S3)", () => {
 		"pins the S3 residual vocabulary cases",
 		() => {
 			expect.soft(reviewRangeOf("src/test/resources/pom.xml")).toBe("test/yes");
-			const words = {
-				"lib/crypto/hash.ts": ["crypto"],
-				"db/migration/x.ts": ["migration"],
-				"password.ts": ["password"],
-				"tls/cert.pem": ["cert"],
-				"src/HTTPSession.ts": ["session"],
-				"lib/URLs.ts": [],
-			};
-			for (const [path, want] of Object.entries(words)) {
-				expect.soft(sensitiveWords(path), path).toEqual(want);
-			}
 			expect
 				.soft(
 					mismatches(

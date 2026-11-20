@@ -38,7 +38,7 @@ For each changed public entry point (function, handler, command, component), cho
 
 **Lazy-implementation check.** For each named requirement, imagine the laziest implementation that would still pass every listed test: hard-coded values, a skipped branch, the wrong order. Name the test that fails on it, or write `NONE`. `NONE` on a named requirement is a finding. Then check the red: it failed for the intended missing behavior at the recorded pre-change state, rooted in the accepted predecessor, and the green belongs to this candidate. A log from another identity proves nothing. A red or green log you cannot read (missing from `evidence_paths`, or unreadable) is an inspection gap: report `incomplete: <which proof>` in the outcome, never a pass.
 
-In intent mode, run the same hunt against the brief. Check that each Expected red can actually be observed at the base (read the real code). Check that each oracle pins an exact value where one can be derived. Check that the lazy implementation fails at least one listed test, and that each seam is public. Intent review judges feasibility: it cannot claim tested or runtime readiness, or implementation correctness.
+In intent mode, run the same hunt against the brief. Check that each behavior's example pins an exact value where one can be derived, and that a lazy implementation would contradict at least one example. Where the brief states an Expected red, check it can actually be observed at the base (read the real code). Do not ask for seams, test paths or Expected reds the brief leaves out: they belong to the implementation. Intent review judges feasibility: it cannot claim tested or runtime readiness, or implementation correctness.
 
 ## Group by mechanism
 

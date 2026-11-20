@@ -43,7 +43,7 @@ Read and apply `${CLAUDE_PLUGIN_ROOT}/skills/_shared/dimension-sweep-and-checkpo
 - Ask grounded questions about material ambiguities that affect the next slice. Record the answer and its consequences in Developer Context and Decisions.
 - Put distant questions in Deferred Work with their decision trigger. They need not be settled to review today's intent.
 - Confirm the architectural approach, exclusions, public seam, and next behavior with the user before stabilizing the brief.
-- In normal and rigorous (**Lanes**), when a decision rejects an option or settles a genuine ambiguity, run the **Approach check** in `dimension-sweep-and-checkpoint.md` and show its rows at this same confirmation. It never blocks and adds no stop: a rejection it finds stale is evidence for the "adjust a decision" answer. In rigorous, pass its rows to the intent review below with each row's state unchanged. Only Verified rows count as verified upstream facts; Weakened, Falsified, Resolved, Unverifiable, ungrounded and broken rows are open questions for that review.
+- In the normal lane (**Lanes**), when a decision rejects an option or settles a genuine ambiguity, run the **Approach check** in `dimension-sweep-and-checkpoint.md` and show its rows at this same confirmation. It never blocks and adds no stop: a rejection it finds stale is evidence for the "adjust a decision" answer. Pass its rows to the intent review below with each row's state unchanged. Only Verified rows count as verified upstream facts; Weakened, Falsified, Resolved, Unverifiable, ungrounded and broken rows are open questions for that review.
 
 Done when the next slice has no unresolved material ambiguity; the rest is an honest roadmap rather than invented certainty.
 
@@ -65,9 +65,9 @@ Use these sections, keeping each fact in one authoritative place:
 | Developer Context | Decision rationale and stable evidence locations for approval/reopening records; intent approval is distinct from build authority. |
 | References | Real upstream documents, tickets, and verified source or documentation links. |
 
-Read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/test-contract-authoring.md` before authoring a contract. Apply **Intent And Brief** for its canonical structure: stable behavior IDs, public seam, exact oracle, expected red, non-goals, constraints, and observable automated/manual verification. Preserve risk-bearing boundaries, invariants, and error paths; a non-behavioral exemption needs an explicit reason.
+Read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/test-contract-authoring.md` before authoring a contract. Apply **Intent And Brief** for its canonical structure: stable behavior IDs, one exact example per behavior, non-goals, constraints, and observable automated/manual verification. Preserve risk-bearing boundaries, invariants, and error paths; a non-behavioral exemption needs an explicit reason.
 
-Only the next executable slice needs a complete contract. An existing contract stays at its owner; the brief links to it rather than copying Behavior entries or verification criteria. Expected red is a prediction here, never evidence that a test ran.
+Only the next executable slice needs a complete contract. An existing contract stays at its owner; the brief links to it rather than copying Behavior entries or verification criteria. An Expected red written in a brief (optional; pins and older contracts use it) is a prediction, never evidence that a test ran.
 
 Architecture may show an interface or data shape that resolves a decision. Keep implementation bodies, test implementations, and source-file replicas out of the document. File maps describe responsibilities, not code to transcribe.
 
@@ -79,7 +79,7 @@ Done when a reviewer can judge the next slice without reconstructing intent from
 
 Stabilize the brief and record its body hash and the referenced contracts' hashes using **Candidate Identity**; later evidence appends are governed by the append-only check. Set `status: in-review`.
 
-Intent review runs only in the rigorous lane (**Lanes** table). In fast and normal, skip steps 1–2: present the stabilized brief, and on the user's confirmation of intent save its approved copy; steps 3–4 still govern any finding the user raises.
+Intent review runs in the normal lane (**Lanes** table). In fast, skip steps 1–2: present the stabilized brief, and on the user's confirmation of intent save its approved copy; steps 3–4 still govern any finding the user raises.
 
 1. Dispatch `slice-verifier` with `mode=intent`, the exact `artifact_path` identity, and the next `slice_id`. It reviews commitments, dependencies, base guarantees, atomicity, and verified upstream facts, not hypothetical implementation correctness. Seam and oracle sufficiency (an observable Expected red, an oracle that fails on a wrong implementation) belongs to `artifact-coverage-reviewer` in step 2, so an oracle edit reruns that review.
 2. Dispatch independent `artifact-code-reviewer` and `artifact-coverage-reviewer` agents in parallel on that same intent identity. Read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/artifact-review-dispatch.md` for dispatch and evidence persistence.
@@ -94,7 +94,7 @@ When the developer approves a slice brief whose `Lane:` line came from `lane.mjs
 
 1. Verify canonical references, intent review evidence, and next-slice completeness; keep deferred questions explicit.
 2. For opt-in standing decisions, read `${CLAUDE_PLUGIN_ROOT}/skills/_shared/decision-ledger.md` and apply its promotion protocol only to entries tagged `scope: standing`, `key`, and `rule`, within authorized write scope. Feature-local choices and the shared TDD requirement are not automatic promotions.
-3. Run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/validate-artifact.mjs" <design-path> --finalizing --slice <slice-id> --stamp`, one `--slice` per slice whose Test Contract this approval covers. Fix reported faults and rerun; a broken gate is not a pass. A Test line the gate cannot read fails here, so rewrite it in one of the grammar's forms (`test-contract-authoring.md`, Test line grammar); `WARN` lines on other slices' contracts are already-approved text and stay as they are. Preserve the stamped `content_hash` as the final body identity. A body change during finalization that the shared append-only check does not allow reopens approval.
+3. On the user's approval, run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/approval.mjs" record <design-path> --slice <slice-id>`, one `--slice` per slice whose Test Contract this approval covers: it validates, stamps and saves the approved copy in one call. Fix reported `error:` lines and rerun; a broken call is not a pass. A Test line the gate cannot read fails here, so rewrite it in one of the grammar's forms (`test-contract-authoring.md`, Test line grammar); `WARN` lines on other slices' contracts are already-approved text and stay as they are. Preserve the stamped `content_hash` as the final body identity. A body change during finalization that the shared append-only check does not allow reopens approval.
 4. Flip `status: in-review` to `status: ready` only after the required gates pass. If finalization changed reviewed intent, re-record the body hash and re-review before the flip.
 5. Present the path, architectural outcome, next-slice readiness, and deferred scope. `ready` means reviewed design intent, not permission to build or proof of feature completion.
 
@@ -102,7 +102,7 @@ When the developer approves a slice brief whose `Lane:` line came from `lane.mjs
 
 **Write the handoff (a step, not part of the message):** before printing the closing message, unless a stop is pending, run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/handoff.mjs" write --next "<the next-step command>" [--artifact <path>] [--slice <id>] [--lane <lane>] [--decision "<open decision>"]...`; after `/clear`, Claude Code shows it once.
 
-Scheduling through `/rpiv:plan` is optional, for a rigorous multi-slice change.
+Scheduling through `/rpiv:plan` is optional, for a multi-slice change.
 
 ## Follow-Ups
 

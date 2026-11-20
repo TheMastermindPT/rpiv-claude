@@ -141,7 +141,7 @@ Goal: ground the upcoming interview in concrete codebase evidence, with the prob
 
 ### Step 3.5: Lane Estimate
 
-Estimate the feature's lane (`${CLAUDE_PLUGIN_ROOT}/skills/_shared/candidate-workflow.md` **Lanes**) before the interview, since it sets the interview's length, with a `lane.mjs --paths` call: run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/lane.mjs" --paths <files the probe names as likely to change> --slices <your slice estimate>`. A sensitive word in the request itself, as `sensitiveWords` in `source-vocab.mjs` names them (read that module; do not keep your own list), raises the lane to `rigorous`, and its weak words `token` or `schema` alone to `normal`; with no files named, the lane is `normal`. A broken call (`lane: broken:` on stderr) means `normal`, never `fast`; keep its diagnostic in `lane_reasons:`. Record the result as `lane:` and `lane_reasons:` in the FRD frontmatter (Step 6), the reasons as one inline list. The estimate only rises later: when the interview shows a larger scope or a sensitive area, raise the lane and continue the full interview.
+Estimate the feature's lane (`${CLAUDE_PLUGIN_ROOT}/skills/_shared/candidate-workflow.md` **Lanes**) before the interview, since it sets the interview's length, with a `lane.mjs --paths` call: run `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/lane.mjs" --paths <files the probe names as likely to change> --slices <your slice estimate>`. Fast is only an estimate the developer confirms; with no files named, the lane is `normal`. A broken call (`lane: broken:` on stderr) means `normal`, never `fast`; keep its diagnostic in `lane_reasons:`. Record the result as `lane:` and `lane_reasons:` in the FRD frontmatter (Step 6), the reasons as one inline list. The estimate only rises later: when the interview shows a larger scope or a risky area, raise the lane and continue the full interview.
 
 ### Step 4: Lazy Tree Setup + Pre-Resolution Confirmation
 
@@ -245,7 +245,7 @@ Compile interview output into the FRD. The interview's logical order (problem �
 - **Shared Understanding** — the teach-back outcome from Step 5.5: a short restatement of the agreed model in the developer's words, the points they corrected during teach-back (what changed), and any residual uncertainty they confirmed as acceptable. This section is the consensus proof — it shows both sides agreed, not just that the developer answered questions.
 - **References** — input files, mentioned tickets, related artifacts.
 
-Frontmatter additions for template_version 2: `register:` (`plain` / `mixed` / `technical` — the final level from Step 2.5) and `consensus:` (`confirmed` once the Step 5.5 teach-back is accepted; `partial` if the developer deferred on residual uncertainty). Lane fields: `lane:` and `lane_reasons:` from Step 3.5, raised by anything the interview found; `validate-artifact.mjs` rejects a value other than `fast`, `normal` or `rigorous`, and a lane without its reasons.
+Frontmatter additions for template_version 2: `register:` (`plain` / `mixed` / `technical` — the final level from Step 2.5) and `consensus:` (`confirmed` once the Step 5.5 teach-back is accepted; `partial` if the developer deferred on residual uncertainty). Lane fields: `lane:` and `lane_reasons:` from Step 3.5, raised by anything the interview found; `validate-artifact.mjs` rejects a value other than `fast` or `normal` (an older `rigorous` reads as `normal`), and a lane without its reasons.
 
 ### Step 7: Write Artifact, Present, Chain
 

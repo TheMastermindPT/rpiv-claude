@@ -53,11 +53,16 @@ describe("lane rules", () => {
 				/lane\.mjs --range/,
 				/only raises the lane/i,
 				/missing `Lane:` line, a missing feature lane, or a broken lane call means `normal`, never `fast`/i,
-				/\| Workspace \| branch in the main working tree \| linked worktree \| linked worktree \|/,
-				/\| Intent review \| no \| no \| yes \|/,
-				/\| slice-verifier \| yes \| yes \| yes \|/,
-				/\| Code\/coverage reviewer pair \| no \| no \| yes \|/,
-				/\| Per-slice human acceptance \| no \| no \| yes \|/,
+				/Every slice runs in one lane: `fast` or `normal`/,
+				/older artifact's\s+`rigorous` reads as `normal`/i,
+				/never words in file names/i,
+				/the developer confirms it/i,
+				/\| Workspace \| branch in the main working tree \| linked worktree \|/,
+				/\| Intent review \| no \| yes \|/,
+				/\| slice-verifier \| yes \| yes \|/,
+				/\| Code\/coverage reviewer pair \| no \| yes \|/,
+				/\| Per-slice human acceptance \| no \| yes \|/,
+				/\| Deep-review depth \| light \| full \|/,
 				/falls back to a linked worktree when the main working tree has uncommitted changes/i,
 				/never stash/i,
 				/deterministic checks[^.]*before[^.]*review agent/i,
@@ -67,7 +72,7 @@ describe("lane rules", () => {
 				/A raise is recorded as an appended `## Developer Context` entry/i,
 				/remaining steps follow the raised lane/i,
 				/before dispatching any candidate-mode review agent/i,
-				/wherever rpiv says accepted predecessor, fast and normal mean the gate-passed predecessor/i,
+				/wherever rpiv says accepted predecessor, fast means the gate-passed predecessor/i,
 			]) {
 				expect(text).toMatch(rule);
 			}
@@ -81,7 +86,7 @@ describe("lane rules", () => {
 			expect(text).toMatch(/skills\/_shared\/convergence\.mjs/);
 			expect(text).toMatch(/`convergence: reopen`[^.]*first choice/i);
 			expect(text).toMatch(/`convergence: broken:`[^.]*never[^.]*keep/i);
-			expect(text).toMatch(/\| Approach check \| no \| yes \| yes \|/);
+			expect(text).toMatch(/\| Approach check \| no \| yes \|/);
 			expect(text).toMatch(/skills\/_shared\/slice-preflight\.mjs/);
 			expect(text).toMatch(/exit 2 is a broken gate that blocks/i);
 			expect(text).toMatch(/`preflight: not run \(no slice commit\)`, never a pass/i);
@@ -210,16 +215,16 @@ describe("lane rules", () => {
 		).toContain(REUSE);
 	});
 
-	it("accepts per slice only in the rigorous lane", () => {
+	it("accepts per slice only in the normal lane", () => {
 		for (const text of workflowTexts()) {
 			expect(text).toMatch(
-				/In fast and normal, a slice whose gates pass becomes the predecessor for the next slice without a human stop/i,
+				/In fast, a slice whose gates pass becomes the predecessor for the next slice without a human stop/i,
 			);
 			expect(text).toMatch(
 				/accepts the combined result once before integration/i,
 			);
 			expect(text).toMatch(
-				/In the rigorous lane, the human accepts each slice/i,
+				/In the normal lane, the human accepts each slice/i,
 			);
 			expect(text).toMatch(/Every lane still stops for/i);
 			expect(text).toMatch(
@@ -228,7 +233,7 @@ describe("lane rules", () => {
 		}
 		const implement = joined(readFileSync(implementPath, "utf8"));
 		expect(implement).toMatch(
-			/In the rigorous lane, stop until the human accepts the exact candidate revision/i,
+			/In the normal lane, stop until the human accepts the exact candidate revision/i,
 		);
 		expect(implement).toMatch(
 			/accepts the combined result once before integration/i,
@@ -236,13 +241,13 @@ describe("lane rules", () => {
 		expect(implement).toMatch(/workspace the lane requires/i);
 		expect(implement).toContain("lane workspace setup");
 		const asks = implement.match(/[^.]*ask the human to accept[^.]*\./gi) ?? [];
-		expect(asks.filter((sentence) => !/rigorous/i.test(sentence))).toEqual([]);
+		expect(asks.filter((sentence) => !/normal lane/i.test(sentence))).toEqual([]);
 		const validate = joined(readFileSync(validatePath, "utf8"));
-		expect(validate).toMatch(/rigorous slice[^.]*without[^.]*acceptance/i);
-		expect(validate).toMatch(/fast and normal[^.]*combined result/i);
+		expect(validate).toMatch(/normal slice[^.]*without[^.]*acceptance/i);
+		expect(validate).toMatch(/in fast[^.]*combined result/i);
 		expect(validate).not.toMatch(/if absent, report awaiting acceptance/i);
 		expect(validate).toMatch(/acceptance the slice's lane requires is absent/i);
-		expect(validate).toMatch(/included rigorous slice without its acceptance/i);
+		expect(validate).toMatch(/included normal slice without its acceptance/i);
 	});
 
 	it("revise and the validation template follow the lane", () => {

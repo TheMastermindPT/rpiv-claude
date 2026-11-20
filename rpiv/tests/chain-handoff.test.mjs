@@ -92,7 +92,7 @@ describe("chain handoff writer (S17)", () => {
 			mkdirSync(outside);
 			for (const [args, detail, cwd] of [
 				[["--next", "/rpiv:pr main", "--artifact", "missing.md"], "missing.md", wt],
-				[["--next", "/rpiv:pr main", "--lane", "quick"], "lane must be fast, normal or rigorous", wt],
+				[["--next", "/rpiv:pr main", "--lane", "quick"], "lane must be fast or normal", wt],
 				[[], "--next needs a command", wt],
 				[["--next", ""], "--next needs a command", wt],
 				[["--next", "/rpiv:pr main", "--bogus", "x"], "unknown option: --bogus", wt],

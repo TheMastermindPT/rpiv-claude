@@ -101,13 +101,13 @@ describe("append-only check keeps approval", () => {
 
 	it("keeps it for a lane raise recorded in Developer Context", () => {
 		const result = check(
-			doc(),
+			doc({ lane: "fast" }),
 			doc(
-				{ lane: "rigorous", lane_reasons: "[paths: skills, hooks]" },
+				{ lane: "normal", lane_reasons: "[paths: skills, hooks]" },
 				{
 					"Developer Context": [
 						"- 2026-10-16: approved.",
-						"- Lane raised to rigorous: hooks changed.",
+						"- Lane raised to normal: hooks changed.",
 					],
 				},
 			),
@@ -158,7 +158,7 @@ describe("append-only check reopens approval", () => {
 	});
 
 	it("reopens a lane raise that no Developer Context entry records", () => {
-		const result = check(doc(), doc({ lane: "rigorous" }));
+		const result = check(doc({ lane: "fast" }), doc({ lane: "normal" }));
 		expect(result.status).toBe(1);
 		expect(result.stdout).toMatch(
 			/lane raise .*no `## Developer Context` entry/,

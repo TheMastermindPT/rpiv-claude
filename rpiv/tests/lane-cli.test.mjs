@@ -152,13 +152,13 @@ describe("lane CLI (S5)", () => {
 					["lane: fast", "reason: within fast limits", "diagnostic: lines unknown", "diagnostic: hub signal unavailable"],
 				],
 				[
-					["--paths", "./src/auth/x.ts", "--slices", "1"],
-					["lane: rigorous", "reason: sensitive word: auth (src/auth/x.ts)", "diagnostic: lines unknown", "diagnostic: hub signal unavailable"],
+					["--paths", "./db/migrations/x.sql", "--slices", "1"],
+					["lane: normal", "reason: migration: db/migrations/x.sql", "diagnostic: lines unknown", "diagnostic: hub signal unavailable"],
 				],
 				[
 					// Only a leading `./` is removed (mutation hardening).
-					["--paths", "auth/./x.ts", "--slices", "1"],
-					["lane: rigorous", "reason: sensitive word: auth (auth/./x.ts)", "diagnostic: lines unknown", "diagnostic: hub signal unavailable"],
+					["--paths", "migrations/./x.sql", "--slices", "1"],
+					["lane: normal", "reason: migration: migrations/./x.sql", "diagnostic: lines unknown", "diagnostic: hub signal unavailable"],
 				],
 				[
 					["--paths", "src/a.ts"],
@@ -189,7 +189,7 @@ describe("lane CLI (S5)", () => {
 	);
 
 	it(
-		"grades a migration by what its diff adds",
+		"keeps every migration out of fast, whatever it adds",
 		() => {
 			const repo = newRepo();
 			const commit = (message) => {
@@ -207,19 +207,15 @@ describe("lane CLI (S5)", () => {
 			expect.soft(range(c0, c1), "additive range").toEqual(
 				printed(
 					"lane: normal",
-					"reason: additive migration: db/migrations/0002_idx.sql",
-					"reason: weak sensitive word: migration (db/migrations/0002_idx.sql)",
+					"reason: migration: db/migrations/0002_idx.sql",
 					"diagnostic: hub signal unavailable",
 				),
 			);
 			expect.soft(range(c1, c2).stdout, "risky range").toMatch(
-				/^lane: rigorous\nreason: migration: db\/migrations\/0003_drop\.sql\n/,
+				/^lane: normal\nreason: migration: db\/migrations\/0003_drop\.sql\n/,
 			);
-			// An untracked migration is judged from its content on disk.
-			put(repo, "db/migrations/0004_idx.sql", "CREATE INDEX idx_b ON a (c);\n");
-			expect.soft(runLane(["--working", "--slices", "1"], { cwd: repo }).stdout, "untracked additive").toMatch(/^lane: normal\n/);
 			put(repo, "db/migrations/0004_idx.sql", "UPDATE a SET c = 1;\n");
-			expect.soft(runLane(["--working", "--slices", "1"], { cwd: repo }).stdout, "untracked risky").toMatch(/^lane: rigorous\n/);
+			expect.soft(runLane(["--working", "--slices", "1"], { cwd: repo }).stdout, "untracked").toMatch(/^lane: normal\nreason: migration: db\/migrations\/0004_idx\.sql\n/);
 		},
 		TEST_TIMEOUT,
 	);
@@ -234,7 +230,7 @@ describe("lane CLI (S5)", () => {
 				return git(repo, "rev-parse", "HEAD");
 			};
 			put(repo, "src/a.ts", lines(50, "old"));
-			put(repo, "src/auth/x.ts", lines(2));
+			put(repo, "db/migrations/x.sql", lines(2));
 			const c0 = commit("c0");
 			put(repo, "src/a.ts", lines(100, "new"));
 			const c1 = commit("c1");
@@ -244,9 +240,9 @@ describe("lane CLI (S5)", () => {
 			put(repo, "img/x.png", Buffer.from([137, 80, 78, 71, 0, 0]));
 			const c3 = commit("c3");
 			mkdirSync(join(repo, "src/core"));
-			git(repo, "mv", "src/auth/x.ts", "src/core/x.ts");
+			git(repo, "mv", "db/migrations/x.sql", "src/core/x.txt");
 			const c4 = commit("c4");
-			put(repo, "src/auth ação.ts", "one\n");
+			put(repo, "db/migrations/ação 1.sql", "one\n");
 			const c5 = commit("c5");
 			const range = (from, to) => runLane(["--range", `${from}..${to}`, "--slices", "1"], { cwd: repo });
 			expect.soft(range(c0, c1), "C0..C1").toEqual(
@@ -265,10 +261,10 @@ describe("lane CLI (S5)", () => {
 				),
 			);
 			expect.soft(range(c3, c4), "C3..C4").toEqual(
-				printed("lane: rigorous", "reason: sensitive word: auth (src/auth/x.ts)", "diagnostic: hub signal unavailable"),
+				printed("lane: normal", "reason: migration: db/migrations/x.sql", "diagnostic: hub signal unavailable"),
 			);
 			expect.soft(range(c4, c5), "C4..C5").toEqual(
-				printed("lane: rigorous", "reason: sensitive word: auth (src/auth ação.ts)", "diagnostic: hub signal unavailable"),
+				printed("lane: normal", "reason: migration: db/migrations/ação 1.sql", "diagnostic: hub signal unavailable"),
 			);
 			const bad = runLane(["--range", "nope..HEAD"], { cwd: repo });
 			expect.soft(bad.status).toBe(2);
@@ -373,7 +369,7 @@ describe("lane CLI (S5)", () => {
 			putGraphs(repo);
 			const withGraph = (path, graph) =>
 				runLane(["--paths", path, "--slices", "1", "--graph", graph], { cwd: repo });
-			const hub = (path) => printed("lane: rigorous", `reason: hub: ${path}`, "diagnostic: lines unknown");
+			const hub = (path) => printed("lane: normal", `reason: hub: ${path}`, "diagnostic: lines unknown");
 			const fast = printed("lane: fast", "reason: within fast limits", "diagnostic: lines unknown");
 			for (const [path, graph, want] of [
 				["src/core.ts", "graphs/dc.json", hub("src/core.ts")],
@@ -453,11 +449,11 @@ describe("lane CLI (S5)", () => {
 				else expect.soft(got, graph).toMatch(detail);
 				expect.soft(out, graph).toHaveLength(5);
 			}
-			const sensitive = withGraph("src/auth/x.ts", "graphs/array.json");
+			const sensitive = withGraph("db/migrations/x.sql", "graphs/array.json");
 			const out = sensitive.stdout.trimEnd().split("\n");
 			expect
 				.soft(out.slice(0, 3))
-				.toEqual(["lane: rigorous", "reason: sensitive word: auth (src/auth/x.ts)", "diagnostic: lines unknown"]);
+				.toEqual(["lane: normal", "reason: migration: db/migrations/x.sql", "diagnostic: lines unknown"]);
 			expect.soft(out[3]).toMatch(brokenLine("graphs/array.json"));
 			expect.soft(out).toHaveLength(4);
 			// S5 rev. 1 pin: a broken graph leaves a normal change normal (no raise reason).
@@ -573,12 +569,12 @@ describe("lane config changes (S22)", () => {
 	};
 
 	it(
-		"--paths over .rpiv-lanes.json is rigorous",
+		"--paths over .rpiv-lanes.json is normal",
 		() => {
 			const repo = newRepo();
 			expect(runLane(["--paths", ".rpiv-lanes.json", "--slices", "1"], { cwd: repo })).toEqual(
 				printed(
-					"lane: rigorous",
+					"lane: normal",
 					"reason: lane config: .rpiv-lanes.json",
 					"diagnostic: lines unknown",
 					"diagnostic: hub signal unavailable",
@@ -598,10 +594,9 @@ describe("lane config changes (S22)", () => {
 			const b = commit(repo, "B");
 			put(repo, CONFIG, '{"fast":{"maxLines":500,"maxFiles":0},"rigorous":{"minFiles":1}}');
 			const strict = printed(
-				"lane: rigorous",
+				"lane: normal",
 				"reason: lines: 20 > 10",
 				"reason: files: 1 > 0",
-				"reason: files: 1 >= 1",
 				"diagnostic: hub signal unavailable",
 			);
 			expect.soft(runLane(["--range", `${a}..${b}`, "--slices", "1"], { cwd: repo })).toEqual(strict);
@@ -647,7 +642,7 @@ describe("lane config changes (S22)", () => {
 				);
 			const working = runLane(["--working", "--slices", "1"], { cwd: repo });
 			expect.soft(working.status).toBe(0);
-			expect.soft(working.stdout.split("\n")[0]).toBe("lane: rigorous");
+			expect.soft(working.stdout.split("\n")[0]).toBe("lane: normal");
 			expect.soft(working.stdout).toContain("reason: files: 3 > 1\n");
 			expect.soft(working.stdout).toContain("reason: lane config: .rpiv-lanes.json\n");
 
@@ -805,9 +800,8 @@ describe("lane config changes (S22)", () => {
 			const paths = Array.from({ length: 61 }, (_, i) => `p${i + 1}.js`);
 			expect(runLane(["--paths", ...paths, "--slices", "1"], { cwd: repo })).toEqual(
 				printed(
-					"lane: rigorous",
+					"lane: normal",
 					"reason: files: 61 > 5",
-					"reason: files: 61 >= 61",
 					`diagnostic: broken config: .rpiv-lanes.json at HEAD: invalid JSON (${parseErrorOf("{oops")})`,
 					"diagnostic: lines unknown",
 					"diagnostic: hub signal unavailable",

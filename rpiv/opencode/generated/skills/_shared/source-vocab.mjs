@@ -12,13 +12,13 @@
 //
 // It also owns the RISK vocabulary (D15 of the risk-lanes design, S3): dependency
 // manifests and lockfiles (the union of review-range.mjs's two former regexes),
-// migrations, CI config, container files, env files and sensitive path words —
+// migrations, CI config, container files and env files —
 // so the lane classifier and review-range read one list instead of copies.
 //
 // Importable-only: no CLI, no isMain.
 // Importable: SOURCE_EXT, CITE_EXT, extOf, isSource, isTest, isFixture, TEST_EXCLUDE_RE,
 // isManifest, isLockfile, isMigration, isCiConfig, isContainerFile, LANE_CONFIG_FILE,
-// isLaneConfig, isEnvFile, sensitiveWords, isGenerated, isMedia.
+// isLaneConfig, isEnvFile, isGenerated, isMedia.
 
 /** Extensions that count as reviewable source code (metrics, mutation, semantic). */
 export const SOURCE_EXT = new Set([
@@ -129,56 +129,6 @@ export const isEnvFile = (p) => {
 	const base = baseOf(p);
 	return ENV_NAME_RE.test(base) && !ENV_TEMPLATE_RE.test(base);
 };
-// Sensitive path words (FR3 + developer additions, D15) and the other spellings
-// each one covers. A token matches a word or form exactly, or its plural (+s/+es)
-// — never a prefix: `author`, `tokenizer`, `schemaless`, `secretary` stay out.
-const SENSITIVE_FORMS = {
-	auth: [
-		"authn", "authz", "authentication", "authorization", "authenticate", "authorize", "oauth",
-		"authenticated", "authenticator", "authorized", "authorizer",
-	],
-	security: ["secure", "secured"],
-	crypto: [
-		"crypt", "cryptography", "cryptographic", "encrypt", "encryption", "encrypted",
-		"decrypt", "decryption", "decrypted",
-	],
-	secret: [],
-	credential: ["creds"],
-	permission: ["perm", "perms"],
-	token: [],
-	payment: [],
-	migration: ["migrate", "migrated", "migrator"],
-	schema: [],
-	ipc: [],
-	preload: [],
-	password: ["passwd"],
-	session: [],
-	jwt: [],
-	cert: ["certificate"],
-	ssh: [],
-};
-
-// token -> the sensitive word it names.
-const SENSITIVE_TOKENS = new Map(
-	Object.entries(SENSITIVE_FORMS).flatMap(([word, forms]) =>
-		[word, ...forms].flatMap((form) =>
-			[form, `${form}s`, `${form}es`].map((token) => [token, word]),
-		),
-	),
-);
-
-/** Lower-cased words of a path: split at separators and camelCase boundaries
-    (`authService` → auth, service; `JWTToken` → jwt, token; `parseJWTs` → parse,
-    jwts — an acronym keeps its plural `s`). */
-const pathTokens = (p) =>
-	(p.match(/[A-Z]+s(?![a-z])|[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+/g) ?? []).map((t) =>
-		t.toLowerCase(),
-	);
-
-/** The sensitive words a path names, sorted and de-duplicated. */
-export const sensitiveWords = (p) =>
-	[...new Set(pathTokens(p).map((t) => SENSITIVE_TOKENS.get(t)).filter(Boolean))].sort();
-
 // Generated/vendored paths and media files (D17 of the risk-lanes design, S5):
 // review-range.mjs's former GENERATED_PATH_RE and MEDIA_EXT, so review-range and
 // the lane CLI drop the same files. metrics.mjs keeps its own, different

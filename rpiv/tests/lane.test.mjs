@@ -56,7 +56,7 @@ const classify = (files, extra = {}) => {
 };
 
 describe("lane classifier (S4)", () => {
-	it("editing .rpiv-lanes.json is a rigorous lane config change", () => {
+	it("editing .rpiv-lanes.json keeps a change out of fast", () => {
 		expect(
 			classifyLane({
 				files: [{ path: ".rpiv-lanes.json", added: 1, deleted: 1 }],
@@ -64,13 +64,13 @@ describe("lane classifier (S4)", () => {
 				hubs: [],
 			}),
 		).toEqual({
-			lane: "rigorous",
+			lane: "normal",
 			reasons: ["lane config: .rpiv-lanes.json"],
 			diagnostics: [],
 		});
 		for (const path of ["./.rpiv-lanes.json", ".\\.rpiv-lanes.json"]) {
 			expect.soft(classify([{ path, added: 1, deleted: 0 }]), path).toEqual({
-				lane: "rigorous",
+				lane: "normal",
 				reasons: [`lane config: ${path}`],
 			});
 		}
@@ -121,9 +121,10 @@ describe("lane classifier (S4)", () => {
 			lane: "normal",
 			reasons: ["files: 60 > 5"],
 		});
+		// No size makes a change more than normal: there is no third lane.
 		expect(classify(srcFiles(61))).toEqual({
-			lane: "rigorous",
-			reasons: ["files: 61 > 5", "files: 61 >= 61"],
+			lane: "normal",
+			reasons: ["files: 61 > 5"],
 		});
 		expect(
 			classify([{ path: "src/a.ts", added: 200, deleted: 0 }, ...srcFiles(5)], {
@@ -160,8 +161,8 @@ describe("lane classifier (S4)", () => {
 		expect(
 			classify([...srcFiles(30), ...srcFiles(31, (i) => `src/f${i}.test.ts`)]),
 		).toEqual({
-			lane: "rigorous",
-			reasons: ["files: 30 > 5", "files: 61 >= 61"],
+			lane: "normal",
+			reasons: ["files: 30 > 5"],
 		});
 
 		expect(
@@ -208,84 +209,37 @@ describe("lane classifier (S4)", () => {
 		}
 	});
 
-	it("grades an additive migration normal and anything else rigorous", () => {
-		const migration = (kind) =>
-			classify([{ path: "db/migrations/002.sql", added: 1, deleted: 0, ...(kind && { migration: kind }) }]);
-		expect(migration("additive")).toMatchObject({
-			lane: "normal",
-			reasons: [
-				"additive migration: db/migrations/002.sql",
-				"weak sensitive word: migration (db/migrations/002.sql)",
-			],
-		});
-		for (const kind of ["risky", undefined]) {
-			expect.soft(migration(kind).lane, String(kind)).toBe("rigorous");
-		}
-		expect(() =>
-			classify([{ path: "db/migrations/002.sql", added: 1, deleted: 0, migration: "safe" }]),
-		).toThrow(/migration must be additive or risky/);
-	});
-
-	it("raises the lane on each sensitive-signal family", () => {
+	it("keeps each certain file kind out of fast, and never reads words in a name", () => {
 		const one = (path, extra) =>
 			classify([{ path, added: 1, deleted: 0 }], extra);
 		const cases = [
-			[
-				"src/auth/login.ts",
-				"rigorous",
-				["sensitive word: auth (src/auth/login.ts)"],
-			],
-			[
-				"db/migrations/001.sql",
-				"rigorous",
-				[
-					"migration: db/migrations/001.sql",
-					"sensitive word: migration (db/migrations/001.sql)",
-				],
-			],
+			["db/migrations/001.sql", "normal", ["migration: db/migrations/001.sql"]],
 			[
 				".github/workflows/ci.yml",
-				"rigorous",
+				"normal",
 				["ci config: .github/workflows/ci.yml"],
 			],
-			["Dockerfile", "rigorous", ["container file: Dockerfile"]],
-			[".env", "rigorous", ["env file: .env"]],
+			["Dockerfile", "normal", ["container file: Dockerfile"]],
+			[".env", "normal", ["env file: .env"]],
 			["package.json", "normal", ["manifest: package.json"]],
 			["pnpm-lock.yaml", "normal", ["manifest: pnpm-lock.yaml"]],
-			[
-				"theme/design-tokens.json",
-				"normal",
-				["weak sensitive word: token (theme/design-tokens.json)"],
-			],
-			[
-				"prisma/schema.prisma",
-				"normal",
-				["weak sensitive word: schema (prisma/schema.prisma)"],
-			],
-			[
-				"src/authToken.ts",
-				"rigorous",
-				[
-					"sensitive word: auth (src/authToken.ts)",
-					"weak sensitive word: token (src/authToken.ts)",
-				],
-			],
-			[
-				"tests/auth.test.ts",
-				"rigorous",
-				["sensitive word: auth (tests/auth.test.ts)"],
-			],
+			// Words in a file name say nothing about the change: the developer
+			// confirms whether a small change is really fast.
+			["src/auth/login.ts", "fast", ["within fast limits"]],
+			["src/authToken.ts", "fast", ["within fast limits"]],
+			["src/payment/charge.ts", "fast", ["within fast limits"]],
+			["prisma/schema.prisma", "fast", ["within fast limits"]],
 		];
 		for (const [path, lane, reasons] of cases) {
 			expect.soft(one(path), path).toEqual({ lane, reasons });
 		}
 
 		expect(one("src/core.ts", { hubs: ["src/core.ts"] })).toEqual({
-			lane: "rigorous",
+			lane: "normal",
 			reasons: ["hub: src/core.ts"],
 		});
 		expect(one("src\\core.ts", { hubs: ["src/core.ts"] }).lane).toBe(
-			"rigorous",
+			"normal",
 		);
 		expect(one("src/a.ts", { hubs: ["src/core.ts"] }).lane).toBe("fast");
 		const plain = {
@@ -311,24 +265,17 @@ describe("lane classifier (S4)", () => {
 		// S4 revision 1 pins: reason order across files and kinds, and diagnostics order.
 		const f1 = (path) => ({ path, added: 1, deleted: 0 });
 		expect(classify([f1("src/auth/x.ts"), f1(".env")])).toEqual({
-			lane: "rigorous",
-			reasons: ["sensitive word: auth (src/auth/x.ts)", "env file: .env"],
+			lane: "normal",
+			reasons: ["env file: .env"],
 		});
 		expect(classify([f1("auth/package.json")])).toEqual({
-			lane: "rigorous",
-			reasons: [
-				"manifest: auth/package.json",
-				"sensitive word: auth (auth/package.json)",
-			],
+			lane: "normal",
+			reasons: ["manifest: auth/package.json"],
 		});
 		expect(
 			classify([f1("db/migrations/x.sql")], { hubs: ["db/migrations/x.sql"] })
 				.reasons,
-		).toEqual([
-			"hub: db/migrations/x.sql",
-			"migration: db/migrations/x.sql",
-			"sensitive word: migration (db/migrations/x.sql)",
-		]);
+		).toEqual(["hub: db/migrations/x.sql", "migration: db/migrations/x.sql"]);
 		const { diagnostics } = classifyLane(
 			{ files: [{ path: "src/a.ts" }] },
 			loadWith("{not json"),
@@ -352,7 +299,6 @@ describe("lane classifier (S4)", () => {
 		const longer = loadWith('{"fast":{"maxLines":300}}');
 		expect(longer).toEqual({
 			fast: { maxSlices: 1, maxLines: 300, maxFiles: 5 },
-			rigorous: { minFiles: 61 },
 		});
 		const big = {
 			files: [{ path: "src/a.ts", added: 200, deleted: 0 }],
@@ -361,10 +307,11 @@ describe("lane classifier (S4)", () => {
 		};
 		expect(classifyLane(big, longer).lane).toBe("fast");
 		expect(classify(srcFiles(3)).lane).toBe("fast");
+		// An older config's `rigorous` group is read and ignored, never broken.
+		const legacy = loadWith('{"fast":{"maxLines":300},"rigorous":{"minFiles":3}}');
+		expect(legacy).toEqual(longer);
 		const three = { files: srcFiles(3), slices: 1, hubs: [] };
-		expect(
-			classifyLane(three, loadWith('{"rigorous":{"minFiles":3}}')).lane,
-		).toBe("rigorous");
+		expect(classifyLane(three, legacy).lane).toBe("fast");
 
 		const broken = [
 			["{not json", "JSON"],
@@ -375,10 +322,6 @@ describe("lane classifier (S4)", () => {
 			['{"fast":{"maxLines":-1}}', "fast.maxLines"],
 			['{"fast":{"maxLines":1.5}}', "fast.maxLines"],
 			['{"fast":{"maxLines":"300"}}', "fast.maxLines"],
-			[
-				'{"fast":{"maxLines":300},"rigorous":{"minFile":3}}',
-				"rigorous.minFile",
-			],
 			[DIRECTORY, "cannot read"],
 			// S4 revision 1 pins.
 			["null", ""],
@@ -433,20 +376,13 @@ describe("lane classifier (S4)", () => {
 			reasons: ["files: 6 > 5"],
 			diagnostics: fastSized.diagnostics,
 		});
-		const auth = {
-			files: [{ path: "src/auth/x.ts", added: 1, deleted: 0 }],
-			slices: 1,
-			hubs: [],
-		};
-		expect(classifyLane(auth, bad)).toEqual({
-			lane: "rigorous",
-			reasons: ["sensitive word: auth (src/auth/x.ts)"],
-			diagnostics: fastSized.diagnostics,
-		});
 	});
 
-	it("merges lanes without ever lowering", () => {
-		const lanes = ["fast", "normal", "rigorous"];
+	it("merges lanes without ever lowering, reading an older rigorous as normal", () => {
+		expect(mergeLane("rigorous", "fast")).toBe("normal");
+		expect(mergeLane("fast", "rigorous")).toBe("normal");
+		expect(mergeLane(undefined, "rigorous")).toBe("normal");
+		const lanes = ["fast", "normal"];
 		for (const [i, previous] of lanes.entries()) {
 			for (const [j, next] of lanes.entries()) {
 				expect

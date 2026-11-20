@@ -45,7 +45,8 @@ describe("candidate execution instructions", () => {
 			/--ignore-cr-at-eol/,
 			/broken check/i,
 			/candidate identity is unchanged/i,
-			/stamp[^.]*before saving/i,
+			/validates with `--finalizing`, stamps `content_hash`, and saves the exact file/,
+			/Never put a hash in an approval question/,
 		]) {
 			expect(joined).toMatch(phrase);
 		}
@@ -109,7 +110,7 @@ describe("candidate execution instructions", () => {
 		expect(source).toMatch(/approved (?:short )?brief/i);
 		expect(source).toMatch(/allowed-tools:.*Agent.*ask_user_question/);
 		expect(source).toMatch(
-			/In the rigorous lane, stop until the human accepts the exact candidate revision/i,
+			/In the normal lane, stop until the human accepts the exact candidate revision/i,
 		);
 		expect(source).not.toMatch(
 			/implement every phase|Trust that completed work is done|stop immediately after that phase's checks pass/i,

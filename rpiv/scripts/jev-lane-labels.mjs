@@ -26,7 +26,7 @@
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { isMain } from "../skills/_shared/is-main.mjs";
-import { LANES, laneInput } from "../skills/_shared/lane.mjs";
+import { laneInput } from "../skills/_shared/lane.mjs";
 import { appendLog, readLogEntries } from "./jev-gate.mjs";
 import {
 	LANE_LOG_PATH,
@@ -40,6 +40,9 @@ export const LABEL_LOG_PATH = ".rpiv/logs/jev-lane-labels.log";
 const ENFORCE_LABELS = 20;
 // The score band of each would-be lane; laneOfScore owns the cut-offs (D38).
 const BAND_OF_LANE = { fast: "0-0.5", normal: "0.5-1.5", rigorous: "1.5-2" };
+// The shadow's own three levels (Jev's score and the labels it is calibrated on).
+// They predate rpiv's two lanes and stay as they are until the shadow is revisited.
+const LANES = Object.freeze(Object.keys(BAND_OF_LANE));
 
 /** git's trimmed stdout in `cwd`; a failure throws its first line. */
 function git(cwd, args) {

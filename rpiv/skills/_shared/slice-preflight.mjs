@@ -2,7 +2,8 @@
 // before any reviewer runs (candidate-workflow.md **Lanes**). It needs no test runner:
 // every test the slice's Test Contract names exists in the candidate commit, by file
 // and title, or for a whole-file test (no title named) as a file the slice changed
-// (a pin's file need only exist); every Expected-red revision resolves; every evidence
+// (a pin's file need only exist); a behavior with no Test line has at least one test
+// titled `<id>: …` in a test file the slice changed; every Expected-red revision resolves; every evidence
 // log exists and names the slice's base or candidate. Contract paths resolve against
 // the repository root, never the run folder. The base must be an ancestor of the
 // candidate; the slice may span several commits. It also prints the re-proof plan for
@@ -22,6 +23,7 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { isMain } from "./is-main.mjs";
+import { isTest } from "./source-vocab.mjs";
 import { parseTestContract } from "./test-contract.mjs";
 
 // The parser lives in test-contract.mjs, which owns the Test line grammar.
@@ -157,16 +159,52 @@ const testOutcome = (repo, b, test) => {
 	};
 };
 
-/** Findings and diagnostics for the contract's tests at the candidate. */
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** Every test title in `source` that starts with `<id>:` (`'B3: rejects …'`), as written. */
+const titlesStartingWith = (source, id) => {
+	const quoted = new RegExp(`(['"\`])(${escapeRegExp(id)}:[^'"\`\\n]*)\\1`, "g");
+	return [...source.matchAll(quoted)].map((m) => m[2]);
+};
+
+/** A behavior's tests when its contract names none: the titles starting with its ID in
+    the test files the slice changed. Only changed files are searched, so the same ID in
+    another feature's tests never counts. */
+const testsById = (repo, b) =>
+	[...repo.changed]
+		.filter((path) => isTest(path) && repo.tree.has(path))
+		.flatMap((path) =>
+			titlesStartingWith(repo.sourceOf(path) ?? "", b.id).map((title) => ({
+				title,
+				path,
+			})),
+		);
+
+/** The behavior with its tests: the contract's, or else the ones found by ID. */
+const withTests = (repo, b) =>
+	b.hasTest ? b : { ...b, tests: testsById(repo, b) };
+
+/** The finding and diagnostic outcomes for one behavior at the candidate. A behavior
+    with neither a Test line nor a changed test titled by its ID has no test. */
+const behaviorOutcomes = (repo, b) => {
+	if (!b.hasTest)
+		return b.tests.length ? [] : [{ finding: `no-test-line: ${b.id}` }];
+	return b.tests.map((test) => testOutcome(repo, b, test));
+};
+
+/** Findings and diagnostics for the contract's tests at the candidate, plus the
+    behaviors with the tests found by ID filled in (the re-proof plan needs them). */
 const testChecks = (repo, behaviors) => {
-	const outcomes = behaviors.flatMap((b) => [
-		...(b.hasTest ? [] : [{ finding: `no-test-line: ${b.id}` }]),
-		...b.tests.map((test) => testOutcome(repo, b, test)),
-	]);
+	const resolved = behaviors.map((b) => withTests(repo, b));
+	const outcomes = resolved.flatMap((b) => behaviorOutcomes(repo, b));
 	const unique = (key) => [
 		...new Set(outcomes.map((o) => o[key]).filter(Boolean)),
 	];
-	return { findings: unique("finding"), diagnostics: unique("diagnostic") };
+	return {
+		findings: unique("finding"),
+		diagnostics: unique("diagnostic"),
+		behaviors: resolved,
+	};
 };
 
 /** The candidate's file tree and the files the slice changed, root-relative. */
@@ -322,7 +360,7 @@ const runCli = (argv, cwd) => {
 		...findings.map((f) => `finding: ${f}`),
 		...unchecked,
 		...tests.diagnostics,
-		...reprovePlan(candidate, base, behaviors),
+		...reprovePlan(candidate, base, tests.behaviors),
 	];
 	return {
 		text: lines.map((l) => `${l}\n`).join(""),

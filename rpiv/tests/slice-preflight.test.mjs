@@ -423,6 +423,56 @@ describe("parseTestContract edge cases (review round 1)", () => {
 
 describe("slice-preflight CLI edge cases (review round 1)", () => {
 	it(
+		"finds a behavior's tests by the ID that starts their titles, only in test files the slice changed",
+		() => {
+			const repo = tempDir();
+			git(repo, "init", "-q", "-b", "main");
+			git(repo, "config", "user.email", "p@example.invalid");
+			git(repo, "config", "user.name", "p");
+			git(repo, "config", "core.autocrlf", "false");
+			// Another feature's B8 lives in a file this slice never touches.
+			put(repo, "tests/old.test.mjs", 'it("B8: another feature", () => {});\n');
+			git(repo, "add", "-A");
+			git(repo, "commit", "-q", "-m", "base");
+			const base = git(repo, "rev-parse", "HEAD");
+			put(
+				repo,
+				"tests/new.test.mjs",
+				'it("B7: rejects an item at capacity", () => {});\nit(\'B7: keeps the collection\', () => {});\nit("B70: not B7", () => {});\n',
+			);
+			git(repo, "add", "-A");
+			git(repo, "commit", "-q", "-m", "candidate");
+			const candidate = git(repo, "rev-parse", "HEAD");
+			const outside = tempDir();
+			put(
+				outside,
+				"brief.md",
+				"### Test Contract: s\n\n- **Behavior B7**: At capacity, an item is rejected.\n- **Behavior B8**: Another rule.\n",
+			);
+			const res = run(
+				repo,
+				"--artifact",
+				join(outside, "brief.md"),
+				"--slice",
+				"s",
+				"--base",
+				base,
+				"--candidate",
+				candidate,
+			);
+			expect(res.status).toBe(1);
+			expect(res.lines.filter((l) => l.startsWith("finding:"))).toEqual([
+				"finding: no-test-line: B8",
+			]);
+			expect(res.lines.filter((l) => l.startsWith("reprove:"))).toEqual([
+				`reprove: --commit ${candidate} --base ${base} --test tests/new.test.mjs::B7: rejects an item at capacity`,
+				`reprove: --commit ${candidate} --base ${base} --test tests/new.test.mjs::B7: keeps the collection`,
+			]);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
 		"finds a partial title, a behavior with no Test line, and evidence naming a foreign revision",
 		() => {
 			const f = fixture();

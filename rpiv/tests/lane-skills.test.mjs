@@ -40,12 +40,12 @@ describe("lane frontmatter in the artifact validator", () => {
 		[
 			"unknown lane",
 			'lane: quick\nlane_reasons: ["x"]\n',
-			"invalid lane: quick (expected fast, normal or rigorous)",
+			"invalid lane: quick (expected fast or normal)",
 		],
 		[
 			"wrong case",
 			'lane: Fast\nlane_reasons: ["x"]\n',
-			"invalid lane: Fast (expected fast, normal or rigorous)",
+			"invalid lane: Fast (expected fast or normal)",
 		],
 		["lane without reasons", "lane: fast\n", "missing lane_reasons for lane: fast"],
 		[
@@ -71,8 +71,9 @@ describe("lane frontmatter in the artifact validator", () => {
 	});
 
 	it.each([
+		["a valid lane", 'lane: normal\nlane_reasons: ["files: 6 > 5"]\n'],
 		[
-			"a valid lane",
+			"an older rigorous lane",
 			'lane: rigorous\nlane_reasons: ["sensitive word: auth (src/auth.ts)"]\n',
 		],
 		["no lane fields", ""],
@@ -84,11 +85,11 @@ describe("lane frontmatter in the artifact validator", () => {
 	});
 
 	it("checks the lane and lane_reasons frontmatter: one lane list, owned by lane.mjs", () => {
-		expect(lane.LANES).toEqual(["fast", "normal", "rigorous"]);
+		expect(lane.LANES).toEqual(["fast", "normal"]);
 		expect(Object.isFrozen(lane.LANES)).toBe(true);
 		const source = readFileSync(validator, "utf8");
 		expect(source).toMatch(
-			/import \{[^}]*\bLANES\b[^}]*\} from "\.\/lane\.mjs"/,
+			/import \{[^}]*\blaneOf\b[^}]*\} from "\.\/lane\.mjs"/,
 		);
 		expect(source).not.toMatch(/const LANES =/);
 		expect(source).toMatch(/^\/\/\s+- .*`lane`/m);
@@ -126,7 +127,7 @@ describe("lane rules at the front of the chain", () => {
 			/In the fast lane, ask at most 3 questions in total, the intent question included/i,
 			/short teach-back/i,
 			/raise the lane and continue the full interview/i,
-			/`sensitiveWords` in `source-vocab\.mjs`/,
+			/Fast is only an estimate the developer confirms/,
 			/keep its diagnostic in `lane_reasons:`/i,
 		]) {
 			expect(discover).toMatch(rule);
@@ -161,7 +162,7 @@ describe("lane rules at the front of the chain", () => {
 	it("research names .rpiv-lanes.json where it confirms the lane", () => {
 		// D34, verbatim (S23 revision 1).
 		const SENTENCE =
-			"An optional `.rpiv-lanes.json` at the repository root overrides `fast.maxSlices`, `fast.maxLines`, `fast.maxFiles` and `rigorous.minFiles` key by key, but a change is judged by the stricter of that file and the committed one (a missing or broken committed file counts as the defaults), so an uncommitted file can only tighten the limits; it cannot change the sensitive vocabulary, a broken file raises fast to normal with a `broken config` diagnostic, and a change that edits it is rigorous.";
+			"An optional `.rpiv-lanes.json` at the repository root overrides `fast.maxSlices`, `fast.maxLines` and `fast.maxFiles` key by key, but a change is judged by the stricter of that file and the committed one (a missing or broken committed file counts as the defaults), so an uncommitted file can only tighten the limits; a broken file raises fast to normal with a `broken config` diagnostic, and a change that edits it is normal.";
 		const research = joined("skills/research/SKILL.md");
 		expect(research.split(SENTENCE).length - 1).toBe(1);
 		const step = research.indexOf("**Confirm the lane.**");
@@ -173,11 +174,11 @@ describe("lane rules at the front of the chain", () => {
 		expect(joined("opencode/generated/skills/rpiv-research/SKILL.md")).toContain(SENTENCE);
 		expect(joined("skills/discover/SKILL.md")).not.toContain(".rpiv-lanes.json");
 	});
-	it("design and plan review intent only in the rigorous lane", () => {
+	it("design and plan review intent in the normal lane", () => {
 		const design = joined("skills/design/SKILL.md");
 		for (const rule of [
 			/`lane:` and `lane_reasons:`/,
-			/Intent review runs only in the rigorous lane/i,
+			/Intent review runs in the normal lane/i,
 			/The fast lane skips design/i,
 			/`lane_reasons: \["no upstream lane"\]`/,
 		]) {
@@ -185,7 +186,7 @@ describe("lane rules at the front of the chain", () => {
 		}
 		expect(design).not.toMatch(/may still run design/i);
 		const plan = joined("skills/plan/SKILL.md");
-		expect(plan).toMatch(/Intent review runs only in the rigorous lane/i);
+		expect(plan).toMatch(/Intent review runs in the normal lane/i);
 		expect(plan).toMatch(
 			/reads the lane from the brief or design frontmatter/i,
 		);
@@ -198,7 +199,7 @@ describe("lane rules at the front of the chain", () => {
 	it("implement asks once in fast for the contract and the build", () => {
 		const implement = joined("skills/implement/SKILL.md");
 		expect(implement).toMatch(
-			/fast lane[^.]*approve the behaviors and authorize the build in one question/i,
+			/fast lane[^.]*approve the behaviors, confirm the fast lane \(state in one sentence what the change touches\) and authorize the build in one question/i,
 		);
 		expect(implement).toMatch(
 			/still agrees the brief, workspace, and build authorization/i,

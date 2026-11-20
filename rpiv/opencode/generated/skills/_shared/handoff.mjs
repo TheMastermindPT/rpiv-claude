@@ -14,7 +14,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { isMain } from "./is-main.mjs";
-import { LANES } from "./lane.mjs";
+import { laneOf } from "./lane.mjs";
 import { contentHashOf } from "./validate-artifact.mjs";
 
 const HEADS = "refs/heads/";
@@ -61,8 +61,8 @@ function readOption(name, value, opts) {
 /** Throws unless the options make a handoff worth writing. */
 function checkOptions(opts) {
 	if (!opts.next) throw new Error("--next needs a command");
-	if (opts.lane !== undefined && !LANES.includes(opts.lane))
-		throw new Error("lane must be fast, normal or rigorous");
+	if (opts.lane !== undefined && laneOf(opts.lane) === null)
+		throw new Error("lane must be fast or normal");
 }
 
 /** HEAD's symbolic ref, or "" when HEAD is detached (git's quiet exit 1); any

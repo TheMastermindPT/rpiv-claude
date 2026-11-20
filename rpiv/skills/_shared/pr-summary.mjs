@@ -17,7 +17,7 @@ import { readFileSync } from "node:fs";
 import { readCommonDir, runCli as cycleReader } from "./cycles.mjs";
 import { parseFrontmatter } from "./frontmatter.mjs";
 import { isMain } from "./is-main.mjs";
-import { LANES } from "./lane.mjs";
+import { laneOf } from "./lane.mjs";
 
 // The evidence paragraphs a slice commit's message may carry (D25: S12/S13 commits
 // use TDD:/Gates:, S14/S15 Red:/Green:).
@@ -170,12 +170,13 @@ function designFrontmatter(path) {
 function laneLines(fm) {
 	if (!Object.hasOwn(fm, "lane"))
 		return ["lane: normal", "why: no feature lane"];
-	if (!LANES.includes(fm.lane))
+	const lane = laneOf(fm.lane);
+	if (lane === null)
 		return ["lane: normal", `why: broken feature lane: ${fm.lane}`];
 	const why = Object.hasOwn(fm, "lane_reasons")
 		? fm.lane_reasons
 		: "no lane reasons";
-	return [`lane: ${fm.lane}`, `why: ${why}`];
+	return [`lane: ${lane}`, `why: ${why}`];
 }
 
 /** `- <path>: <field> <value>` per file; throws when a file lacks the field. */

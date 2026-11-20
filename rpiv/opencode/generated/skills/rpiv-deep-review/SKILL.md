@@ -19,7 +19,7 @@ Review changes across **Quality**, **Security**, **Dependencies** lenses. Valid 
 
 ## Input
 
-`$ARGUMENTS` — scope: `commit` | `staged` | `working` | a commit hash | `A..B` range | PR branch name. Empty defaults to feature-branch-vs-default-branch (first-parent). Deep-review and validate run once over the whole feature's range after its last authorized slice (rigorous: after that slice's human acceptance). An optional trailing `lane=<lane>` token (`fast`, `normal` or `rigorous`; implement's next-step line passes it) is removed before scope resolution and sets the review depth at Step 1.6. An optional `design=<design-path>` token (the approved brief or design the reviewed slices implement; implement passes it too) is removed the same way and is carried into the Step 8 next step.
+`$ARGUMENTS` — scope: `commit` | `staged` | `working` | a commit hash | `A..B` range | PR branch name. Empty defaults to feature-branch-vs-default-branch (first-parent). Deep-review and validate run once over the whole feature's range after its last authorized slice (normal: after that slice's human acceptance). An optional trailing `lane=<lane>` token (`fast` or `normal`, an older `rigorous` read as `normal`; implement's next-step line passes it) is removed before scope resolution and sets the review depth at Step 1.6. An optional `design=<design-path>` token (the approved brief or design the reviewed slices implement; implement passes it too) is removed the same way and is carried into the Step 8 next step.
 
 ## Metadata
 
@@ -95,10 +95,9 @@ Every Wave-2 agent prompt contains EXACTLY `Known Context:` + the Discovery Map 
    - `HasGatingPredicate` = a shard patch adds or modifies a **status/enum-comparison predicate** (`Status == X`, `Status is X or Y`, `X.Contains(Status)`, pattern-match on a discriminator) OR introduces a new value into an enum referenced by existing gating predicates. NOT merely the presence of `if (!x) return`.
    - `ReviewType` = one of `commit | pr | staged | working`.
 
-6. **Set the review depth from the lane.** Run `lane.mjs --range <range>` for the `first-parent` and `explicit-range` strategies, or `lane.mjs --working` for `working-tree` (as `node "$RPIV_PLUGIN_ROOT/skills/_shared/lane.mjs" …`). The lane is the higher of the passed `lane=<lane>` token and `lane.mjs` (raise-only, as `mergeLane`), so a review never runs below the slice it reviews. A token that is not a lane is broken: read it as `normal` and record `broken passed lane: <value>`; keep a `lane: broken:` line from `lane.mjs` the same way. A missing or broken lane means `normal` (full depth), never `fast`. Depth: `fast` → light, `normal` → full, `rigorous` → rigorous (the **Lanes** table in `skills/_shared/candidate-workflow.md`). Record the depth, the lane and its reasons under `## Reconciliation Notes`.
+6. **Set the review depth from the lane.** Run `lane.mjs --range <range>` for the `first-parent` and `explicit-range` strategies, or `lane.mjs --working` for `working-tree` (as `node "$RPIV_PLUGIN_ROOT/skills/_shared/lane.mjs" …`). The lane is the higher of the passed `lane=<lane>` token and `lane.mjs` (raise-only, as `mergeLane`), so a review never runs below the slice it reviews. A token that is not a lane is broken: read it as `normal` and record `broken passed lane: <value>`; keep a `lane: broken:` line from `lane.mjs` the same way. A missing or broken lane means `normal` (full depth), never `fast`. Depth: `fast` → light, `normal` (or an older `rigorous`) → full (the **Lanes** table in `skills/_shared/candidate-workflow.md`). Record the depth, the lane and its reasons under `## Reconciliation Notes`.
    - **Light** — In the fast lane (light), dispatch no `integration-scanner`, no `precedent-locator`, no Security lens, no sink-candidate sweep and no Wave-3 agent. The review is Step 1, the deterministic pre-wave gates, one Quality `diff-analyst` per shard (it carries the documented-standards surface) and the Step 6 claim-verifier. Wave-1 lenses gated on input data (Dependencies, CVE, Peer-Mirror, Spec conformance) still run when their gate fires. Record each skipped part as `skipped (fast lane)`, never as `unavailable`.
    - **Full** — every step as written below.
-   - **Rigorous** — full, plus: In the rigorous lane, Security runs on every shard, test and docs shards included, and the interaction sweep (4b) and the gap-finder (4c) run whenever 2 or more files changed. The lenses that need input data stay data-gated (Dependencies, CVE, Peer-Mirror, Predicate-Trace, Spec conformance): with no input there is nothing for them to review.
 
    The deterministic pre-wave gates run in every lane, and claim verification runs in every lane (Step 6).
 
@@ -120,7 +119,7 @@ Spawn ALL of the following in parallel at T=0 in a **single message with multipl
 - subagent_type: `rpiv:integration-scanner`
 - Prompt: "Read `{changed_files_manifest}` and map inbound references, outbound dependencies, and infrastructure wiring for every path in `changedFiles`. Flag auth-boundary crossings and config/DI/event registration touching these paths. Do not analyse code quality; connections only, in your standard output format."
 
-**task — Precedents** (full and rigorous depth; not dispatched in the fast lane): use the `precedent-locator` prompt defined in Step 3 below — dispatch it here, not in Wave-2. Give it `{changed_files_manifest}`, not a pasted file list.
+**task — Precedents** (full depth; not dispatched in the fast lane): use the `precedent-locator` prompt defined in Step 3 below — dispatch it here, not in Wave-2. Give it `{changed_files_manifest}`, not a pasted file list.
 
 **task — Dependencies** (only when `ManifestChanged`): use the `codebase-analyzer` Dependencies prompt defined in Step 3 below — dispatch here. Input it needs: touched manifest paths + `LockstepSelfReview` flag.
 
@@ -159,7 +158,7 @@ Read `references/discovery-map.md` NOW — it holds the exact map template, the 
 
 ### Step 3: Dispatch Wave-2 — Quality + Security Lenses
 
-Dispatch all shard lenses in one parallel wave. Spawn one Quality `diff-analyst` per ReviewPatch. Spawn one Security `diff-analyst` per ReviewPatch whose shard category is `mixed`, `source`, `migration`, `config`, `manifest`, or `other`; docs-only and test-only shards skip Security (in the rigorous lane Security runs on every shard; in the fast lane no Security lens runs). Each agent receives the Discovery Map and its own patch path. Precedents / Dependencies / CVE are already running from Wave-1.
+Dispatch all shard lenses in one parallel wave. Spawn one Quality `diff-analyst` per ReviewPatch. Spawn one Security `diff-analyst` per ReviewPatch whose shard category is `mixed`, `source`, `migration`, `config`, `manifest`, or `other`; docs-only and test-only shards skip Security (in the fast lane no Security lens runs). Each agent receives the Discovery Map and its own patch path. Precedents / Dependencies / CVE are already running from Wave-1.
 
 **Wave-2 context isolation (LOAD-BEARING — violations cause silent quality collapse)**: Each Wave-2 agent receives EXACTLY two things, nothing else: (1) the Discovery Map and (2) its resolved shard patch path.
 
@@ -255,7 +254,7 @@ Do NOT wait — 4b (Interaction Sweep) dispatches in the same message as 4a; 4c 
 
 #### Step 4b: Interaction Sweep
 
-**Gate**: SKIP this sub-step (do not dispatch 4b) when EITHER `len(ChangedFiles) < 2` OR the Quality lens returned fewer than 4 total observations across all files (in the rigorous lane only the `len(ChangedFiles) < 2` condition applies). Emergent interactions need surface area; tiny diffs cannot structurally produce them.
+**Gate**: SKIP this sub-step (do not dispatch 4b) when EITHER `len(ChangedFiles) < 2` OR the Quality lens returned fewer than 4 total observations across all files. Emergent interactions need surface area; tiny diffs cannot structurally produce them.
 
 Otherwise spawn ONE `interaction-sweeper` in parallel with 4a:
   ```
@@ -435,7 +434,7 @@ Verification: {V} verified · {W} weakened · {F} falsified (dropped) · {VR} re
 Advisor:      {adjudicated | inline}
 Spec:         {Spec Conformance status line}
 Review:       complete · Merge: {blocked | clear} · {B} blockers (🔴 + 🟡)
-Depth:        {light | full | rigorous} ({lane} lane)
+Depth:        {light | full} ({lane} lane)
 
 Top items:
 1. {ID} — `file:line` — {headline}
@@ -489,7 +488,7 @@ Ask follow-ups, or chain forward.
   - `peer-comparator` ×1 (Wave-1, gated on `len(PeerPairs) > 0`) — peer-mirror check; tags Mirrored/Missing/Diverged/Intentionally-absent.
   - `diff-analyst` ×1 (Wave-1, gated on a resolved linked issue) — spec conformance vs the external issue (unranked section, never findings).
   - `diff-auditor` × eligible shard (Wave-1, gated on opengrep absent) — mechanical sink-candidate sweep; rows digest into the Discovery Map.
-  - `diff-analyst` × review shards (Wave-2) — one Quality per shard plus Security for security-relevant shard categories (every shard in the rigorous lane; none in the fast lane).
+  - `diff-analyst` × review shards (Wave-2) — one Quality per shard plus Security for security-relevant shard categories (none in the fast lane).
   - `diff-analyst` ×1 (Step 4a, gated) — predicate-trace (review-scope table).
   - `interaction-sweeper` ×1 (Step 4b, gated) — interaction sweep (`IX-<n>` blocks adopted as `I<n>` findings).
   - *(Step 4c, gated)* — gap-finder runs inline in the orchestrator (set arithmetic over coverage map; no agent).

@@ -30,11 +30,11 @@ describe("deep-review depth by lane", () => {
 			/higher of the passed `lane=<lane>` token and `lane\.mjs`/i,
 			/`broken passed lane: <value>`/,
 			/A missing or broken lane means `normal` \(full depth\), never `fast`/i,
-			/`fast` → light, `normal` → full, `rigorous` → rigorous/,
+			/`fast` → light, `normal` \(or an older `rigorous`\) → full/,
 		]) {
 			expect.soft(deepReviewJoined).toMatch(phrase);
 		}
-		expect(deepReview).toMatch(/^Depth: +\{light \| full \| rigorous\}/m);
+		expect(deepReview).toMatch(/^Depth: +\{light \| full\}/m);
 		expect.soft(hint).toContain("design=");
 		expect.soft(deepReviewJoined).toMatch(/`design=<design-path>`/);
 		const trailing = lineWith("pre-rendered trailing sections");
@@ -95,14 +95,9 @@ describe("deep-review depth by lane", () => {
 		expect(weighting[0]).toMatch(/fast lane/i);
 	});
 
-	it("the rigorous lane forces Security and the Wave-3 sweeps", () => {
-		for (const phrase of [
-			/In the rigorous lane, Security runs on every shard, test and docs shards included/i,
-			/the interaction sweep \(4b\) and the gap-finder \(4c\) run whenever 2 or more files changed/i,
-			/lenses that need input data stay data-gated/i,
-		]) {
-			expect.soft(deepReviewJoined).toMatch(phrase);
-		}
+	it("has no depth above full: the heavy reviews run per slice in the normal lane", () => {
+		expect.soft(deepReviewJoined).not.toMatch(/\*\*Rigorous\*\*/);
+		expect.soft(deepReviewJoined).not.toMatch(/In the rigorous lane/i);
 		for (const needle of [
 			"docs-only and test-only shards skip Security",
 			"fewer than 4 total observations",
@@ -110,7 +105,7 @@ describe("deep-review depth by lane", () => {
 		]) {
 			const lines = lineWith(needle);
 			expect(lines).toHaveLength(1);
-			expect.soft(lines[0]).toContain("rigorous");
+			expect.soft(lines[0]).not.toContain("rigorous");
 		}
 	});
 });
@@ -156,7 +151,7 @@ describe("deep-review findings become fix commits", () => {
 			/each behavior-changing fix starts with its own expected red/i,
 			/A deep-review artifact has no approved copy/i,
 			/recorded in the owning design's `## Developer Context`, is its approval/i,
-			/In the rigorous lane, a fix commit voids the slice's acceptance/i,
+			/In the normal lane, a fix commit voids the slice's acceptance/i,
 		]) {
 			expect.soft(implementJoined).toMatch(phrase);
 		}
@@ -219,7 +214,7 @@ describe("deep-review findings become fix commits", () => {
 	it("implement, deep-review and validate state one review timing", () => {
 		// S21-review-timing-wording, B114 (D30): one sentence, verbatim, in all three.
 		const SENTENCE =
-			"Deep-review and validate run once over the whole feature's range after its last authorized slice (rigorous: after that slice's human acceptance).";
+			"Deep-review and validate run once over the whole feature's range after its last authorized slice (normal: after that slice's human acceptance).";
 		const occurrences = (text) => joined(text).split(SENTENCE).length - 1;
 		const nextStep = (text) =>
 			linesOf(text).filter((line) => /^\s*\*\*Next step:\*\*/.test(line));
@@ -253,7 +248,7 @@ describe("deep-review findings become fix commits", () => {
 		"the workflow puts deep-review before validate with separate fix commits (%s)",
 		(_adapter, text) => {
 			expect(text).toMatch(
-				/^\| Deep-review depth \| light \| full \| rigorous \|$/m,
+				/^\| Deep-review depth \| light \| full \|$/m,
 			);
 			expect(joined(text)).toMatch(/deep-review runs before validate/i);
 			expect(joined(text)).toMatch(

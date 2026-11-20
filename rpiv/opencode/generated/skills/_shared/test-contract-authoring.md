@@ -31,17 +31,30 @@ the contract is an obligation, not proof that unbuilt code works.
 ## Format
 
 Use `### Test Contract:` for executable phases, or one level deeper for design
-slices. Each Behavior has a stable ID, plain-language expectation, public seam,
-named test location, exact Oracle, and Expected red reason. For example:
+slices. The contract holds intent only: each Behavior has a stable ID, a
+plain-language expectation, and one exact example (input -> expected outcome),
+which is what the human approves. For example:
 
 ```markdown
 ### Test Contract:
 - **Behavior B1**: At the agreed limit, another item is rejected without changing the collection.
-  - Seam: the collection's public add operation.
-  - Test: `rejects an item at capacity` -> `path/to/collection.test.ext`
-  - Oracle: capacity 2, existing [A, B], add C -> capacity failure; collection remains [A, B].
-  - Expected red: the current operation accepts C and changes the collection to [A, B, C].
+  - Example: capacity 2, existing [A, B], add C -> capacity failure; collection remains [A, B].
 ```
+
+Implementation detail stays out of the approved text: seams, test paths, Expected
+red reasons, bindings, mutation scopes, commands, run order and cross-references.
+Each behavior's test starts its title with the behavior ID (`B1: rejects an item
+at capacity`), so the slice preflight finds it in the test files the slice
+changed. The implementer writes the expected red reason into the TDD evidence
+before the first run.
+
+What reopens approval: adding, removing or changing a behavior or its example.
+Work done to reach an approved outcome (tuning values, extra tests, fixtures) is
+evidence, never a new behavior.
+
+The `Test:` and `Expected red:` lines below stay valid and optional. Use them
+for a pin (a test that must already pass, whose file the slice does not change)
+and keep them in existing contracts.
 
 ### Test line grammar
 

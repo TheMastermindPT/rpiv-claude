@@ -197,9 +197,9 @@ describe("S25 PR summary helper", () => {
 
 	it.each([
 		[
-			"rigorous with reasons",
+			"an older rigorous read as normal, with its reasons",
 			"---\nlane: rigorous\nlane_reasons: [auth path]\n---\n",
-			["lane: rigorous", "why: [auth path]"],
+			["lane: normal", "why: [auth path]"],
 		],
 		[
 			"no lane key",
