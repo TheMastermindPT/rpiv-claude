@@ -9,7 +9,12 @@
 
 import { readFileSync } from "node:fs";
 
-import { agentOutput, NO_AGENT_OUTPUT } from "../../skills/_shared/subagent-event.mjs";
+import {
+  agentOutput,
+  NO_AGENT_OUTPUT,
+  STOPPED_MID_TOOL_CALL,
+  stoppedMidToolCall,
+} from "../../skills/_shared/subagent-event.mjs";
 import { bareAgentName, readAgentFrontmatter } from "./_shared.mjs";
 
 // ---- helpers -------------------------------------------------------------------
@@ -111,8 +116,9 @@ function main() {
   const effort = fm.effort || "medium";
   const result = agentOutput(input);
   if (!result) {
+    const why = stoppedMidToolCall(input) ? STOPPED_MID_TOOL_CALL : NO_AGENT_OUTPUT;
     process.stderr.write(
-      `[rpiv-hook] WARNING: agent "${agentType}" — ${NO_AGENT_OUTPUT}; output checks skipped.\n`
+      `[rpiv-hook] WARNING: agent "${agentType}" — ${why}; output checks skipped.\n`
     );
     return;
   }

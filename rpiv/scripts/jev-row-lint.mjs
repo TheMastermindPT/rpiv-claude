@@ -41,6 +41,7 @@ import { appendLog } from "./jev-gate.mjs";
 import {
 	agentOutput,
 	NO_AGENT_OUTPUT,
+	stoppedMidToolCall,
 } from "../skills/_shared/subagent-event.mjs";
 
 const PLUGIN_ROOT = fileURLToPath(new URL("../", import.meta.url));
@@ -532,6 +533,7 @@ function extractFromStdin(raw) {
 			return {
 				agentType: event.agent_type,
 				text: agentOutput(event),
+				stopped: stoppedMidToolCall(event),
 				prompt:
 					typeof event.prompt === "string" && event.prompt
 						? event.prompt
@@ -546,7 +548,13 @@ function extractFromStdin(raw) {
 	} catch {
 		// raw text fallthrough
 	}
-	return { agentType: "", text: raw, prompt: null, transcriptPath: null };
+	return {
+		agentType: "",
+		text: raw,
+		stopped: false,
+		prompt: null,
+		transcriptPath: null,
+	};
 }
 
 /** The text of a transcript message's content: a string, or its text blocks joined. */
@@ -633,13 +641,15 @@ function emitWarning(agentName, r) {
 async function main() {
 	const raw = readStdin();
 	if (!raw) return;
-	const { agentType, text, ...source } = extractFromStdin(raw);
+	const { agentType, text, stopped, ...source } = extractFromStdin(raw);
 	const entry = Object.entries(ROW_LINTS).find(([name]) =>
 		agentType.includes(name),
 	);
 	if (!entry) return;
 	const [agentName, config] = entry;
 	if (!text.trim()) {
+		// A stopped agent is reported once, by subagent-output-check.
+		if (stopped) return;
 		process.stdout.write(
 			`[jev-lint] UNAVAILABLE: ${NO_AGENT_OUTPUT} — rows not linted\n`,
 		);

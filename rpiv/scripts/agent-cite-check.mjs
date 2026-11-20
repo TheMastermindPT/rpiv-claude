@@ -34,6 +34,7 @@ import { pathToFileURL } from "node:url";
 import {
 	agentOutput,
 	NO_AGENT_OUTPUT,
+	stoppedMidToolCall,
 } from "../skills/_shared/subagent-event.mjs";
 
 export const CITATION_PATTERN =
@@ -113,12 +114,13 @@ function extractFromStdin(raw) {
 			return {
 				agentType: event.agent_type,
 				text: agentOutput(event),
+				stopped: stoppedMidToolCall(event),
 			};
 		}
 	} catch {
 		// raw text fallthrough
 	}
-	return { agentType: "", text: raw };
+	return { agentType: "", text: raw, stopped: false };
 }
 
 function parseArgs(argv) {
@@ -141,13 +143,15 @@ function readStdin() {
 async function main() {
 	const raw = readStdin();
 	if (!raw) return;
-	const { agentType, text } = extractFromStdin(raw);
+	const { agentType, text, stopped } = extractFromStdin(raw);
 	const { root } = parseArgs(process.argv.slice(2));
 	const agentName = Object.keys(CONTRACTS).find((name) =>
 		agentType.includes(name),
 	);
 	if (!agentName) return;
 	if (!text.trim()) {
+		// A stopped agent is reported once, by subagent-output-check.
+		if (stopped) return;
 		process.stdout.write(
 			`[cite-check] ${agentName}: ${NO_AGENT_OUTPUT} — citations not checked\n`,
 		);
