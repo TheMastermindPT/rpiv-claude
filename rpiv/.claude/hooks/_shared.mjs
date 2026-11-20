@@ -75,40 +75,52 @@ export function readAgentFrontmatter(agentType) {
 // parallel review dispatch does not raise a permission prompt per `git diff`.
 
 // Read-only git and search: what a reviewer needs to read diffs, base files and history.
-const READ_ONLY_GIT = [/^git (diff|show|log|rev-parse|merge-base|ls-files|blame)\b/, /^rg\b/];
+const READ_ONLY_GIT = [/^git (diff|show|log|rev-parse|merge-base|ls-files|ls-tree|blame|grep|cat-file)\b/, /^rg\b/];
+const READ_ONLY_GIT_LABEL = "read-only git (diff/show/log/rev-parse/merge-base/ls-files/ls-tree/blame/grep/cat-file) and rg";
+
+// Allowed for every agent with an allowlist: changing directory and trimming output
+// (`cd <dir> && git …`, `… | head`). None of them writes or runs another program.
+const COMMON_HELPERS = [/^cd\s+\S+$/, /^(head|tail|wc)\b/];
+const HELPERS_LABEL = "plus `git -C <dir>`, `cd <dir> &&` and `head`/`tail`/`wc`";
+
+const spec = (allowed, label) => ({ allowed: [...allowed, ...COMMON_HELPERS], label: `${label}, ${HELPERS_LABEL}` });
 
 export const BASH_ALLOWLIST = {
   // structural.mjs is the read-only ast-grep confirmation arch-review's verify gate
   // explicitly grants the verifier: it must be the script node runs, with no node flag
   // (-e, --import, --require) before it. Everything else is git show.
-  "claim-verifier": { allowed: [/^git show\b/, /^node\s+(?:\S*[\\/])?structural\.mjs(?:\s|$)/, /^rg\b/], label: "`git show`, `rg`, and the read-only structural.mjs helper only" },
-  "precedent-locator": { allowed: [/^git (rev-parse|log|show|diff)\b/, /^grep\b/, /^rg\b/], label: "read-only git (rev-parse/log/show/diff) + grep/rg only" },
-  "artifact-code-reviewer": { allowed: READ_ONLY_GIT, label: "read-only git (diff/show/log/rev-parse/merge-base/ls-files/blame) and rg only" },
-  "artifact-coverage-reviewer": { allowed: READ_ONLY_GIT, label: "read-only git (diff/show/log/rev-parse/merge-base/ls-files/blame) and rg only" },
-  "slice-verifier": { allowed: READ_ONLY_GIT, label: "read-only git (diff/show/log/rev-parse/merge-base/ls-files/blame) and rg only" },
+  "claim-verifier": spec([/^git show\b/, /^node\s+(?:\S*[\\/])?structural\.mjs(?:\s|$)/, /^rg\b/], "`git show`, `rg`, and the read-only structural.mjs helper"),
+  "precedent-locator": spec([/^git (rev-parse|log|show|diff)\b/, /^grep\b/, /^rg\b/], "read-only git (rev-parse/log/show/diff) + grep/rg"),
+  "artifact-code-reviewer": spec(READ_ONLY_GIT, READ_ONLY_GIT_LABEL),
+  "artifact-coverage-reviewer": spec(READ_ONLY_GIT, READ_ONLY_GIT_LABEL),
+  "slice-verifier": spec(READ_ONLY_GIT, READ_ONLY_GIT_LABEL),
 };
 
 // The checks read a command the way bash will, not as raw text, because bash rewrites
 // it first: quotes and backslashes disappear (`--'pre'` is `--pre`), `x=>f` is a word
 // followed by a redirection, and `$` expands everywhere except inside single quotes.
 //   - outside quotes (quoted spans masked): no redirection or process substitution
-//     (`>`, `<`), no `&` (background job or `&&`), and the segments split on
-//     `;`, `|`, `||`, `&&` and newlines each start with an allowed prefix;
+//     (`>`, `<`), no lone `&` (background job; `&&` is a separator), and the segments
+//     split on `;`, `|`, `||`, `&&` and newlines each start with an allowed prefix
+//     (a leading `git -C <dir>` is read as plain `git`; lowercase `-c` is not);
 //   - outside single quotes: no `$` (variables, `$(…)`) and no backtick, so nothing can
 //     expand into a forbidden word;
 //   - with quotes and backslashes removed: none of the options that write or run a
-//     program — git's `--output`, `--ext-diff`, `--textconv`; ripgrep's `--pre` (runs a
-//     program per file) and `-z`/`--search-zip` (runs decompressors).
+//     program — git's `--output`, `--ext-diff`, `--textconv`, `--filters`, and git
+//     grep's `-O`/`--open-files-in-pager`; ripgrep's `--pre` (runs a program per file)
+//     and `-z`/`--search-zip` (runs decompressors).
 // An unbalanced quote is left unmasked, so it fails closed.
 const QUOTED = /'[^']*'|"(?:[^"\\]|\\.)*"/g;
 const SINGLE_QUOTED = /'[^']*'/g;
 const maskQuoted = (command) => command.replace(QUOTED, (m) => "_".repeat(m.length));
-const FORBIDDEN_OUTSIDE_QUOTES = [/>/, /</, /&/];
+const FORBIDDEN_OUTSIDE_QUOTES = [/>/, /</, /(?<!&)&(?!&)/];
 const FORBIDDEN_OUTSIDE_SINGLE_QUOTES = [/\$/, /`/];
 const FORBIDDEN_OPTIONS = [
-  /--output\b/, /--ext-diff\b/, /--textconv\b/,
-  /--pre\b/, /--search-zip\b/, /(?:^|\s)-[A-Za-z]*z/,
+  /--output\b/, /--ext-diff\b/, /--textconv\b/, /--filters\b/, /--open-files-in-pager\b/,
+  /--pre\b/, /--search-zip\b/, /(?:^|\s)-[A-Za-z]*[zO]/,
 ];
+// `git -C <dir> log …` runs `git log …` in <dir>: compare the command without it.
+const GIT_DIR_PREFIX = /^git\s+-C\s+\S+\s+/;
 const SEPARATOR = /\|\||&&|[;|\r\n]/g;
 
 /** True when `command` holds something an allowlisted agent may never run. */
@@ -128,7 +140,9 @@ const segmentsOf = (command) => {
     start = m.index + m[0].length;
   }
   segments.push(command.slice(start));
-  return segments.map((seg) => seg.replace(/['"\\]/g, "").trim()).filter(Boolean);
+  return segments
+    .map((seg) => seg.replace(/['"\\]/g, "").trim().replace(GIT_DIR_PREFIX, "git "))
+    .filter(Boolean);
 };
 
 /** The contract label when `command` breaks `agentType`'s Bash allowlist, or null when it
