@@ -261,8 +261,8 @@ if (ecosystem === "js-ts") {
 			: []),
 	]);
 
-	// ts-morph -> S/Fe/A. Resolved relative to THIS helper (it may be installed off the
-	// project manifest, e.g. a home-dir node_modules), NOT via package.json deps. Needs a
+	// ts-morph -> S/Fe/A. Resolved relative to THIS helper: ts-morph is a plugin
+	// runtime dependency (the plugin's package.json), NOT a dependency of the reviewed repo. Needs a
 	// tsconfig for semantic.mjs to load a Project.
 	let tsMorphPath = "";
 	try {
@@ -275,7 +275,7 @@ if (ecosystem === "js-ts") {
 	row("ts-morph", "S/Fe/A", tsmStatus, [
 		...(tsMorphPath ? [`path=${toPosix(tsMorphPath)}`] : []),
 		...(tsCfg ? [`tsconfig=${tsCfg}`] : []),
-		...(tsmStatus === "absent" ? ["hint=npm i -D ts-morph (sharpens write-site ownership, feature-envy, dead-exports)"]
+		...(tsmStatus === "absent" ? ["hint=run pnpm install in the rpiv plugin (ts-morph is a plugin dependency; sharpens write-site ownership, feature-envy, dead-exports)"]
 			: tsmStatus === "installed-unconfigured" ? ["hint=add a tsconfig.json so semantic.mjs can load a Project"]
 			: []),
 	]);

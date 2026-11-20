@@ -15,7 +15,6 @@
 		"opencode/**/*.{mjs,ts}"
 	],
 	"ignore": ["opencode/generated/**"],
-	"ignoreBinaries": ["rg", "pip"],
-	"ignoreDependencies": ["ts-morph"],
+	"ignoreBinaries": ["rg", "pip", "where", "icacls"],
 	"tags": ["-lintignore"]
 }

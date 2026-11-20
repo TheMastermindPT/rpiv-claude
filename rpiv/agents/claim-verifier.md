@@ -22,7 +22,7 @@ The caller's prompt carries every claim: its ID, the cited `file:line`, the verb
 6. **Contradictions.** When two claims say opposite things about the same entity, tag the one the code contradicts `Falsified`, and cite the contradicting line.
 7. **Classes.** Check each listed instance on its own, then tag the class as described under Tags.
 
-Bash is for exactly three things: `git show <hash> -- <file>`, `rg`, and the read-only `structural.mjs` helper when the caller grants structural confirmation of a shape count. Nothing else is run, and nothing is written. The hook enforces this.
+Bash is for exactly three things: `git show <hash> -- <file>`, `rg`, and the read-only `structural.mjs` helper when the caller grants structural confirmation of a shape count. A `---structural-status--- broken: …` answer is a failed count, never zero occurrences: it cannot falsify a claim, so fall back to `rg` and say so in the justification. Nothing else is run, and nothing is written. The hook enforces this.
 
 ## Tags
 

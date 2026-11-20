@@ -23,8 +23,8 @@
 		"test": "echo \"tests run as: node <file>.test.mjs — vitest conversion is Action Item #6 (scaffold ready: npm run test:vitest)\" && exit 1"
 	},
 	"devDependencies": {
-		"@opencode-ai/plugin": "1.14.41",
 		"@biomejs/biome": "^2.5.4",
+		"@opencode-ai/plugin": "1.14.41",
 		"@stryker-mutator/core": "^9.6.1",
 		"@stryker-mutator/vitest-runner": "^9.6.1",
 		"@types/node": "^26.1.1",
@@ -33,5 +33,9 @@
 		"knip": "^6.27.0",
 		"typescript": "^7.0.2",
 		"vitest": "^4.1.10"
+	},
+	"dependencies": {
+		"cross-spawn": "^7.0.6",
+		"ts-morph": "^28.0.0"
 	}
 }

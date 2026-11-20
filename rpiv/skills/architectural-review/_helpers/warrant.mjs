@@ -75,6 +75,7 @@ function readStdin() {
 
 const blocks = {};
 const headers = {};
+let semanticReadable = false;
 parseInto(readStdin(), blocks, headers);
 if (flags.semantic) {
   // An unreadable --semantic file degrades to "semantic didn't run" (regex
@@ -82,6 +83,7 @@ if (flags.semantic) {
   // from the one unguarded read in a family whose contract is always-exit-0.
   try {
     parseInto(readFileSync(flags.semantic, "utf8"), blocks, headers);
+    semanticReadable = true;
   } catch (e) {
     process.stderr.write(
       `warrant: cannot read --semantic file ${flags.semantic} (${e?.code ?? e?.message ?? e}) — proceeding on the metrics blocks alone\n`,
@@ -101,14 +103,39 @@ const field = (row, re) => {
 };
 
 const fileCount = flags.files != null ? Number(flags.files) : toNum(headers.file_count, 0);
-// semantic.mjs always emits the four `-semantic` block headers, so their presence marks a run.
+// semantic.mjs always emits its `-semantic` block headers, so their presence marks a run.
 const semanticRan = present("type-fragmentation-semantic");
+
+// How the semantic pass ended, surfaced in the output so a BROKEN run (status `broken:`)
+// or a partial one (parse/tsconfig errors) is never read as "ran clean" or "absent":
+//   not-run | unreadable | ran | ran-partial: <why> | unavailable: <why> | broken: <why> | no-output
+const semanticOutcome = () => {
+  if (!flags.semantic) return "not-run";
+  if (!semanticReadable) return "unreadable";
+  if (semanticRan) {
+    const partial = [];
+    if (toNum(String(headers.tsconfig_errors ?? "0").split(" ")[0]) > 0)
+      partial.push(`tsconfig_errors=${headers.tsconfig_errors}`);
+    if (toNum(field(String(headers.parse_errors ?? ""), /files=(\d+)/)) > 0)
+      partial.push(`parse_errors ${headers.parse_errors}`);
+    if (toNum(String(headers.targets_unmeasured ?? "0").split(" ")[0]) > 0)
+      partial.push(`targets_unmeasured=${headers.targets_unmeasured}`);
+    return partial.length ? `ran-partial: ${partial.join("; ")}` : "ran";
+  }
+  // Headers absent AND no status line: semantic.mjs crashed or its output was not
+  // captured. That is a failed run, never "not run".
+  return rows("semantic-status")[0] ?? "broken: semantic.mjs produced no output (crashed or not captured)";
+};
+// A partial run (parse/tsconfig errors) still proves what it FOUND, but its empty
+// blocks prove nothing: they must not supersede the regex seeds or read as clean.
+const semanticPartial = semanticRan && semanticOutcome().startsWith("ran-partial");
 
 // --- per-lens defect predicates (calibrated) -----------------------------
 function feLive() {
   if (present("feature-envy-semantic")) {
     // confirmed genuine envy: a symbol doing behavioural work on the envied module
-    return rows("feature-envy-semantic").some((r) => toNum(field(r, /behavioralRefs=(\d+)/)) >= 3);
+    const envy = rows("feature-envy-semantic").some((r) => toNum(field(r, /behavioralRefs=(\d+)/)) >= 3);
+    if (envy || !semanticPartial) return envy;
   }
   // deterministic pre-signal: leans hard on one module (ratio>=0.7) AND has real own
   // surface (own>=2) — drops constants files (own=0) and thin forwarders.
@@ -124,8 +151,11 @@ function feLive() {
 // gate read "no persistence surface" while `write-sites` plainly showed table:/rpc:
 // rows — S and P went dead on a target with a real db surface. An empty semantic
 // block therefore falls back to the metric rows; a NON-empty one still supersedes.
-const writeSiteRows = () =>
-  rows("write-sites-semantic").length > 0 ? rows("write-sites-semantic") : rows("write-sites");
+const writeSiteRows = () => {
+  if (rows("write-sites-semantic").length === 0) return rows("write-sites");
+  // partial semantic: keep the regex rows too, so a file it could not resolve still counts
+  return semanticPartial ? [...rows("write-sites-semantic"), ...rows("write-sites")] : rows("write-sites-semantic");
+};
 
 function sLive() {
   // second seed: a System-Model entity with no owner is an ownership defect even at writers=1
@@ -149,6 +179,7 @@ function aLive() {
     // exports" (L3-05/IX-5). Anything else falls through to the export-usage seed.
     const scan = headers.dead_export_scan ?? "";
     const complete =
+      !semanticPartial &&
       scan.startsWith("examined=") &&
       !/\bcapped=true\b/.test(scan) &&
       toNum(field(scan, /skipped_on_error=(\d+)/), 0) === 0;
@@ -159,7 +190,8 @@ function aLive() {
 
 function cLive() {
   if (!semanticRan) return null; // unmeasured without the semantic pass (deterministic C pre-signal is a follow-up)
-  return rows("type-fragmentation-semantic").length >= 1;
+  const found = rows("type-fragmentation-semantic").length >= 1;
+  return found || !semanticPartial ? found : null; // a partial run's empty block is unmeasured, not clean
 }
 
 function dLive() {
@@ -243,6 +275,7 @@ process.stdout.write(
     liveLenses,
     liveCount,
     unmeasured,
+    semantic: semanticOutcome(),
     band,
     prompt: band === "full", // auto-run skip/selective; ask only before the expensive full sweep
     selectiveWave2,

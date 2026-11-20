@@ -26,7 +26,7 @@
 // restricted to declarations/files under <target>. Bounded by SEMANTIC_MAX_FILES (skip a
 // too-large program) and SEMANTIC_REF_EXAMINE_CAP (cap the findReferences hot path).
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { ENVY_MIN_REFS, ENVY_MIN_RATIO, isFixture, isTest } from "./source-set.mjs";
@@ -59,20 +59,42 @@ const targetsAbs = (targetArgs.length ? targetArgs : ["."]).map((a) =>
 // and the targets_note below makes the anchor visible.
 const targetAbs = targetsAbs[0];
 
+// Status contract (degrade-distinguishes-broken):
+//   unavailable: <reason>  — absence (ts-morph not installed, no tsconfig, program over the cap);
+//                            the review falls back to the regex signals.
+//   broken: <reason>       — the tool is there and FAILED (load error, project load error);
+//                            the review reports it and never reads it as "no semantic findings".
 const status = (msg) => {
 	process.stdout.write(`---semantic-status---\n${msg}\n`);
 	process.exit(0);
 };
+const firstLine = (text) =>
+	String(text ?? "")
+		.split("\n")
+		.map((l) => l.trim())
+		.find(Boolean) ?? "";
+// Output is written in one go at the end, so a crash mid-analysis would leave stdout empty
+// and read as "semantic never ran". Report it as a failed run instead.
+process.on("uncaughtException", (e) => status(`broken: semantic analysis crashed (${firstLine(e?.message)})`));
+// A target that does not exist (a typo) is a failed call, not "nothing to measure".
+const missingTargets = targetsAbs.filter((t) => !existsSync(t));
+if (missingTargets.length)
+	status(`broken: target does not exist (${missingTargets.map((t) => toPosix(relative(cwd, t))).join(", ")})`);
 
 // --- Optional dependency: ts-morph (resolved relative to THIS helper) --------
 const require = createRequire(import.meta.url);
 let tsmorph;
 try {
 	tsmorph = require("ts-morph");
-} catch {
-	status("unavailable: ts-morph not resolvable from the helper location (suggest: npm i -D ts-morph)");
+} catch (e) {
+	// Absent (not installed) degrades; an installed ts-morph that THROWS on load (corrupt
+	// install, incompatible Node) is broken and must not read as "not installed".
+	const absent = e?.code === "MODULE_NOT_FOUND" && String(e.message).includes("'ts-morph'");
+	if (absent) status("unavailable: ts-morph not resolvable from the helper location (run pnpm install in the plugin)");
+	status(`broken: ts-morph is installed but failed to load (${firstLine(e?.message)})`);
 }
 const { Project, SyntaxKind } = tsmorph;
+if (typeof Project !== "function") status("broken: ts-morph loaded but exports no Project class (corrupt or incompatible install)");
 
 // --- Locate the tsconfig that governs the target ----------------------------
 const isDir = (p) => existsSync(p) && statSync(p).isDirectory();
@@ -114,7 +136,8 @@ let project;
 try {
 	project = new Project({ tsConfigFilePath, skipAddingFilesFromTsConfig: false });
 } catch (e) {
-	status(`unavailable: ts-morph failed to load the project (${e.message})`);
+	// The tool and a tsconfig are both present, so a load failure is a broken run, not absence.
+	status(`broken: ts-morph failed to load the project ${tsConfigFilePath} (${firstLine(e?.message)})`);
 }
 const allFiles = project.getSourceFiles().filter((sf) => !sf.isInNodeModules() && !sf.isDeclarationFile());
 if (allFiles.length > SEMANTIC_MAX_FILES) {
@@ -127,6 +150,36 @@ const underTarget = (sf) => {
 	return targetsAbs.some((t) => p === t || p.startsWith(`${t}/`));
 };
 const targetFiles = allFiles.filter(underTarget);
+
+// A target outside the tsconfig program (a solution-style tsconfig with `references`, or a
+// folder outside `include`) would emit empty blocks that read as "ran clean" and supersede
+// the regex seeds. With TypeScript files on disk that is a failed measurement; without any,
+// there is nothing to measure.
+// With `allowJs` the program analyses JavaScript too, so a JS-only target counts as source.
+const SRC_EXT = project.getCompilerOptions().allowJs ? /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/ : /\.(ts|tsx|mts|cts)$/;
+const SKIP_DIRS = new Set(["node_modules", ".git"]);
+const hasSourceFiles = (p, depth = 0) => {
+	if (!existsSync(p)) return false;
+	if (!statSync(p).isDirectory()) return SRC_EXT.test(p) && !p.endsWith(".d.ts");
+	if (depth > 12) return false;
+	return readdirSync(p, { withFileTypes: true }).some(
+		(e) => !(e.isDirectory() && SKIP_DIRS.has(e.name)) && hasSourceFiles(join(p, e.name), depth + 1),
+	);
+};
+const inProgram = (t) =>
+	allFiles.some((sf) => {
+		const p = toPosix(sf.getFilePath());
+		return p === t || p.startsWith(`${t}/`);
+	});
+// Checked PER TARGET: in a multi-target run the tsconfig is anchored on the first target,
+// so a later target outside that program would otherwise vanish while the run reads clean.
+const unmeasuredTargets = targetsAbs.filter((t) => !inProgram(t) && hasSourceFiles(t));
+const where = `tsconfig ${toPosix(relative(cwd, tsConfigFilePath))}, files_in_program=${allFiles.length}`;
+if (targetFiles.length === 0) {
+	if (unmeasuredTargets.length)
+		status(`broken: the target has source files but none are in the program (${where}; a solution-style tsconfig with references, or the target is outside include)`);
+	status(`unavailable: no source files the program can analyse under the target (${where})`);
+}
 
 // --- Block 1: write-sites-semantic (S) --------------------------------------
 // `.from(<arg>).insert|update|upsert|delete` and `.rpc("fn")`, counting distinct
@@ -484,6 +537,26 @@ const projClusters = projRows.length;
 projRows.sort((x, y) => y.sites - x.sites || y.common - x.common || y.hi - x.hi);
 projRows.length = Math.min(projRows.length, PROJ_MAX_ROWS);
 
+// --- Parse errors -----------------------------------------------------------
+// TypeScript recovers from syntax errors without throwing: a broken file just yields
+// fewer declarations, so its signals would silently read as clean. Count the target
+// files with syntactic diagnostics so a partial scan is always visible.
+// A tsconfig error (missing `extends` base, bad option) also loads without throwing, but
+// the program may then resolve paths/aliases wrongly — surfaced the same way.
+const messageOf = (d) => {
+	const m = d.getMessageText();
+	return typeof m === "string" ? m : m.getMessageText();
+};
+const configErrors = project.getConfigFileParsingDiagnostics().map((d) => firstLine(messageOf(d)));
+const parseErrorFiles = [];
+{
+	const program = project.getProgram();
+	for (const sf of targetFiles) {
+		const n = program.getSyntacticDiagnostics(sf).length;
+		if (n > 0) parseErrorFiles.push(`${rel(sf)} diags=${n}`);
+	}
+}
+
 // --- Emit -------------------------------------------------------------------
 const out = [];
 out.push(`target:           ${targetsAbs.map((t) => toPosix(relative(cwd, t)) || ".").join(" ")}`);
@@ -492,8 +565,17 @@ out.push(`target:           ${targetsAbs.map((t) => toPosix(relative(cwd, t)) ||
 // count>1 is the cheap superset signal). Lands among headers (before the first ---block---).
 if (targetsAbs.length > 1) out.push(`targets_note:     multi-target — tsconfig/project anchored on the first target`);
 out.push(`tsconfig:         ${toPosix(relative(cwd, tsConfigFilePath))}`);
+out.push(
+	`tsconfig_errors:  ${configErrors.length}${configErrors.length ? ` (program may be resolved wrongly; first: ${configErrors[0]})` : ""}`,
+);
 out.push(`files_in_program: ${allFiles.length}`);
 out.push(`files_in_target:  ${targetFiles.length}`);
+out.push(
+	`targets_unmeasured: ${unmeasuredTargets.length}${unmeasuredTargets.length ? ` (source files outside the program; ${unmeasuredTargets.map((t) => toPosix(relative(cwd, t)) || ".").join(", ")})` : ""}`,
+);
+out.push(
+	`parse_errors:     files=${parseErrorFiles.length}${parseErrorFiles.length ? ` (signals from these files are partial; first: ${parseErrorFiles.slice(0, 3).join(", ")})` : ""}`,
+);
 out.push(`write_resolution: resolved=${writeResolved} unresolved=${writeUnresolved}`);
 out.push(`dead_export_scan: ${knipAvailable ? "skipped (knip present — A delegated to knip)" : `examined=${examined} capped=${capped} skipped_on_error=${skippedOnError}`}`);
 out.push(`type_scan:        examined=${typesExamined}`);
