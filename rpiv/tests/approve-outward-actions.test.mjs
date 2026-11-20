@@ -471,6 +471,43 @@ const DECIDING_REV3 = {
 	outwardPs: ["Start-Process -FilePath:git -ArgumentList:push"],
 };
 
+// Computed command words: a quoted path whose file name is fixed runs one script
+// file (D11 residual risk); anything that could still name git, gh, a shell, a
+// wrapper or several words asks broken.
+const SCRIPT_PATHS = {
+	silent: [
+		'SP=/tmp/sp; "$SP/step-s4.sh" B28-red "npx vitest run tests/lane.test.mjs"',
+		'"${SP}/wt-digest.sh"',
+		'"$(git rev-parse --show-toplevel)/scripts/tdd-run.sh" s1',
+		'"$ROOT/node_modules/.bin/tsc" --noEmit',
+		'"$SP/state-digest.sh" > "$EV/out.txt"',
+	],
+	broken: [
+		"$SP/step.sh",
+		'"$X/git" status',
+		'"$X/Git.exe" status',
+		'"$X/git.cmd" status',
+		'"$X/git-push" origin',
+		'"$X/gh" issue list',
+		'"$X/bash" run.sh',
+		'"$X/env" git status',
+		'"$X/sudo" ls',
+		'"$X/xargs" rg x',
+		'"$X/find" . -name x',
+		'"$X/"',
+		'"$X.sh"',
+		'"$D/$F"',
+		'"$D"/*.sh',
+		'"$D"/{a,b}.sh',
+		'"$@/a.sh"',
+		'"${A[@]}/a.sh"',
+		'echo "$($D/a.sh)"',
+	],
+	outward: ['"$SP/step.sh" git push'],
+	silentPs: ['& "$SP\\step.ps1" x'],
+	brokenPs: ['& "$X\\git.exe" status'],
+};
+
 // Revision-4 cases of B12, B14 and B15.
 const REV4 = {
 	computedRun: [
@@ -1410,6 +1447,18 @@ describe("approve-outward-actions hook", () => {
 			// Revision 4: a computed word at the launcher-aware run position.
 			expectAsks(REV4.computedRun, BROKEN);
 			expectAsks(["Start-Process $GIT push"], BROKEN, psEvent);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"runs a quoted script path with a fixed file name without asking",
+		() => {
+			expectSilent(SCRIPT_PATHS.silent);
+			expectAsks(SCRIPT_PATHS.broken, BROKEN);
+			expectAsks(SCRIPT_PATHS.outward, `${OUTWARD}git push`);
+			expectSilent(SCRIPT_PATHS.silentPs, psEvent);
+			expectAsks(SCRIPT_PATHS.brokenPs, BROKEN, psEvent);
 		},
 		TEST_TIMEOUT,
 	);

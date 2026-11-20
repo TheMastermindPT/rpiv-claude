@@ -54,6 +54,8 @@ function tokenize(src, mode) {
 		segments: [],
 		heredocs: [],
 		depth: 0,
+		// Open double quotes around the current word (expansions there do not split).
+		quoted: 0,
 		arithmeticFailed: new Set(),
 	};
 	parseList(p, null);
@@ -64,6 +66,9 @@ function parseList(p, terminator, options = {}) {
 	if (++p.depth > MAX_NESTING)
 		throw new Unparseable("substitutions nested too deeply");
 	const seg = newSegmentBuilder(p, options);
+	// Quotes around a substitution do not quote the words inside it.
+	const outerQuoted = p.quoted;
+	p.quoted = 0;
 	while (p.i < p.src.length) {
 		const ch = p.src[p.i];
 		// A `)` closing a `(` group opened in this list is grouping, not the end
@@ -72,6 +77,7 @@ function parseList(p, terminator, options = {}) {
 			p.i++;
 			seg.endSegment();
 			p.depth--;
+			p.quoted = outerQuoted;
 			return;
 		}
 		step(p, seg, ch);
@@ -131,11 +137,20 @@ function newSegmentBuilder(p, options = {}) {
 			word.value += ch;
 			word.raw += ch;
 		},
-		/** The current word's value is only known at run time (`$x`, `$(...)`). */
+		/** The current word's value is only known at run time (`$x`, `$(...)`).
+		    `tailStart`: where the literal text after the last such part begins.
+		    Unquoted, it may split into several words (`splits`). */
 		markDynamic() {
 			this.append("");
 			word.dynamic = true;
 			word.firstLiteral ??= false;
+			word.tailStart = word.value.length;
+			if (p.quoted === 0) word.splits = true;
+		},
+		/** A quoted expansion that still yields several words (`"$@"`). */
+		markSplitting() {
+			this.markDynamic();
+			word.splits = true;
 		},
 		/** Records a variable the word expands (`$env:NAME` -> "env:NAME"). */
 		noteVariable(name) {
@@ -562,10 +577,15 @@ function readExpansion(p, seg, next, inDouble = false) {
 	if (next === "(") return readSubstitution(p, seg);
 	if (next === undefined || !VARIABLE_START[p.mode].test(next)) return false;
 	seg.markDynamic();
+	const start = p.i;
 	if (next === "{") readBracedVariable(p, seg, inDouble);
 	else readVariableName(p, seg);
+	if (expandsToWords(p, p.src.slice(start, p.i))) seg.markSplitting();
 	return true;
 }
+
+/** Bash `$@`, `${@}`, `${a[@]}` and `${!p@}` yield several words even quoted. */
+const expandsToWords = (p, text) => p.mode === "bash" && text.includes("@");
 
 const startsArithmetic = (p) => p.mode === "bash" && p.src[p.i + 2] === "(";
 
@@ -719,11 +739,13 @@ function readSingleQuoted(p) {
 function readDoubleQuoted(p, seg) {
 	p.i++;
 	seg.append("");
+	p.quoted++;
 	while (p.i < p.src.length) {
 		const ch = p.src[p.i];
 		const next = p.src[p.i + 1];
 		if (closesDoubleQuote(p, ch, next)) {
 			p.i++;
+			p.quoted--;
 			return;
 		}
 		stepDoubleQuoted(p, seg, ch, next);
@@ -2565,13 +2587,42 @@ function segmentReason(segment, mode) {
     word there only through a launcher. */
 function computedCommandWord(segment, mode) {
 	const { words } = segment;
+	const isUnknown = (word) => word?.dynamic && !isScriptPath(word, mode);
 	const cmd = words[commandWordIndex(segment, mode)];
-	if (cmd?.dynamic) return cmd;
+	if (isUnknown(cmd)) return cmd;
 	const run = runPosition(segment, mode);
 	if (mode === "ps" && run.launchers.length === 0) return undefined;
 	const word = words[run.index];
-	return word?.dynamic ? word : undefined;
+	return isUnknown(word) ? word : undefined;
 }
+
+// Windows runs these extensions without naming them (`git.cmd` is git).
+const WINDOWS_EXECUTABLE = /\.(cmd|bat|com)$/;
+
+/** A computed word that can only name one script file, which runs as accepted
+    residual risk (D11): `"$SP/step.sh"`. Its expansions are quoted and yield one
+    word, a literal path separator follows the last one so the file name is
+    fixed, and that name is nothing the hook checks or treats as a launcher. */
+function isScriptPath(word, mode) {
+	if (word.splits) return false;
+	if (BRACE_EXPANSION.test(word.raw) || GLOB.test(word.raw)) return false;
+	const tail = word.value.slice(word.tailStart);
+	const sep = Math.max(tail.lastIndexOf("/"), tail.lastIndexOf("\\"));
+	if (sep === -1 || sep === tail.length - 1) return false;
+	return !isCheckedName(
+		commandName(tail).replace(WINDOWS_EXECUTABLE, ""),
+		mode,
+	);
+}
+
+/** A command name the hook analyses, runs through, or runs its operand. */
+const isCheckedName = (name, mode) =>
+	commandCheck(name, mode) !== undefined ||
+	WRAPPER_CHECKS.has(name) ||
+	Object.hasOwn(LAUNCHERS, name) ||
+	PS_LAUNCHERS.has(name) ||
+	RUN_TARGETS.has(name) ||
+	name === "find";
 
 // Commands that never execute their arguments: a git or gh word is safe as
 // their operand (D5 rev. 3 safety net).
