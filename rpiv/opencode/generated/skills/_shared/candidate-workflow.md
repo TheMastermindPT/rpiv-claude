@@ -116,7 +116,13 @@ Every slice runs in one lane: `fast` or `normal`. An older artifact's
 path names for certain (migrations, CI, containers, env files, manifests, graph
 hubs), never words in file names. A slice is fast only when `lane.mjs` says so
 and the developer confirms it: state in one sentence what the change touches,
-in the same question that approves the fast slice. A feature's lane
+in the same question that approves the fast slice. Before that question, run
+`node "$RPIV_PLUGIN_ROOT/scripts/jev-lane-suggest.mjs" --brief <brief> --slice <slice-id> -- <the slice's paths>`
+and show its lines with the question: Jev only suggests. Show
+`jev-lane: unavailable:` as unavailable, and report a `jev-lane: broken:` line
+with its diagnostic; neither is dropped. After the answer, record it as a label:
+`node "$RPIV_PLUGIN_ROOT/scripts/jev-lane-labels.mjs" label --slice <slice-id> --lane <fast|normal> -- <the same paths>`.
+A feature's lane
 lives in the frontmatter of its discover, research and design artifacts as
 `lane:` with `lane_reasons:` (the classifier's reasons as one inline list);
 discover estimates it, research confirms it with `lane.mjs --paths`, design

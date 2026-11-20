@@ -353,18 +353,12 @@ describe("Jev lane shadow hook (S8)", () => {
 	);
 
 	it(
-		"the Jev lane shadow hook is registered",
+		"the path-only shadow hook is no longer registered: jev-lane-suggest.mjs replaces it",
 		() => {
 			const post = JSON.parse(readFileSync(join(ROOT, "hooks", "hooks.json"), "utf8")).hooks.PostToolUse;
 			const entries = post.filter((e) => e.hooks.some((h) => h.command.includes("scripts/jev-lane.mjs")));
-			expect(entries).toHaveLength(1);
-			const [entry] = entries;
-			const matcher = new RegExp(`^(?:${entry.matcher})$`);
-			for (const tool of ["Bash", "PowerShell"]) expect(matcher.test(tool), tool).toBe(true);
-			for (const tool of ["Write", "Agent"]) expect(matcher.test(tool), tool).toBe(false);
-			expect(entry.hooks).toHaveLength(1);
-			expect(entry.hooks[0].timeout).toBeGreaterThanOrEqual(8);
-			// A PowerShell event behaves as a Bash one.
+			expect(entries).toHaveLength(0);
+			// Run by hand, a PowerShell event still behaves as a Bash one.
 			const res = run(repo(), { tool: "PowerShell" });
 			expect(res.fetches).toHaveLength(1);
 			expect(res.log[0]).toMatchObject({ status: "ok", lane: "normal" });
