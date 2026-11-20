@@ -1097,3 +1097,32 @@ describe("validation template (S19 revision 1)", () => {
 		}
 	});
 });
+
+describe("re-proving a slice of several commits from its base", () => {
+	it(
+		"--base <slice base> applies the tests every slice commit changed, not only the last",
+		() => {
+			const { repo, base } = baseRepo();
+			put(repo, "tests/sum.test.mjs", SUM_TEST);
+			commitAll(repo, "slice adds its test");
+			put(repo, "src/sum.mjs", GOOD_SUM);
+			const fix = commitAll(repo, "fix commit after review");
+			const call = (...extra) =>
+				runHelper(["--commit", fix, ...extra, "--", NODE, "run.mjs", "{tests}"], repo);
+
+			const atParent = call();
+			expect(atParent.lines).not.toContain("test: tests/sum.test.mjs");
+			expect(lastLine(atParent.lines)).toBe("result: no-tests");
+
+			const atBase = call("--base", base);
+			expect(atBase.stderr).toBe("");
+			expect(atBase.lines.slice(0, 3)).toEqual([
+				`reprove-red: ${fix}`,
+				`base: ${base}`,
+				"test: tests/sum.test.mjs",
+			]);
+			expect(lastLine(atBase.lines)).toBe("result: red");
+		},
+		TEST_TIMEOUT,
+	);
+});

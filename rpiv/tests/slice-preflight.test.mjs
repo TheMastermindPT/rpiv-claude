@@ -506,7 +506,7 @@ describe("slice-preflight CLI edge cases (review round 1)", () => {
 
 describe("slice-preflight in a package folder", () => {
 	it(
-		"reads contract paths relative to the folder it runs in, like rpiv's own plugin folder",
+		"finds a plugin-folder contract path (rpiv's own layout) from any folder it runs in",
 		() => {
 			const repo = tempDir();
 			git(repo, "init", "-q", "-b", "main");
@@ -530,8 +530,7 @@ describe("slice-preflight in a package folder", () => {
 				"b.md",
 				"### Test Contract: s\n\n- **Behavior B1**: x\n  - Test: `asks before any git push` -> `tests/hook.test.mjs`\n",
 			);
-			const res = run(
-				join(repo, "pkg"),
+			const args = [
 				"--artifact",
 				join(outside, "b.md"),
 				"--slice",
@@ -540,9 +539,11 @@ describe("slice-preflight in a package folder", () => {
 				base,
 				"--candidate",
 				candidate,
-			);
+			];
+			const res = run(join(repo, "pkg"), ...args);
 			expect(res.stdout.split("\n")[0]).toBe("preflight: clean");
 			expect(res.status).toBe(0);
+			expect(run(repo, ...args).stdout).toBe(res.stdout);
 		},
 		TEST_TIMEOUT,
 	);
@@ -571,4 +572,137 @@ describe("slice-preflight review round 2", () => {
 		expect(parsed.behaviors[0].redAt).toEqual([]);
 		expect(parsed.behaviors[0].pin).toBe(false);
 	});
+});
+
+// A slice of several commits (the slice, then a fix commit) whose contract names whole
+// files, bare file names and a file a generated mirror repeats, as SlopStop phase 3 and
+// rpiv's own opencode/generated tree do.
+describe("slice-preflight on whole-file tests and a slice of several commits", () => {
+	const commitAll = (repo, message) => {
+		git(repo, "add", "-A");
+		git(repo, "commit", "-q", "-m", message);
+		return git(repo, "rev-parse", "HEAD");
+	};
+	const layout = () => {
+		const repo = tempDir();
+		git(repo, "init", "-q", "-b", "main");
+		git(repo, "config", "user.email", "p@example.invalid");
+		git(repo, "config", "user.name", "p");
+		git(repo, "config", "core.autocrlf", "false");
+		put(repo, "src/x.ts", "export const x = 1;\n");
+		put(repo, "apps/h/kept.test.ts", "it('kept', () => {});\n");
+		put(repo, "apps/b/twin.test.ts", "it('other twin', () => {});\n");
+		const base = commitAll(repo, "base");
+		put(repo, "apps/h/new.test.ts", "it('new', () => {});\n");
+		put(repo, "apps/q/unique.test.ts", "it('unique', () => {});\n");
+		put(repo, "apps/a/twin.test.ts", "it('twin case', () => {});\n");
+		put(repo, "apps/a/tie.test.ts", "it('a', () => {});\n");
+		put(repo, "apps/b/tie.test.ts", "it('b', () => {});\n");
+		put(repo, "rpiv/skills/s.test.mjs", "it('s', () => {});\n");
+		put(repo, "rpiv/gen/skills/s.test.mjs", "it('s', () => {});\n");
+		commitAll(repo, "slice");
+		put(repo, "src/x.ts", "export const x = 2;\n");
+		const candidate = commitAll(repo, "fix after review");
+		return { repo, base, candidate, outside: tempDir() };
+	};
+	const brief = (outside, lines) =>
+		put(outside, "b.md", `### Test Contract: s\n\n${lines.join("\n")}\n`);
+	const preflight = (l, cwd) =>
+		run(
+			cwd ?? l.repo,
+			"--artifact",
+			join(l.outside, "b.md"),
+			"--slice",
+			"s",
+			"--base",
+			l.base,
+			"--candidate",
+			l.candidate,
+		);
+
+	it(
+		"is clean on readable whole-file tests across two commits, the same from any folder, re-proving from the base",
+		() => {
+			const l = layout();
+			brief(l.outside, [
+				"- **Behavior B1**: new file",
+				"  - Test: `apps/h/new.test.ts` (new), every row.",
+				"- **Behavior B2 (pin)**: kept",
+				"  - Test: `apps/h/kept.test.ts` `keptHelper`, unchanged.",
+				"  - Expected red: none — pin",
+				"- **Behavior B3**: bare names",
+				"  - Test: `unique.test.ts`; `twin case` in `twin.test.ts`",
+				"- **Behavior B4**: mirrored",
+				"  - Test: `skills/s.test.mjs`, with the mirror regenerated.",
+			]);
+			const res = preflight(l);
+			expect(res.stderr).toBe("");
+			expect(res.status).toBe(0);
+			expect(res.lines).toEqual([
+				"preflight: clean",
+				"diagnostic: test path twin.test.ts resolved to apps/a/twin.test.ts (also matched apps/b/twin.test.ts)",
+				"diagnostic: test path skills/s.test.mjs resolved to rpiv/skills/s.test.mjs (also matched rpiv/gen/skills/s.test.mjs)",
+				`reprove: --commit ${l.candidate} --base ${l.base}`,
+				`reprove: --commit ${l.candidate} --base ${l.base} --test twin.test.ts::twin case`,
+			]);
+			for (const folder of ["apps/h", "rpiv/gen"])
+				expect(preflight(l, join(l.repo, folder)).stdout).toBe(res.stdout);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"finds a whole-file test the slice never changed, a tied bare name and a missing file",
+		() => {
+			const l = layout();
+			brief(l.outside, [
+				"- **Behavior B1**: claims red on a file it never touched",
+				"  - Test: `apps/h/kept.test.ts`, tightened in place.",
+				"- **Behavior B2**: tie",
+				"  - Test: `tie.test.ts`",
+				"- **Behavior B3**: gone",
+				"  - Test: `apps/h/gone.test.ts`; `nowhere.test.ts`",
+			]);
+			const res = preflight(l);
+			expect(res.status).toBe(1);
+			expect(res.lines.filter((x) => x.startsWith("finding:"))).toEqual([
+				"finding: untouched-test-file: B1 apps/h/kept.test.ts",
+				"finding: ambiguous-test-path: B2 tie.test.ts (apps/a/tie.test.ts, apps/b/tie.test.ts)",
+				"finding: missing-test-file: B3 apps/h/gone.test.ts",
+				"finding: missing-test-file: B3 nowhere.test.ts",
+			]);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"is broken when the base is not an ancestor of the candidate",
+		() => {
+			const l = layout();
+			brief(l.outside, [
+				"- **Behavior B1**: x",
+				"  - Test: `apps/h/new.test.ts`",
+			]);
+			git(l.repo, "switch", "-q", "-c", "side", l.base);
+			put(l.repo, "side.txt", "side\n");
+			const side = commitAll(l.repo, "side");
+			const res = run(
+				l.repo,
+				"--artifact",
+				join(l.outside, "b.md"),
+				"--slice",
+				"s",
+				"--base",
+				side,
+				"--candidate",
+				l.candidate,
+			);
+			expect(res.status).toBe(2);
+			expect(res.stdout).toBe("");
+			expect(res.stderr).toBe(
+				`slice-preflight: broken: --base ${side} is not an ancestor of --candidate ${l.candidate}\n`,
+			);
+		},
+		TEST_TIMEOUT,
+	);
 });

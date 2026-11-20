@@ -6,8 +6,11 @@
 // CLI, run only as the entry point:
 //   node reprove-red.mjs --commit <rev> [--base <rev>] [--test <path>::<name>]...
 //                        [--link <path>]... [--timeout <seconds>] -- <executable> [args...]
-// --base rebuilds that revision instead of the commit's parent (a red observed at an
-// amended-away candidate, S19/D39); the applied tests stay the parent → commit diff.
+// --base rebuilds that revision instead of the commit's parent: a red observed at an
+// amended-away candidate (S19/D39), or the base of a slice of several commits. The
+// applied tests are the diff from the merge base of that revision and the commit to the
+// commit: the parent → commit diff for a one-commit slice or an amended-away sibling,
+// and every commit's tests for a slice of several.
 // prints `reprove-red:`, `base:`, `test:`/`fixture:`, `exit:`, `log:` and last
 // `result: red | green | no-tests`, exit 0. A broken call prints
 // `reprove-red: broken: <detail>` on stderr and exits 2, never a result.
@@ -158,7 +161,7 @@ const resolveCommit = (cwd, rev) => {
 	return { commit, parent: parents[0] };
 };
 
-/** Changed paths of parent → commit that a re-run applies: tests and fixtures. */
+/** Changed paths of `parent` → commit that a re-run applies: tests and fixtures. */
 const slicePaths = (top, parent, commit) => {
 	const fields = gitIn(top, [
 		"diff-tree",
@@ -481,7 +484,11 @@ const runCli = (argv, cwd) => {
 	const top = resolve(cwd, gitIn(cwd, ["rev-parse", "--show-toplevel"]).trim());
 	const { commit, parent } = resolveCommit(cwd, rev);
 	const base = baseRev === undefined ? parent : resolveRevision(cwd, baseRev);
-	const { tests, fixtures, manifests } = slicePaths(top, parent, commit);
+	const from =
+		baseRev === undefined
+			? parent
+			: gitIn(cwd, ["merge-base", base, commit]).trim();
+	const { tests, fixtures, manifests } = slicePaths(top, from, commit);
 	const header = [
 		`reprove-red: ${commit}`,
 		`base: ${base}`,

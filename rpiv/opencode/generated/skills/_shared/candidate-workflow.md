@@ -135,8 +135,10 @@ A fast slice falls back to a linked worktree when the main working tree has
 uncommitted changes unrelated to the slice; never stash, move, or commit them.
 Run the deterministic checks (tests, types, lint, and CodeScene where available)
 before dispatching any candidate-mode review agent.
-Those checks include the slice preflight on a committed candidate, run from the
-folder the contract's paths are relative to:
+Those checks include the slice preflight on a committed candidate, run from any
+folder of the repository (it resolves the contract's paths from the root), with
+`--base` the commit the slice started from, even when the slice spans several
+commits:
 `node "$RPIV_PLUGIN_ROOT/skills/_shared/slice-preflight.mjs" --artifact <brief> --slice <slice-id> --base <base> --candidate <candidate> [--evidence <log>]...`.
 Exit 1 lists findings to fix before any reviewer runs (no fix round is spent),
 and exit 2 is a broken gate that blocks. A frozen snapshot has no slice commit,

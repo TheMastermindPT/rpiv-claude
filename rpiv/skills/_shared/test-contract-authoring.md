@@ -43,6 +43,30 @@ named test location, exact Oracle, and Expected red reason. For example:
   - Expected red: the current operation accepts C and changes the collection to [A, B, C].
 ```
 
+### Test line grammar
+
+A `Test:` line (or each item under a `Tests:` line) is one or more clauses
+separated by `; `. Each clause takes exactly one of four forms; a code span is
+text in backticks:
+
+| Form | Example | What the slice preflight checks at the candidate |
+| --- | --- | --- |
+| `` `T` -> `P` `` (more titles joined by `and`) | `` `rejects an item` -> `src/a.test.ts` `` | each title is in the file |
+| `` `T` in `P` `` then any prose | `` `rejects an item` in `src/a.test.ts`, one row per code `` | the title is in the file |
+| `` rewrite in `P` (`T`) `` | `` rewrite in `src/a.test.ts` (`rejects an item`) `` | the title is in the file |
+| `` `P` `` (more paths after `,` or `and`) then any prose | `` `src/a.test.ts` (new), one row per class `` | whole file: it exists, and the slice changed it unless the behavior is a pin |
+
+`P` is a file path with an extension, written from the repository root or from
+the plugin folder the brief belongs to; a bare file name works when only one
+file has that name. Prose after the leading code spans is not checked, so name a
+title (the first three forms) whenever one exists; the whole-file form proves
+only that the slice wrote the file. Any other wording is unreadable: the preflight
+lists it as `unchecked`, and `validate-artifact.mjs --finalizing` rejects it in
+the sections being approved: those its `--slice <id>` options name, or without
+them every section no approved copy already holds word for word. Other sections
+only warn, so approved text is never edited to pass.
+`test-contract.mjs` is the one reader of this grammar.
+
 Use the strongest checkable oracle. Justify any genuinely nondeterministic
 expected value; do not weaken exact behavior to shape/presence assertions.
 Check the current source so Expected red is plausible. If behavior already
