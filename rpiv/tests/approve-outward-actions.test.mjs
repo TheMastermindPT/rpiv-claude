@@ -508,6 +508,37 @@ const SCRIPT_PATHS = {
 	brokenPs: ['& "$X\\git.exe" status'],
 };
 
+// A variable assigned once, literally and unconditionally earlier in the same
+// command is read as its value: `S=/tmp/sp; $S/run.sh` runs one script file. Any
+// doubt about the value (spaces, substitutions, a conditional or repeated
+// assignment, a use before it, a builtin that can change it) keeps the ask.
+const LITERAL_VARIABLES = {
+	silent: [
+		'cd /c/Users/pedro/Documents/GitHub/slopstop; S=/c/Users/pedro/AppData/Local/Temp/claude/539fe0bda604bbc1/ee3ff6d6-4a4a-4b74-ab04-9f156ea1245f/scratchpad; E=.rpiv/evidence/2026-11-18_08-39-47_port-foundation\n$S/runlog-pf2.sh pf-s2-survivor-rows-unit-2 . pnpm exec vitest run apps/desktop/src/main/canonical-writer-package-smoke-main.test.ts >/dev/null; echo $?; sed \'s/\\x1b\\[[0-9;]*m//g\' $E/pf-s2-survivor-rows-unit-2.log | rg "×|Tests |# exit"',
+		"cd /repo && E=.rpiv/evidence/s6 && $E/tdd-run.sh red",
+		'SP="/tmp/sp"; ${SP}/step.sh x',
+		"S=/tmp/sp\n$S/a.sh && $S/b.sh",
+	],
+	outward: ["G=git; $G push origin main", "D=/usr/bin; $D/git push"],
+	broken: [
+		'S="git push"; $S',
+		"S=/tmp/sp; S=/other; $S/a.sh",
+		"X=$(mktemp -d); $X/a.sh",
+		"X=`pwd`; $X/a.sh",
+		"X=$HOME/bin; $X/a.sh",
+		"false || S=/tmp/sp; $S/a.sh",
+		"cd /repo && S=/tmp/sp; $S/a.sh",
+		"$S/a.sh; S=/tmp/sp",
+		"S=/tmp/sp; read S; $S/a.sh",
+		"S=/tmp/sp; export S=$(cat f); $S/a.sh",
+		"S=/tmp/sp; eval S=x; $S/a.sh",
+		"S=/tmp/sp | true; $S/a.sh",
+		"(S=/tmp/sp); $S/a.sh",
+		"S=/tmp/*; $S/a.sh",
+		"S=/tmp/sp env x; $S/a.sh",
+	],
+};
+
 // Revision-4 cases of B12, B14 and B15.
 const REV4 = {
 	computedRun: [
@@ -1459,6 +1490,16 @@ describe("approve-outward-actions hook", () => {
 			expectAsks(SCRIPT_PATHS.outward, `${OUTWARD}git push`);
 			expectSilent(SCRIPT_PATHS.silentPs, psEvent);
 			expectAsks(SCRIPT_PATHS.brokenPs, BROKEN, psEvent);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"reads a variable assigned once, literally and unconditionally in the same command, as its value",
+		() => {
+			expectSilent(LITERAL_VARIABLES.silent);
+			expectAsks(LITERAL_VARIABLES.outward, `${OUTWARD}git push`);
+			expectAsks(LITERAL_VARIABLES.broken, BROKEN);
 		},
 		TEST_TIMEOUT,
 	);

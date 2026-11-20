@@ -27,6 +27,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createdNameWord, writeBeforeNote } from "./_branch-creations.mjs";
+import { withLiteralVariables } from "./_literal-variables.mjs";
 import {
 	approval,
 	branchNames,
@@ -181,10 +182,13 @@ function newSegmentBuilder(p, options = {}) {
 		// `ending`: how the segment ends — "list" (`;`, `&&`, `||`, newline, end),
 		// "pipe" (it feeds the next one) or "background" (Bash `&`); `depth` is 1
 		// for top-level segments, more inside substitutions (D14 S2 rev. 1).
+		// `joiner`: the operator after the segment — "seq" (`;`, newline, end),
+		// "and" (`&&`), "or" (`||`), "pipe" or "background".
 		endSegment({
 			nextPiped = false,
 			nextCalled = false,
 			ending = "list",
+			joiner = "seq",
 		} = {}) {
 			this.endWord();
 			if (words.length > 0)
@@ -196,6 +200,7 @@ function newSegmentBuilder(p, options = {}) {
 					inheritedFed: options.fed === true,
 					group: groups.at(-1) ?? null,
 					ending,
+					joiner,
 					depth: p.depth,
 				});
 			words = [];
@@ -502,7 +507,11 @@ function stepSeparator(p, seg, ch, next) {
 	else if (ch === "|") {
 		// `||` is a list operator; `|` and Bash `|&` pipe into the next segment.
 		const pipes = next !== "|";
-		seg.endSegment({ nextPiped: pipes, ending: pipes ? "pipe" : "list" });
+		seg.endSegment({
+			nextPiped: pipes,
+			ending: pipes ? "pipe" : "list",
+			joiner: pipes ? "pipe" : "or",
+		});
 		p.i += next === "|" || next === "&" ? 2 : 1;
 	} else if (ch === ";") {
 		seg.endSegment();
@@ -552,6 +561,13 @@ function isGrouping(p, seg, ch, next) {
 	return ch === "}" || /^\s?$/.test(next ?? "");
 }
 
+/** The joiner an `&` ends a segment with: `&&`, a Bash background job, or the
+    PowerShell call operator (a plain sequence). */
+const joinerOfAmpersand = (background, next) => {
+	if (next === "&") return "and";
+	return background ? "background" : "seq";
+};
+
 function stepAmpersand(p, seg, next) {
 	// Bash `&>file` / `&>>file`: the `>` that follows is read as a redirection.
 	if (p.mode === "bash" && next === ">") {
@@ -565,6 +581,7 @@ function stepAmpersand(p, seg, next) {
 	seg.endSegment({
 		nextCalled: p.mode === "ps" && next !== "&",
 		ending: background ? "background" : "list",
+		joiner: joinerOfAmpersand(background, next),
 	});
 	p.i += next === "&" ? 2 : 1;
 }
@@ -2819,7 +2836,23 @@ function shellCommandReason(command, mode) {
 	if (command.length > MAX_COMMAND_LENGTH)
 		return broken(`command longer than ${MAX_COMMAND_LENGTH} characters`);
 	decision = newDecision();
-	return analyzeCommand(command, mode) ?? markerReason(command, mode);
+	return (
+		analyzeCommand(resolvedCommand(command, mode), mode) ??
+		markerReason(command, mode)
+	);
+}
+
+/** A Bash command with its literally known variables read as their values
+    (_literal-variables.mjs); the command itself when it cannot be tokenized, so
+    the analysis reports that as before. */
+function resolvedCommand(command, mode) {
+	if (mode !== "bash") return command;
+	try {
+		return withLiteralVariables(command, tokenize(command, mode));
+	} catch (err) {
+		if (err instanceof Unparseable) return command;
+		throw err;
+	}
 }
 
 // ---- approved branches (D14, S2) -----------------------------------------------------
