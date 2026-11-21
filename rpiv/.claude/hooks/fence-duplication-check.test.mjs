@@ -116,6 +116,32 @@ try {
   const noRep = runHook(plan, proj, { RPIV_CPD_BIN: noReport });
   assert.match(noRep, /FAILED.*wrote no report/s, "a cpd that writes no report reports FAILED");
 
+  // Only the second (TypeScript-reader) pass fails: the first pass's result still stands,
+  // but the run must say PARTIAL — never read as a clean, complete check.
+  const tsOnlyFails = join(tmp, "ts-fails-cpd.js");
+  writeFileSync(
+    tsOnlyFails,
+    `const fs = require("node:fs"), path = require("node:path");
+const a = process.argv.slice(2);
+if (a[a.indexOf("--format") + 1].includes("typescript")) { process.stderr.write("ts boom\\n"); process.exit(4); }
+const out = a[a.indexOf("-o") + 1];
+fs.mkdirSync(out, { recursive: true });
+fs.writeFileSync(path.join(out, "jscpd-report.json"), JSON.stringify({ duplicates: [] }));
+`,
+  );
+  writeFileSync(join(tmp, "package.json"), '{"type":"commonjs"}\n'); // the fake cpd uses require()
+  write(artifact({ target: "src/x.ts", code: "export const x: number = 1;", lang: "typescript" }));
+  const partial = runHook(plan, proj, { RPIV_CPD_BIN: tsOnlyFails });
+  assert.match(partial, /PARTIAL.*TypeScript-reader pass cpd exited 4/s,
+    "a failing TypeScript pass reports PARTIAL with its cause");
+  assert.match(partial, /1 TypeScript fence\(s\) were checked by the javascript reader only/,
+    "PARTIAL states what went under-checked");
+  assert.doesNotMatch(partial, /FAILED|SKIPPED/, "a second-pass failure is PARTIAL, not a full failure");
+
+  write(artifact({ target: "lib/x.mjs", code: "export const x = 1;" }));
+  assert.equal(runHook(plan, proj, { RPIV_CPD_BIN: tsOnlyFails }), "",
+    "a fence set with no TypeScript runs no second pass, so it cannot go PARTIAL");
+
   // ---- detection + filtering (needs a real cpd) ------------------------------------
 
   // 1. Fence declares a NEW file, body already exists in lib/existing.mjs -> flagged.
@@ -145,10 +171,10 @@ try {
     const untagged = runHook(plan, proj);
     assert.match(untagged, /target unknown/, "a fence with no declared target is tagged, not dropped");
 
-    // 5. TypeScript must detect. Regression guard: cpd 5.0.11's own `typescript` format
-    //    finds ZERO clones on byte-identical input that its `javascript` format matches,
-    //    so the hook routes .ts/.tsx through the javascript tokenizer. If that routing is
-    //    ever reverted, TS projects go silently clean — the worst failure mode here.
+    // 5. TypeScript must detect. Regression guard: cpd's own `typescript` reader (5.0.11-5.4.3)
+    //    counts this byte-identical pair as too few tokens to report, while the javascript
+    //    reader (first pass) matches it. If that routing is ever reverted, TS projects go
+    //    quietly under-reported — the worst failure mode here.
     mkdirSync(join(proj, "src"), { recursive: true });
     const TS_SHARED = `export interface AthleteRow {
 	id: string;
@@ -168,6 +194,41 @@ export function buildAthleteInsert(profile: AthleteRow, userId: string) {
     write(artifact({ target: "src/brand-new.ts", code: TS_SHARED, lang: "typescript" }));
     const tsHit = runHook(plan, proj, { RPIV_DUP_TOKENS: "40" });
     assert.match(tsHit, /src\/mappers\.ts/, "TypeScript fences detect duplication (cpd typescript-format bug workaround)");
+    assert.match(tsHit, /Duplication: 1 code fence region/, "a clone both passes see is reported once");
+
+    // 5b. The second pass earns its place. The repo copy gained a comment mid-function; in
+    //     an annotated file the javascript reader counts comment words as code, so its match
+    //     splits into two halves (56 + 69 tokens) under a 75-token bar. The TypeScript
+    //     reader skips comments and still sees one 101-token copy. Same counts on cpd 5.0.11 and 5.4.3.
+    const TOKEN_BODY = [
+      "  const bytes = new Uint8Array(byteLength);",
+      "  crypto.getRandomValues(bytes);",
+      "  const encoded: string = btoa(String.fromCodePoint(...bytes))",
+      '    .replaceAll("+", "-")',
+      '    .replaceAll("/", "_")',
+      '    .replace(/=+$/, "");',
+      "  const stamp: number = Date.now();",
+      "  const scope: string = prefix.toLowerCase().trim();",
+      "  return `${scope}.${stamp}.${encoded}`;",
+      "}",
+    ];
+    const withComment = [
+      ...TOKEN_BODY.slice(0, 4),
+      "    // base64url without padding (RFC 4648 section 5): 32 bytes -> 43 chars.",
+      ...TOKEN_BODY.slice(4),
+    ];
+    writeFileSync(
+      join(proj, "src", "owner-link.ts"),
+      `export function newToken(byteLength: number, prefix: string): string {\n${withComment.join("\n")}\n`,
+    );
+    write(artifact({
+      target: "src/guest-link.ts",
+      code: `export function newGuestToken(byteLength: number, prefix: string): string {\n${TOKEN_BODY.join("\n")}`,
+      lang: "typescript",
+    }));
+    const splitHit = runHook(plan, proj, { RPIV_DUP_TOKENS: "75" });
+    assert.match(splitHit, /src\/owner-link\.ts/, "a comment-split TypeScript copy is caught by the second pass");
+    assert.doesNotMatch(splitHit, /PARTIAL/, "both passes ran");
 
     // 6. A fence whose body is nothing like the repo stays silent.
     write(artifact({ target: "lib/new.mjs", code: "export const greet = () => console.log(\"hi\");" }));
@@ -177,8 +238,9 @@ export function buildAthleteInsert(profile: AthleteRow, userId: string) {
     write(artifact({ target: "docs/x.txt", code: SHARED, lang: "text" }));
     assert.equal(runHook(plan, proj), "", "an unsupported fence language is skipped silently");
 
-    console.log("OK (fence-duplication-check) — scope gating, 4 degrade paths, cross-file " +
-      "detection (js + ts), self-target filter (File: + heading), unknown-target tagging.");
+    console.log("OK (fence-duplication-check) — scope gating, 5 degrade paths (incl. PARTIAL), " +
+      "cross-file detection (js + ts, both readers, merged once), self-target filter " +
+      "(File: + heading), unknown-target tagging.");
   }
 } finally {
   rmSync(tmp, { recursive: true, force: true });

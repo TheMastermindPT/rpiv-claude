@@ -27,6 +27,8 @@
 // Advisory only — always exits 0. Per degrade-distinguishes-broken, every way this check
 // can fail to RUN (no cpd binary, cpd crash, unreadable report, unterminated fence) emits
 // its own diagnostic naming the cause: a skipped check must never read as a clean one.
+// When the second (TypeScript-reader) pass alone fails, the first pass's findings are still
+// reported, under a PARTIAL diagnostic that names what went unchecked.
 //
 // Env:
 //   RPIV_CPD_BIN     path to a cpd executable, or to jscpd's run-jscpd.js shim
@@ -40,27 +42,34 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 
 import { parseFences } from "../../skills/_shared/fences.mjs";
+import { mergeCpdReports } from "../../skills/_shared/jscpd-merge.mjs";
 
 // ---- constants -----------------------------------------------------------------
 
 // Fence language -> { ext, format }. Deliberately language-open: rpiv targets more than
 // JS/TS, and cpd already tokenizes these. An unlisted language is skipped, not guessed at.
 //
-// TypeScript and JSX deliberately route through cpd's JAVASCRIPT tokenizer rather than its
-// own `typescript`/`tsx` formats. On cpd 5.0.11 the typescript tokenizer misses clones the
-// javascript one catches on byte-identical input — measured 0 vs 1 on a synthetic pair and
-// 22 vs 48 across a real Next.js lib/. Since the TS-heavy projects this plugin runs in are
-// exactly where that matters, a silent zero there would be the worst failure this hook has.
-// FORMAT_EXTS is what makes cpd read .ts/.tsx/.jsx as javascript on the repo side too.
+// TypeScript is read TWICE, because neither of cpd's readers is complete on its own
+// (measured on cpd 5.0.11 and re-checked on 5.4.3, on two real Next.js repos):
+//   1. The JAVASCRIPT reader (FORMAT_EXTS makes it read .ts/.tsx/.jsx on the repo side too).
+//      cpd's own typescript reader counts the same code as fewer tokens, so the same clone
+//      falls under min-tokens: 22 vs 48 clones on one lib/, found at the same lines when the
+//      bar is lowered. This pass also lets a .ts fence match a .mjs/.tsx repo file.
+//   2. The TYPESCRIPT reader (`tsFormat`), for TS fences only. In a file with type
+//      annotations the javascript reader counts comment words as code, so a copy that gained
+//      or lost a comment splits into halves too small to report — 24-34 real clones per repo
+//      that only this pass finds. Lowering pass 1's bar instead tripled the noise and still
+//      missed them.
+// Both reports are merged by skills/_shared/jscpd-merge.mjs; overlapping clones count once.
 const LANGS = {
   javascript: { ext: "mjs", format: "javascript" },
   js: { ext: "mjs", format: "javascript" },
   mjs: { ext: "mjs", format: "javascript" },
   cjs: { ext: "cjs", format: "javascript" },
   jsx: { ext: "jsx", format: "javascript" },
-  typescript: { ext: "ts", format: "javascript" },
-  ts: { ext: "ts", format: "javascript" },
-  tsx: { ext: "tsx", format: "javascript" },
+  typescript: { ext: "ts", format: "javascript", tsFormat: "typescript" },
+  ts: { ext: "ts", format: "javascript", tsFormat: "typescript" },
+  tsx: { ext: "tsx", format: "javascript", tsFormat: "tsx" },
   mts: { ext: "mts", format: "javascript" },
   cts: { ext: "cts", format: "javascript" },
   python: { ext: "py", format: "python" },
@@ -103,7 +112,11 @@ const IGNORE_GLOBS = [
 
 const MAX_REPORTED = 10;
 const DEFAULT_MIN_TOKENS = 50;
-const CPD_TIMEOUT_MS = 12000;
+const CPD_TIMEOUT_MS = 12000; // first pass
+// Both passes share one budget that stays under the 25s hook timeout in hooks.json; the
+// second pass gets whatever the first left, and is skipped (PARTIAL) below MIN_PASS_MS.
+const TOTAL_BUDGET_MS = 21000;
+const MIN_PASS_MS = 2000;
 const PATH_IN_TEXT = /([\w.@-]+(?:\/[\w.@-]+)+\.\w+)/;
 
 const warn = (msg) => process.stderr.write(`[rpiv-hook] ${msg}\n`);
@@ -297,7 +310,113 @@ function report(artifact, findings, minTokens) {
   );
 }
 
+// ---- cpd passes ----------------------------------------------------------------
+
+/**
+ * Run cpd once and read its JSON report. Returns { report } on success, or
+ * { failure, timedOut } with a cause worded to follow "the check ..." in a diagnostic.
+ */
+function runPass(cpd, { scanRoots, formatArgs, minTokens, reportDir, timeoutMs }) {
+  const run = spawnSync(
+    cpd.cmd,
+    [
+      ...cpd.pre,
+      ...scanRoots,
+      ...formatArgs,
+      "--min-tokens", String(minTokens),
+      "--reporters", "json,silent",
+      "-o", reportDir,
+      "--absolute",
+      "--ignore", IGNORE_GLOBS,
+    ],
+    { encoding: "utf-8", timeout: timeoutMs },
+  );
+  if (run.error?.code === "ETIMEDOUT") {
+    return { failure: `timed out after ${timeoutMs}ms`, timedOut: true };
+  }
+  if (run.error || run.status !== 0) {
+    return {
+      failure: `cpd exited ${run.status ?? run.error?.code}. ${(run.stderr || "").trim().slice(0, 200)}`,
+    };
+  }
+  const reportFile = join(reportDir, "jscpd-report.json");
+  if (!existsSync(reportFile)) return { failure: `cpd wrote no report to ${reportDir}` };
+  try {
+    return { report: JSON.parse(readFileSync(reportFile, "utf-8")) };
+  } catch (err) {
+    return { failure: `cpd report is unreadable (${err.message})` };
+  }
+}
+
+/** The first pass failing means nothing was checked — each cause keeps its own wording. */
+function warnFirstPassFailed(artifact, fences, roots, result) {
+  const unchecked = `${fences.length} code fence(s) went unchecked.`;
+  if (result.timedOut) {
+    warn(
+      `Duplication check TIMED OUT for ${basename(artifact)} after ${CPD_TIMEOUT_MS}ms scanning ` +
+        `${roots.map((r) => basename(r)).join(", ")}. ${unchecked} ` +
+        `Narrow the scan with RPIV_DUP_SRC (e.g. RPIV_DUP_SRC=src,lib).`,
+    );
+    return;
+  }
+  warn(`Duplication check FAILED for ${basename(artifact)}: ${result.failure.trim()} ${unchecked}`);
+}
+
+/**
+ * The TypeScript-reader pass over the TS fences. Returns its cpd report, or null after a
+ * PARTIAL diagnostic when it could not run — the first pass's report still stands.
+ */
+function runTypeScriptPass(cpd, ctx, tsFences, startedAt) {
+  const name = basename(ctx.artifact);
+  const partial = (cause) =>
+    warn(
+      `Duplication check PARTIAL for ${name}: the TypeScript-reader pass ${cause}. ` +
+        `${tsFences.length} TypeScript fence(s) were checked by the javascript reader only — ` +
+        "clones split by a comment inside a copy may be missing.",
+    );
+  const timeoutMs = TOTAL_BUDGET_MS - (Date.now() - startedAt);
+  if (timeoutMs < MIN_PASS_MS) {
+    partial(`was skipped: the first pass used the time budget (${TOTAL_BUDGET_MS}ms)`);
+    return null;
+  }
+  const formats = [...new Set(tsFences.map((f) => f.spec.tsFormat))];
+  const result = runPass(cpd, {
+    ...ctx.scan,
+    formatArgs: ["--format", formats.join(",")],
+    reportDir: join(ctx.tmp, "report-ts"),
+    timeoutMs,
+  });
+  if (!result.report) {
+    partial(result.failure.trim());
+    return null;
+  }
+  return result.report;
+}
+
 // ---- main ----------------------------------------------------------------------
+
+/** Write each fence to its own temp file; returns the cpd formats used and the name map. */
+function writeFences(fences, fenceDir) {
+  const formats = new Set();
+  const byTmpName = new Map();
+  fences.forEach((f, i) => {
+    const tmpName = `f${String(i).padStart(3, "0")}.${f.spec.ext}`;
+    writeFileSync(join(fenceDir, tmpName), `${f.code}\n`);
+    formats.add(f.spec.format);
+    byTmpName.set(tmpName, f);
+  });
+  return { formats, byTmpName };
+}
+
+/** RPIV_DUP_SRC's roots resolved against the project, or the project root itself. */
+function sourceRoots(projectDir) {
+  const configured = (process.env.RPIV_DUP_SRC || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => resolve(projectDir, s));
+  return configured.length ? configured : [projectDir];
+}
 
 /** Runs the check. Returns nothing; all output is stderr. Never throws past its caller. */
 function check(artifact, fences, projectDir) {
@@ -323,76 +442,32 @@ function check(artifact, fences, projectDir) {
     const reportDir = join(tmp, "report");
     mkdirSync(fenceDir, { recursive: true });
 
-    const formats = new Set();
-    const byTmpName = new Map();
-    fences.forEach((f, i) => {
-      const tmpName = `f${String(i).padStart(3, "0")}.${f.spec.ext}`;
-      writeFileSync(join(fenceDir, tmpName), `${f.code}\n`);
-      formats.add(f.spec.format);
-      byTmpName.set(tmpName, f);
-    });
-
-    const configured = (process.env.RPIV_DUP_SRC || "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean)
-      .map((s) => resolve(projectDir, s));
-    const roots = configured.length ? configured : [projectDir];
+    const { formats, byTmpName } = writeFences(fences, fenceDir);
+    const roots = sourceRoots(projectDir);
     const minTokens = Number(process.env.RPIV_DUP_TOKENS) || DEFAULT_MIN_TOKENS;
+    const scan = { scanRoots: [fenceDir, ...roots], minTokens };
+    const startedAt = Date.now();
 
-    const run = spawnSync(
-      cpd.cmd,
-      [
-        ...cpd.pre,
-        fenceDir,
-        ...roots,
-        "--format", [...formats].join(","),
-        "--formats-exts", FORMAT_EXTS,
-        "--min-tokens", String(minTokens),
-        "--reporters", "json,silent",
-        "-o", reportDir,
-        "--absolute",
-        "--ignore", IGNORE_GLOBS,
-      ],
-      { encoding: "utf-8", timeout: CPD_TIMEOUT_MS },
-    );
-
-    const unchecked = `${fences.length} code fence(s) went unchecked.`;
-    if (run.error?.code === "ETIMEDOUT") {
-      warn(
-        `Duplication check TIMED OUT for ${basename(artifact)} after ${CPD_TIMEOUT_MS}ms scanning ` +
-          `${roots.map((r) => basename(r)).join(", ")}. ${unchecked} ` +
-          `Narrow the scan with RPIV_DUP_SRC (e.g. RPIV_DUP_SRC=src,lib).`,
-      );
-      return;
-    }
-    if (run.error || run.status !== 0) {
-      warn(
-        `Duplication check FAILED for ${basename(artifact)}: cpd exited ${run.status ?? run.error?.code}. ` +
-          `${unchecked} ${(run.stderr || "").trim().slice(0, 200)}`,
-      );
+    const first = runPass(cpd, {
+      ...scan,
+      formatArgs: ["--format", [...formats].join(","), "--formats-exts", FORMAT_EXTS],
+      reportDir,
+      timeoutMs: CPD_TIMEOUT_MS,
+    });
+    if (!first.report) {
+      warnFirstPassFailed(artifact, fences, roots, first);
       return;
     }
 
-    const reportFile = join(reportDir, "jscpd-report.json");
-    if (!existsSync(reportFile)) {
-      warn(
-        `Duplication check FAILED for ${basename(artifact)}: cpd wrote no report to ${reportDir}. ${unchecked}`,
-      );
-      return;
+    const reports = [first.report];
+    const tsFences = fences.filter((f) => f.spec.tsFormat);
+    if (tsFences.length > 0) {
+      const second = runTypeScriptPass(cpd, { artifact, tmp, scan }, tsFences, startedAt);
+      if (second) reports.push(second);
     }
 
-    let parsed;
-    try {
-      parsed = JSON.parse(readFileSync(reportFile, "utf-8"));
-    } catch (err) {
-      warn(
-        `Duplication check FAILED for ${basename(artifact)}: cpd report is unreadable (${err.message}). ${unchecked}`,
-      );
-      return;
-    }
-
-    const findings = collectFindings(parsed, { fenceDir, projectDir, byTmpName });
+    const merged = mergeCpdReports(reports);
+    const findings = collectFindings(merged, { fenceDir, projectDir, byTmpName });
     if (findings.length > 0) report(artifact, findings, minTokens);
   } finally {
     rmSync(tmp, { recursive: true, force: true });

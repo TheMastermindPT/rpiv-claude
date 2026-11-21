@@ -383,7 +383,7 @@ Plan ready for the implementation phase.
 |---|---|---|---|---|
 | dependency-cruiser | L (+ A dead-module, blast-radius) | {configured / installed-unconfigured / absent} | {yes/no} | {N forbidden rules — "meaningful" OR "weak: no-violations not trustworthy, suggested `depcruise --init`"; note if reachability/`--focus` were used} |
 | knip | A | {status} | {yes/no} | {dead-export summary} |
-| jscpd | D | {configured / installed / absent} | {yes/no} | {N clones, M% duplicated lines (Rust v5), or "absent — D on metrics dup-candidates"} |
+| jscpd | D | {configured / installed / absent} | {yes/no} | {N clones merged from the javascript + typescript passes, M% duplicated lines (Rust v5), "partial (typescript pass {cause})", or "absent — D on metrics dup-candidates"} |
 | coverage ({vitest/jest/…}) | T | {status} | {yes/no} | {report path, or "no report — gathered via checkpoint" / "running unaided"} |
 | stryker | T | {configured / installed-unconfigured / absent} | {yes/no} | {report path, or "no report — mutation testing skipped" / "N files, overall score R%"} |
 | ts-morph | S / Fe / A / C | {configured / installed-unconfigured / absent} | {yes/no} | {type-resolved write-sites / feature-envy / dead-exports / type-fragmentation via `semantic.mjs`, or "unavailable: {reason} — S/Fe/A/C on regex+agent signals", or "broken: {reason} — a FAILED run, not absence; S/Fe/A/C on regex+agent signals"; append "partial: tsconfig_errors={N}, parse_errors={M}, targets_unmeasured={K}" when any is above 0} |
@@ -403,7 +403,7 @@ Ingested verbatim from the repo's own tooling — the findings above intentional
   {- rule -> `file` -> `file` (one line per violation, capped)}
 - **knip** ({command}): {N dead exports, M dead files | clean | unavailable}.
   {- `file` — dead export `{symbol}` (capped)}
-- **jscpd** ({command}): {N clones, M% duplicated lines (Rust v5) | clean | absent — D ran on metrics dup}.
+- **jscpd** ({command}): {N clones (merged, both passes), M% duplicated lines (Rust v5) | partial (typescript pass {cause}) | clean | absent — D ran on metrics dup}.
   {- `fileA` <-> `fileB` (N lines) (capped)}
 - **coverage** ({command}): overall {stmt% / branch% / fn%}; {N} files with branch-gaps fed to the T lens.
 - **standing decisions** (`.rpiv/decisions/`): {N accepted; M suppressed — candidate id → key, ... | none | unreadable: {path — diagnostic}}.
