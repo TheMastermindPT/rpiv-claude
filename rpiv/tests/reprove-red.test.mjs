@@ -1139,8 +1139,17 @@ describe("pytest reports and exit codes (S1-pytest-report)", () => {
 
 	// The pytest stand-in: `--copy <src>` copies a report to the `--junitxml=` path,
 	// `--write <text>` writes text there, `--marker <file>` records every argument and
-	// whether it exists in the working folder, `--code <n>` is the exit code.
+	// whether it exists in the working folder (plus `["probe", <exists>]` for a
+	// `--probe=<path>` argument), `--code <n>` is the exit code. In a Python run it writes
+	// one complete clean import record into the guard folder first on its PYTHONPATH
+	// (D12 of S2-scratch-copy).
 	const FAKE_PYTEST = `import { copyFileSync, existsSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
+const guard = (process.env.PYTHONPATH ?? "").split(delimiter)[0];
+if (guard && existsSync(join(guard, "records"))) {
+	const lines = ["start: 10", "package: " + guard, "module: " + join(process.cwd(), "fake.mjs"), "end: 10"];
+	writeFileSync(join(guard, "records", "clean"), lines.join("\\n") + "\\n");
+}
 const args = process.argv.slice(2);
 const opt = (name) => {
 	const at = args.indexOf(name);
@@ -1149,8 +1158,11 @@ const opt = (name) => {
 const report = args.find((arg) => arg.startsWith("--junitxml="))?.slice(11);
 if (opt("--copy") && report) copyFileSync(opt("--copy"), report);
 if (opt("--write") && report) writeFileSync(report, opt("--write"));
+const probe = args.find((arg) => arg.startsWith("--probe="))?.slice(8);
 if (opt("--marker")) {
-	writeFileSync(opt("--marker"), JSON.stringify(args.map((arg) => [arg, existsSync(arg)])));
+	const seen = args.map((arg) => [arg, existsSync(arg)]);
+	if (probe) seen.push(["probe", existsSync(probe)]);
+	writeFileSync(opt("--marker"), JSON.stringify(seen));
 }
 process.exit(Number(opt("--code")));
 `;
@@ -1255,7 +1267,8 @@ process.exit(Number(opt("--code")));
 			const MIXED =
 				"reprove-red: broken: tests in Python and another language need one run per runner";
 			const BROKEN_2 = "result: broken: exit 2 (pytest: collection error or interrupted)";
-			// [changed files, runner exit, last line or MIXED, a path the marker must list as existing]
+			// [changed files, runner exit, last line or MIXED, a path the marker must list as
+			// existing, a path that must exist in the scratch copy but not be an argument (D14)]
 			const ROWS = [
 				[["tests/test_ok.py", "tests/a.test.mjs"], 1, MIXED],
 				[["tests/foo_test.py", "tests/a.test.mjs"], 1, MIXED],
@@ -1273,10 +1286,12 @@ process.exit(Number(opt("--code")));
 				[["src/test/resources/helper.py"], 2, "result: red"],
 				[["src/test/java/FooTest.java", "src/test/resources/helper.py"], 2, "result: red"],
 				[["tests/test_api.py", "docker-compose.test.yml"], 2, BROKEN_2],
+				// S2-scratch-copy, D14: the `.mjs` test data is copied, no longer an argument.
 				[
 					["tests/test_ok.py", "tests/fixtures/js/a.test.mjs"],
 					2,
 					BROKEN_2,
+					undefined,
 					"tests/fixtures/js/a.test.mjs",
 				],
 				[["tests/test_ok.py", "tests/fixtures/golden.json"], 2, BROKEN_2],
@@ -1286,12 +1301,13 @@ process.exit(Number(opt("--code")));
 				[["tests/test_ok.py", "src/app.mjs"], 2, BROKEN_2],
 				[["tests/test_ok.py", "tests/e2e/helper.mjs"], 2, BROKEN_2],
 			];
-			for (const [files, code, want, listed] of ROWS) {
+			for (const [files, code, want, listed, copiedOnly] of ROWS) {
 				const label = files.join(" + ");
 				const { repo, slice } = sliceRepo(files);
 				const marker = join(tempDir(), "marker.json");
+				const probe = copiedOnly === undefined ? [] : [`--probe=${copiedOnly}`];
 				const run = pyRun(repo, slice, {
-					runner: ["--marker", marker, "{tests}", "--code", String(code)],
+					runner: ["--marker", marker, "{tests}", "--code", String(code), ...probe],
 				});
 				if (want === MIXED) {
 					expect.soft(run.status, label).toBe(2);
@@ -1307,6 +1323,13 @@ process.exit(Number(opt("--code")));
 					expect
 						.soft(JSON.parse(readFileSync(marker, "utf-8")), label)
 						.toContainEqual([listed, true]);
+				}
+				if (copiedOnly !== undefined && existsSync(marker)) {
+					const seen = JSON.parse(readFileSync(marker, "utf-8"));
+					expect.soft(seen, label).toContainEqual(["probe", true]);
+					expect
+						.soft(seen.map(([arg]) => arg), label)
+						.not.toContain(copiedOnly);
 				}
 			}
 		},

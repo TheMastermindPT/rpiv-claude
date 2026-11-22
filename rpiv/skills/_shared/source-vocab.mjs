@@ -17,7 +17,7 @@
 //
 // Importable-only: no CLI, no isMain.
 // Importable: SOURCE_EXT, CITE_EXT, extOf, isSource, isTest, isFixture, isTestTree,
-// isPythonTest, isTestData, TEST_EXCLUDE_RE,
+// isPythonTest, isTestData, isPythonTestSupport, TEST_EXCLUDE_RE,
 // isManifest, isLockfile, isMigration, isCiConfig, isContainerFile, LANE_CONFIG_FILE,
 // isLaneConfig, isEnvFile, isGenerated, isMedia.
 
@@ -105,6 +105,18 @@ export const isPythonTest = (p) =>
 export const isTestData = (p) =>
 	/(^|\/)(fixtures?|__fixtures__)(\/|$)/i.test(p);
 
+/**
+ * True for a path a Python run's scratch copy takes from the slice (D19 of the
+ * Python-support design, S2-scratch-copy): any file named exactly `conftest.py`, any
+ * path isTest accepts, and any path isTestTree accepts that has no `src` folder in it.
+ * isTestTree's folder rule also matches production packages (`src/demo/test/utils.py`),
+ * so inside a `src` folder only tests and `conftest.py` count.
+ */
+export const isPythonTestSupport = (p) =>
+	/(^|\/)conftest\.py$/.test(p) ||
+	isTest(p) ||
+	(isTestTree(p) && !/(^|\/)src\//.test(p));
+
 // Regex-source STRING for the generated .dependency-cruiser.cjs (layer-rules), kept
 // byte-identical to the prior inline literal so the generated CI config is unchanged.
 // Narrower than isTest ON PURPOSE: dependency-cruiser only cruises JS/TS, so the
@@ -120,12 +132,13 @@ const slashed = (p) => p.replace(/\\/g, "/");
 const baseOf = (p) => slashed(p).slice(slashed(p).lastIndexOf("/") + 1);
 
 // Dependency manifests and lockfiles: the union of review-range.mjs's MANIFEST_RE
-// (23 alternatives) and its strict subset MANIFEST_BASENAME_RE — no novelties.
+// (23 alternatives) and its strict subset MANIFEST_BASENAME_RE, plus uv's `uv.lock`
+// (D15 of the Python-support design, S2-scratch-copy).
 const MANIFEST_NAME_RE =
-	/^(package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|deno\.(json|jsonc|lock)|cargo\.(toml|lock)|go\.(mod|sum)|pyproject\.toml|requirements[^/]*\.txt|poetry\.lock|pipfile(\.lock)?|setup\.(py|cfg)|gemfile(\.lock)?|composer\.(json|lock)|pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|mix\.(exs|lock)|[^/]+\.csproj|packages\.config|paket\.(dependencies|lock))$/i;
-// The lockfile subset of that union.
+	/^(package\.json|package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|deno\.(json|jsonc|lock)|cargo\.(toml|lock)|go\.(mod|sum)|pyproject\.toml|requirements[^/]*\.txt|poetry\.lock|uv\.lock|pipfile(\.lock)?|setup\.(py|cfg)|gemfile(\.lock)?|composer\.(json|lock)|pom\.xml|build\.gradle(\.kts)?|settings\.gradle(\.kts)?|mix\.(exs|lock)|[^/]+\.csproj|packages\.config|paket\.(dependencies|lock))$/i;
+// The lockfile subset of that union, `uv.lock` included.
 const LOCKFILE_NAME_RE =
-	/^(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|deno\.lock|cargo\.lock|go\.sum|poetry\.lock|pipfile\.lock|gemfile\.lock|composer\.lock|mix\.lock|paket\.lock)$/i;
+	/^(package-lock\.json|npm-shrinkwrap\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|deno\.lock|cargo\.lock|go\.sum|poetry\.lock|uv\.lock|pipfile\.lock|gemfile\.lock|composer\.lock|mix\.lock|paket\.lock)$/i;
 
 /** True for a dependency manifest or lockfile, in any directory, any case. */
 export const isManifest = (p) => MANIFEST_NAME_RE.test(baseOf(p));

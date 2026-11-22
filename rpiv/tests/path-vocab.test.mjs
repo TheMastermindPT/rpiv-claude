@@ -27,8 +27,10 @@ import {
 	isMedia,
 	isMigration,
 	isPythonTest,
+	isPythonTestSupport,
 	isTest,
 	isTestData,
+	isTestTree,
 } from "../skills/_shared/source-vocab.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -270,14 +272,12 @@ describe("path vocabulary (S3)", () => {
 						"go.mod",
 						"Pipfile",
 						"deno.json",
-						"uv.lock",
 					],
 					false,
 				),
 			)
 			.toEqual([]);
-		// S3 revision 1 pin: nothing beyond the union.
-		expect.soft(isManifest("uv.lock")).toBe(false);
+		// S3 revision 1 pinned `uv.lock` out; D15 of S2-scratch-copy adds it (B20).
 	});
 
 	it("recognizes the root lane config and nothing that looks like it (S22)", () => {
@@ -533,5 +533,79 @@ describe("Python runner-test vocabulary (S1-pytest-report)", () => {
 		expect.soft(names).toEqual(
 			expect.arrayContaining(["isPythonTest", "isTestData"]),
 		);
+	});
+});
+
+// S2-scratch-copy (.rpiv/artifacts/designs/2026-11-22_14-04-13_python-project-support.md).
+describe("Python scratch-copy vocabulary (S2-scratch-copy)", () => {
+	it("B20: uv.lock is a dependency manifest and a lockfile in any folder", () => {
+		expect.soft(mismatches(isManifest, ["uv.lock", "py/uv.lock"], true)).toEqual([]);
+		expect.soft(mismatches(isLockfile, ["uv.lock", "py/UV.LOCK"], true)).toEqual([]);
+		expect.soft(isManifest("uv.lock.bak")).toBe(false);
+	});
+
+	// isTestTree's answers at c39a7c6, before S2, for every B15 path.
+	const TEST_TREE_AT_BASE = {
+		"tests/conftest.py": true,
+		"conftest.py": false,
+		"src/pkg/conftest.py": false,
+		"tests/__init__.py": true,
+		"tests/golden/out.json": true,
+		"tests/helpers.py": true,
+		"tests/fixtures/x.json": true,
+		"tests/test_ok.py": true,
+		"src/pkg/test_mod.py": true,
+		"src/demo/__init__.py": false,
+		"src/pkg/helpers.py": false,
+		"src/demo/test/utils.py": true,
+		"src/demo/specs/x.py": true,
+		"my_conftest.py": false,
+		"conftest.pyi": false,
+		"docs/conftest.md": false,
+		"src/conftest.py.bak": false,
+	};
+
+	it("B15: isPythonTestSupport accepts conftest.py files, tests and test-tree paths outside src, and reprove-red takes it from source-vocab", () => {
+		const SUPPORT = [
+			"tests/conftest.py",
+			"conftest.py",
+			"src/pkg/conftest.py",
+			"tests/__init__.py",
+			"tests/golden/out.json",
+			"tests/helpers.py",
+			"tests/fixtures/x.json",
+			"tests/test_ok.py",
+			"src/pkg/test_mod.py",
+		];
+		const NOT_SUPPORT = [
+			"src/demo/__init__.py",
+			"src/pkg/helpers.py",
+			"src/demo/test/utils.py",
+			"src/demo/specs/x.py",
+			"my_conftest.py",
+			"conftest.pyi",
+			"docs/conftest.md",
+			"src/conftest.py.bak",
+		];
+		expect.soft(mismatches(isPythonTestSupport, SUPPORT, true)).toEqual([]);
+		expect.soft(mismatches(isPythonTestSupport, NOT_SUPPORT, false)).toEqual([]);
+		for (const [path, answer] of Object.entries(TEST_TREE_AT_BASE)) {
+			expect.soft(isTestTree(path), path).toBe(answer);
+		}
+		const reproveRed = readFileSync(
+			join(ROOT, "skills/_shared/reprove-red.mjs"),
+			"utf-8",
+		);
+		const fromVocab = reproveRed.match(
+			/import\s*\{([^}]*)\}\s*from\s*"\.\/source-vocab\.mjs"/,
+		);
+		const names = (fromVocab?.[1] ?? "").split(",").map((name) => name.trim());
+		expect.soft(names).toContain("isPythonTestSupport");
+		const vocab = readFileSync(
+			join(ROOT, "skills/_shared/source-vocab.mjs"),
+			"utf-8",
+		);
+		const importable = vocab.match(/\/\/ Importable:([\s\S]*?)\n\n/)?.[1] ?? "";
+		expect.soft(importable).toMatch(/\bisPythonTestSupport\b/);
 	});
 });

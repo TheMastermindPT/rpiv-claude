@@ -1,7 +1,8 @@
 // reprove-red.mjs — re-proves a slice's red (D23 of the risk-lanes design, S14, FR13).
-// Rebuilds the slice commit's parent in a scratch copy under the git dir, writes only
-// the slice's changed test and fixture files over it, runs the given command there and
-// reports the outcome. The real index, HEAD, branch and working tree are never touched.
+// Rebuilds the slice commit's parent in a scratch copy under the git dir, writes the
+// slice's changed test and fixture files over it (in a Python run, its whole changed test
+// tree; see below), runs the given command there and reports the outcome. The real
+// index, HEAD, branch and working tree are never touched.
 //
 // CLI, run only as the entry point:
 //   node reprove-red.mjs --commit <rev> [--base <rev>] [--test <path>::<name>]...
@@ -18,8 +19,22 @@
 // `exit:` line, and exits 2, 3, 4, any unknown code, and exit 1 with no readable report
 // print `result: broken: <why>`; a named test that report lacks then reads
 // `unavailable`. A broken call (bad arguments, an unknown revision, a timeout, runner
-// tests in Python and another language) prints `reprove-red: broken: <detail>` on
-// stderr and exits 2, with nothing on stdout.
+// tests in Python and another language, a temporary folder inside the checkout) prints
+// `reprove-red: broken: <detail>` on stderr and exits 2, with nothing on stdout.
+//
+// A Python run (S2-scratch-copy) copies wider: every changed test-tree file — tests,
+// fixtures, `conftest.py` anywhere, and test-tree support outside a `src` folder — is
+// written from the commit and printed as `test:` or `fixture:`, each deleted one is
+// removed (`removed:`), and a submodule entry is left as the base had it
+// (`diagnostic: submodule not copied:`). In a Python run `{tests}` expands to the Python
+// runner tests only. Its runner gets the import guard (import-guard.mjs): a fresh guard
+// folder outside the checkout first on PYTHONPATH, the run folder's `src/` second, and
+// PYTHONDONTWRITEBYTECODE=1. Every guarded Python process records the modules it loaded,
+// and the run line becomes `result: broken: imported from the checkout: <path>` when one
+// came from a checkout folder of the repository, `result: broken: import guard did not
+// run` when no record exists, and `result: broken: import record incomplete` when a
+// record is unfinished, whatever pytest's exit code. Outside a Python run the copy, the
+// header, `{tests}` and the environment stay as they were.
 //
 // Importable: exitCodeOf.
 
@@ -36,13 +51,22 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
+import {
+	checkoutFolders,
+	createGuard,
+	guardEnv,
+	importVerdict,
+	realOf,
+	within,
+} from "./import-guard.mjs";
 import { isMain } from "./is-main.mjs";
 import {
 	extOf,
 	isFixture,
 	isManifest,
 	isPythonTest,
+	isPythonTestSupport,
 	isSource,
 	isTest,
 	isTestData,
@@ -177,25 +201,39 @@ const resolveCommit = (cwd, rev) => {
 	return { commit, parent: parents[0] };
 };
 
-/** Changed paths of `parent` → commit that a re-run applies: tests and fixtures. */
-const slicePaths = (top, parent, commit) => {
+/** The changes of `parent` → commit, one `{ status, path, submodule }` each; a
+    submodule entry has mode 160000 on either side. */
+const changesOf = (top, parent, commit) => {
 	const fields = gitIn(top, [
 		"diff-tree",
 		"-r",
 		"-z",
 		"--no-commit-id",
 		"--no-renames",
-		"--name-status",
 		parent,
 		commit,
 	])
 		.split("\0")
 		.filter(Boolean);
+	const changes = [];
+	for (let i = 0; i < fields.length; i += 2) {
+		// `:<old mode> <new mode> <old sha> <new sha> <status>`, then the path.
+		const [oldMode, newMode, , , status] = fields[i].slice(1).split(" ");
+		changes.push({
+			status,
+			path: fields[i + 1],
+			submodule: oldMode === "160000" || newMode === "160000",
+		});
+	}
+	return changes;
+};
+
+/** Changed paths that a re-run applies: tests and fixtures. */
+const slicePaths = (changes) => {
 	const tests = [];
 	const fixtures = [];
 	const manifests = [];
-	for (let i = 0; i < fields.length; i += 2) {
-		const [status, path] = [fields[i], fields[i + 1]];
+	for (const { status, path } of changes) {
 		if (isManifest(path)) manifests.push(path);
 		if (status === "D") continue;
 		if (isTest(path)) tests.push(path);
@@ -208,15 +246,75 @@ const slicePaths = (top, parent, commit) => {
 	};
 };
 
-/** Checks the parent's tree out into `scratch` through a temporary index, then writes
-    the slice's files over it from the commit. */
-const buildScratch = (top, scratch, { parent, commit, paths }) => {
+/** A Python run's copy (FR8, D16, D17): every changed test-tree path, written from the
+    commit or removed when deleted; a submodule entry is neither, only named. */
+const pythonCopy = (changes) => {
+	const set = changes.filter(
+		({ path }) => isFixture(path) || isPythonTestSupport(path),
+	);
+	const paths = (keep) =>
+		set
+			.filter(keep)
+			.map(({ path }) => path)
+			.sort();
+	return {
+		written: paths((c) => !c.submodule && c.status !== "D"),
+		removed: paths((c) => !c.submodule && c.status === "D"),
+		submodules: paths((c) => c.submodule),
+	};
+};
+
+/** What the scratch copy takes, what `{tests}` expands to and what the header lists:
+    today's tests and fixtures outside a Python run (D13); in one, the wider Python copy
+    and only the Python runner tests in `{tests}` (D14). Each path is listed once. */
+const copyPlan = (changes, { tests, fixtures, manifests }, python) => {
+	const dependencies = manifests.map(
+		(path) => `diagnostic: dependencies changed: ${path}`,
+	);
+	if (!python) {
+		return {
+			tests,
+			paths: [...tests, ...fixtures],
+			removed: [],
+			lines: [
+				...tests.map((path) => `test: ${path}`),
+				...fixtures.map((path) => `fixture: ${path}`),
+				...dependencies,
+			],
+		};
+	}
+	const runners = tests.filter(
+		(path) => !isTestData(path) && isPythonTest(path),
+	);
+	const { written, removed, submodules } = pythonCopy(changes);
+	return {
+		tests: runners,
+		paths: written,
+		removed,
+		lines: [
+			...runners.map((path) => `test: ${path}`),
+			...written
+				.filter((path) => !runners.includes(path))
+				.map((path) => `fixture: ${path}`),
+			...removed.map((path) => `removed: ${path}`),
+			...submodules.map((path) => `diagnostic: submodule not copied: ${path}`),
+			...dependencies,
+		],
+	};
+};
+
+/** Checks the parent's tree out into `scratch` through a temporary index, removes the
+    slice's deleted paths, then writes the slice's files over it from the commit. */
+const buildScratch = (top, scratch, { parent, commit, paths, removed }) => {
 	rmSync(scratch, { recursive: true, force: true });
 	mkdirSync(scratch, { recursive: true });
 	const env = { GIT_INDEX_FILE: `${scratch}.index` };
 	gitIn(top, ["read-tree", parent], { env });
 	gitIn(top, [`--work-tree=${scratch}`, "checkout-index", "-a", "-f"], { env });
 	rmSync(env.GIT_INDEX_FILE, { force: true });
+	for (const path of removed) {
+		rmSync(join(scratch, path), { recursive: true, force: true });
+	}
 	for (const path of paths) {
 		const bytes = execFileSync(
 			"git",
@@ -230,12 +328,6 @@ const buildScratch = (top, scratch, { parent, commit, paths }) => {
 		mkdirSync(dirname(join(scratch, path)), { recursive: true });
 		writeFileSync(join(scratch, path), bytes);
 	}
-};
-
-/** True when `path` is `folder` or lies inside it. */
-const within = (folder, path) => {
-	const rel = relative(folder, path);
-	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 };
 
 /** The folders a link must stay out of: `.git` at the top, the git dir, the common git dir. */
@@ -332,18 +424,19 @@ export const exitCodeOf = (result, command, timeout) => {
 	return result.status;
 };
 
-/** Runs the command without a shell in `runDir`, its output in `log`; returns the exit
-    code (see exitCodeOf). */
-const runCommand = (command, runDir, log, timeout) => {
+/** Runs the command (`args`) without a shell in `runDir` with `env` (undefined: the
+    caller's), its output in `log`; returns the exit code (see exitCodeOf). */
+const runCommand = ({ args, log, timeout }, runDir, env) => {
 	const fd = openSync(log, "w");
 	try {
-		const result = spawnSync(command[0], command.slice(1), {
+		const result = spawnSync(args[0], args.slice(1), {
 			cwd: runDir,
+			env,
 			stdio: ["ignore", fd, fd],
 			timeout: timeout * 1000,
 			windowsHide: true,
 		});
-		return exitCodeOf(result, command, timeout);
+		return exitCodeOf(result, args, timeout);
 	} finally {
 		closeSync(fd);
 	}
@@ -610,6 +703,47 @@ const runLineOf = (code, { python, promisesReport, report }) =>
 		? pytestRunLine(code, !promisesReport || report.records !== undefined)
 		: `result: ${code === 0 ? "green" : "red"}`;
 
+/** The top folder and the caller's folder that the run folder and `{tests}` are placed
+    by: real paths in a Python run, so a caller in a junction to the top folder runs inside
+    the copy with matching `{tests}`; as given otherwise, as before S2. */
+const placesOf = (top, cwd, python) =>
+	python ? { top: realOf(top), cwd: realOf(cwd) } : { top, cwd };
+
+/** Builds the scratch copy, places the links and runs the command in the caller's folder
+    of it (`place`, see placesOf); returns `{ code, verdict }`. A Python run gets a fresh
+    guard folder outside every checkout folder and the guarded environment (D11, D18); its
+    records are judged before cleanup (`verdict`: the guard's run line, or undefined). The
+    scratch copy and the guard folder are removed whatever happens, the guard folder even
+    when the scratch removal throws. */
+const rerun = ({ top, place, scratch, build, links, python, run }) => {
+	const checkouts = python ? checkoutFolders(top) : [];
+	const guard = python ? createGuard(checkouts) : undefined;
+	try {
+		buildScratch(top, scratch, build);
+		placeLinks(links);
+		const runDir = join(scratch, relative(place.top, place.cwd));
+		const env =
+			guard &&
+			guardEnv(guard, { runDir, hasSrc: existsSync(join(runDir, "src")) });
+		const code = runCommand(run, runDir, env);
+		const verdict =
+			guard &&
+			importVerdict({
+				recordsDir: join(guard, "records"),
+				checkouts,
+				exempt: [scratch, guard, ...links.map(({ target }) => target)],
+				top,
+			});
+		return { code, verdict };
+	} finally {
+		try {
+			removeScratch(scratch, links);
+		} finally {
+			if (guard) rmSync(guard, { recursive: true, force: true });
+		}
+	}
+};
+
 const runCli = (argv, cwd) => {
 	const {
 		commit: rev,
@@ -627,20 +761,17 @@ const runCli = (argv, cwd) => {
 		baseRev === undefined
 			? parent
 			: gitIn(cwd, ["merge-base", base, commit]).trim();
-	const { tests, fixtures, manifests } = slicePaths(top, from, commit);
+	const changes = changesOf(top, from, commit);
+	const sliced = slicePaths(changes);
+	const { tests } = sliced;
 	const language = runnerLanguage(tests);
 	if (language === "mixed") {
 		throw new Error(
 			"tests in Python and another language need one run per runner",
 		);
 	}
-	const header = [
-		`reprove-red: ${commit}`,
-		`base: ${base}`,
-		...tests.map((path) => `test: ${path}`),
-		...fixtures.map((path) => `fixture: ${path}`),
-		...manifests.map((path) => `diagnostic: dependencies changed: ${path}`),
-	];
+	const plan = copyPlan(changes, sliced, language === "python");
+	const header = [`reprove-red: ${commit}`, `base: ${base}`, ...plan.lines];
 	const scratch = resolve(
 		cwd,
 		gitIn(cwd, [
@@ -654,31 +785,28 @@ const runCli = (argv, cwd) => {
 	if (tests.length === 0) return lines([...header, "result: no-tests"]);
 	const log = `${scratch}.log`;
 	const junit = `${scratch}.junit.xml`;
-	const testsFromCwd = tests.map((path) =>
-		relative(cwd, join(top, path)).replace(/\\/g, "/"),
+	const python = language === "python";
+	const place = placesOf(top, cwd, python);
+	const testsFromCwd = plan.tests.map((path) =>
+		relative(place.cwd, join(place.top, path)).replace(/\\/g, "/"),
 	);
 	const args = command.flatMap((arg) =>
 		arg === "{tests}" ? testsFromCwd : [arg.split("{junit}").join(junit)],
 	);
-	let code;
 	rmSync(junit, { force: true }); // a report from an earlier run is never read
-	try {
-		buildScratch(top, scratch, {
-			parent: base,
-			commit,
-			paths: [...tests, ...fixtures],
-		});
-		placeLinks(links);
-		code = runCommand(args, join(scratch, relative(top, cwd)), log, timeout);
-	} finally {
-		removeScratch(scratch, links);
-	}
-	const report = readReport(junit);
-	const runLine = runLineOf(code, {
-		python: language === "python",
-		promisesReport,
-		report,
+	const { code, verdict } = rerun({
+		top,
+		place,
+		scratch,
+		build: { parent: base, commit, paths: plan.paths, removed: plan.removed },
+		links,
+		python,
+		run: { args, log, timeout },
 	});
+	const report = readReport(junit);
+	// The guard's line wins over pytest's in a Python run (S2-scratch-copy).
+	const runLine =
+		verdict ?? runLineOf(code, { python, promisesReport, report });
 	return lines([
 		...header,
 		`exit: ${code}`,
