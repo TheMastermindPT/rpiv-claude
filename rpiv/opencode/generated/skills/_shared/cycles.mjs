@@ -3,7 +3,8 @@
 // every worktree of a repository and never committed; the hook
 // .claude/hooks/record-cycle-event.mjs appends to it.
 //
-// CLI: `node cycles.mjs [--branch <name>]` prints one branch's cycle (default: the
+// CLI: `node cycles.mjs [--branch <name>]` prints one branch's cycle, with the
+// stage, waiting and agent times cycle-timing.mjs reads (default: the
 // current branch; `(detached)` reads the lines written on a detached HEAD). No log, or
 // no line for the branch, prints `records: none`; a git failure, a directory outside
 // a repository or a bad option prints `cycles: broken: <detail>` on stderr, exit 2.
@@ -24,6 +25,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { agentLines, stageLines, waitingLine } from "./cycle-timing.mjs";
 import { isMain } from "./is-main.mjs";
 
 const DETACHED = "(detached)";
@@ -79,7 +81,9 @@ function parseLines(text) {
 		.map((line) => {
 			try {
 				const rec = JSON.parse(line);
-				return rec && typeof rec === "object" && !Array.isArray(rec) ? rec : null;
+				return rec && typeof rec === "object" && !Array.isArray(rec)
+					? rec
+					: null;
 			} catch {
 				return null;
 			}
@@ -124,9 +128,11 @@ export function summarise(text, branch, log) {
 		const of = (event) => own.filter((rec) => rec.event === event);
 		lines.push(
 			`log: ${log}`,
-			...of("stage").map((rec) => `stage: ${rec.time} ${rec.stage}`),
+			...stageLines(own),
 			`decisions: ${of("decision").reduce((sum, rec) => sum + count(rec.questions), 0)}`,
 			`dispatches: ${dispatchCount(of("dispatch"))}`,
+			waitingLine(own),
+			...agentLines(own),
 			`first: ${own[0].time}`,
 			`last: ${own.at(-1).time}`,
 		);

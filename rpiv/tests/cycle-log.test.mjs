@@ -18,10 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import {
-	readCommonDir,
-	readHeadBranch,
-} from "../skills/_shared/cycles.mjs";
+import { readCommonDir, readHeadBranch } from "../skills/_shared/cycles.mjs";
 import { git, initRepo } from "./helpers/git-fixtures.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -358,7 +355,11 @@ describe("S15 mutation pins", () => {
 			expect(exp.hookEventName).toBe("UserPromptExpansion");
 			// A Skill event without input and a non-text command name are no stage.
 			expectSilent(
-				runHook({ hook_event_name: "PostToolUse", tool_name: "Skill", cwd: repo }),
+				runHook({
+					hook_event_name: "PostToolUse",
+					tool_name: "Skill",
+					cwd: repo,
+				}),
 			);
 			expectSilent(
 				runHook({
@@ -425,7 +426,9 @@ describe("S15 mutation pins", () => {
 			mkdirSync(plain);
 			const outside = run(plain, []);
 			expect(outside.status).toBe(2);
-			expect(outside.stderr).toContain("cycles: broken: not a git repository: ");
+			expect(outside.stderr).toContain(
+				"cycles: broken: not a git repository: ",
+			);
 			for (const args of [
 				["--branch", ""],
 				["--branch", "--x"],
@@ -452,7 +455,9 @@ describe("S15 git answers", () => {
 			),
 		).toEqual({ outside: true });
 		expect(
-			no("fatal: not a git repository (or any of the parent directories): .git"),
+			no(
+				"fatal: not a git repository (or any of the parent directories): .git",
+			),
 		).toEqual({ outside: true });
 		const pointer = no("fatal: not a git repository: /missing");
 		expect(pointer.problem).toContain("git refused /x");
@@ -485,9 +490,16 @@ describe("S15 hook registration", () => {
 	// (S17: chain-handoff.test.mjs / chain-contract.test.mjs; S8: jev-lane.test.mjs;
 	// S31: chain-handoff.test.mjs / chain-contract.test.mjs; S20: rpiv-issue.test.mjs /
 	// chain-contract.test.mjs).
-	const LATER_HOOKS = ["chain-handoff-restore.mjs", "jev-lane.mjs", "chain-handoff-retire.mjs", "rpiv-issue-pending.mjs"];
+	const LATER_HOOKS = [
+		"chain-handoff-restore.mjs",
+		"jev-lane.mjs",
+		"chain-handoff-retire.mjs",
+		"rpiv-issue-pending.mjs",
+	];
 	const isLaterEntry = (entry) =>
-		entry.hooks.some((h) => LATER_HOOKS.some((name) => h.command.includes(name)));
+		entry.hooks.some((h) =>
+			LATER_HOOKS.some((name) => h.command.includes(name)),
+		);
 
 	/** `hooks` without the cycle-event entries and later slices' entries (and
 	    events left empty). */
@@ -512,6 +524,7 @@ describe("S15 hook registration", () => {
 		for (const [event, matcher] of [
 			["PostToolUse", "AskUserQuestion|Skill"],
 			["SubagentStart", ""],
+			["SubagentStop", ""],
 			["UserPromptExpansion", ""],
 		]) {
 			const entries = (now[event] ?? []).filter(isCycleEntry);
@@ -559,16 +572,28 @@ describe("S15 cycles reader", () => {
 			writeFileSync(
 				path,
 				`${[
-					rec(1, "feat/x", { event: "stage", stage: "implement", via: "command" }),
+					rec(1, "feat/x", {
+						event: "stage",
+						stage: "implement",
+						via: "command",
+					}),
 					rec(2, "feat/x", { event: "decision", questions: 2 }),
 					rec(3, "feat/x", { event: "decision", questions: 1 }),
-					rec(4, "feat/y", { event: "stage", stage: "implement", via: "skill" }),
+					rec(4, "feat/y", {
+						event: "stage",
+						stage: "implement",
+						via: "skill",
+					}),
 					rec(5, "feat/x", { event: "dispatch", agent: "x", agent_id: "a1" }),
 					"{broken",
 					rec(6, "feat/x", { event: "dispatch", agent: "x", agent_id: "a1" }),
 					rec(7, "feat/x", { event: "dispatch", agent: "x", agent_id: "a2" }),
 					rec(8, "feat/x", { event: "dispatch", agent: "x", agent_id: null }),
-					rec(9, "feat/x", { event: "stage", stage: "deep-review", via: "skill" }),
+					rec(9, "feat/x", {
+						event: "stage",
+						stage: "deep-review",
+						via: "skill",
+					}),
 				].join("\n")}\n`,
 			);
 
@@ -577,10 +602,12 @@ describe("S15 cycles reader", () => {
 			expect(x.lines).toEqual([
 				"cycles: feat/x",
 				`log: ${path}`,
-				`stage: ${t(1)} implement`,
-				`stage: ${t(9)} deep-review`,
+				`stage: ${t(1)} implement (8m 00s)`,
+				`stage: ${t(9)} deep-review (0s)`,
 				"decisions: 3",
 				"dispatches: 3",
+				"waiting: not recorded (2 asks without time)",
+				"agents without finish: 3",
 				`first: ${t(1)}`,
 				`last: ${t(9)}`,
 				"diagnostic: 1 unreadable line",
@@ -593,9 +620,10 @@ describe("S15 cycles reader", () => {
 			expect(y.lines).toEqual([
 				"cycles: feat/y",
 				`log: ${path}`,
-				`stage: ${t(4)} implement`,
+				`stage: ${t(4)} implement (0s)`,
 				"decisions: 0",
 				"dispatches: 0",
+				"waiting: none",
 				`first: ${t(4)}`,
 				`last: ${t(4)}`,
 				"diagnostic: 1 unreadable line",
@@ -676,24 +704,170 @@ describe("S15 cycles reader", () => {
 			const first = runReader(repo, "--archive", "--branch", "feat/x");
 			expect(first.stderr).toBe("");
 			expect(first.status).toBe(0);
-			expect(first.stdout.replaceAll("\\", "/")).toBe(`archived: 2 line(s) of feat/x to ${archivePath}\n`);
+			expect(first.stdout.replaceAll("\\", "/")).toBe(
+				`archived: 2 line(s) of feat/x to ${archivePath}\n`,
+			);
 			expect(readFileSync(log, "utf-8")).toBe(`${l2}\n${l3}\n`);
 			expect(readFileSync(archive, "utf-8")).toBe(`${l0}\n${l1}\n${l4}\n`);
 
 			const again = runReader(repo, "--archive", "--branch", "feat/x");
-			expect(again.stdout.replaceAll("\\", "/")).toBe(`archived: 0 line(s) of feat/x to ${archivePath}\n`);
+			expect(again.stdout.replaceAll("\\", "/")).toBe(
+				`archived: 0 line(s) of feat/x to ${archivePath}\n`,
+			);
 			expect(readFileSync(log, "utf-8")).toBe(`${l2}\n${l3}\n`);
 			expect(readFileSync(archive, "utf-8")).toBe(`${l0}\n${l1}\n${l4}\n`);
 
 			const alone = runReader(repo, "--archive");
-			expect(alone).toMatchObject({ status: 2, stdout: "", stderr: "cycles: broken: --archive needs --branch\n" });
+			expect(alone).toMatchObject({
+				status: 2,
+				stdout: "",
+				stderr: "cycles: broken: --archive needs --branch\n",
+			});
 
 			const empty = repoOn("main");
 			const none = runReader(empty, "--archive", "--branch", "feat/x");
 			expect(none.status).toBe(0);
 			expect(none.stdout).toMatch(/^archived: 0 line\(s\) of feat\/x to /);
 			expect(existsSync(logPath(empty))).toBe(false);
-			expect(existsSync(resolve(commonDir(empty), "rpiv", "cycles-archive.jsonl"))).toBe(false);
+			expect(
+				existsSync(resolve(commonDir(empty), "rpiv", "cycles-archive.jsonl")),
+			).toBe(false);
+		},
+		TEST_TIMEOUT,
+	);
+});
+
+// Cycle timing: how long each stage, each agent and each wait for the developer
+// took, so rpiv's speed is measured before it is tuned.
+describe("cycle timing", () => {
+	it(
+		"records a finished subagent and how long an answer took",
+		() => {
+			const repo = repoOn("feat/x");
+			expectSilent(
+				runHook({
+					hook_event_name: "SubagentStop",
+					agent_type: "rpiv:slice-verifier",
+					agent_id: "a1",
+					session_id: "s1",
+					cwd: repo,
+					last_assistant_message: "secret report",
+				}),
+			);
+			expectSilent(runHook({ ...decisionEvent(repo, 1), duration_ms: 4200 }));
+			for (const bad of [-1, "4200", Number.NaN, 1.5])
+				expectSilent(runHook({ ...decisionEvent(repo, 1), duration_ms: bad }));
+			const lines = logLines(repo);
+			expect(lines).toHaveLength(6);
+			expect(lines[0]).not.toContain("secret report");
+			const [done, timed, ...untimed] = lines.map((l) => JSON.parse(l));
+			expect(Object.keys(done).sort()).toEqual(
+				["agent", "agent_id", "branch", "event", "session", "time", "v"].sort(),
+			);
+			expect(done).toMatchObject({
+				event: "agent-done",
+				agent: "rpiv:slice-verifier",
+				agent_id: "a1",
+			});
+			expect(timed).toMatchObject({
+				event: "decision",
+				questions: 1,
+				wait_ms: 4200,
+			});
+			for (const rec of untimed) expect(rec).not.toHaveProperty("wait_ms");
+
+			const broken = noteOf(
+				runHook({
+					hook_event_name: "SubagentStop",
+					agent_type: "x",
+					agent_id: "a",
+					cwd: `${TMP}/gone${count++}`,
+				}),
+			);
+			expect(broken.hookEventName).toBe("SubagentStop");
+			expect(broken.additionalContext.startsWith(NOT_RECORDED)).toBe(true);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"sums stage, agent and waiting time for one branch",
+		() => {
+			const repo = repoOn("feat/x");
+			const path = logPath(repo);
+			mkdirSync(dirname(path), { recursive: true });
+			const at = (iso, fields) =>
+				JSON.stringify({
+					v: 1,
+					time: iso,
+					branch: "feat/x",
+					session: "s1",
+					...fields,
+				});
+			const start = (iso, agent, id) =>
+				at(iso, { event: "dispatch", agent, agent_id: id });
+			const done = (iso, agent, id) =>
+				at(iso, { event: "agent-done", agent, agent_id: id });
+			writeFileSync(
+				path,
+				`${[
+					at("2026-10-06T10:00:00.000Z", {
+						event: "stage",
+						stage: "research",
+						via: "command",
+					}),
+					start("2026-10-06T10:00:10.000Z", "rpiv:codebase-locator", "a1"),
+					start("2026-10-06T10:00:10.000Z", "rpiv:codebase-locator", "a2"),
+					done("2026-10-06T10:01:40.000Z", "rpiv:codebase-locator", "a1"),
+					done("2026-10-06T10:00:40.000Z", "rpiv:codebase-locator", "a2"),
+					at("2026-10-06T10:02:00.000Z", {
+						event: "decision",
+						questions: 1,
+						wait_ms: 125_000,
+					}),
+					at("2026-10-06T10:05:00.000Z", { event: "decision", questions: 2 }),
+					at("2026-10-06T11:10:00.000Z", {
+						event: "stage",
+						stage: "implement",
+						via: "skill",
+					}),
+					start("2026-10-06T11:10:00.000Z", "rpiv:slice-verifier", "v1"),
+					done("2026-10-06T11:20:00.000Z", "rpiv:slice-verifier", "v1"),
+					// A resumed agent: its time runs from the latest start.
+					start("2026-10-06T11:30:00.000Z", "rpiv:slice-verifier", "v1"),
+					done("2026-10-06T11:35:00.000Z", "rpiv:slice-verifier", "v1"),
+					at("2026-10-06T11:40:00.000Z", {
+						event: "decision",
+						questions: 1,
+						wait_ms: 5_000,
+					}),
+					start("2026-10-06T11:41:00.000Z", "rpiv:diff-auditor", "open"),
+					done("2026-10-06T11:42:00.000Z", "rpiv:diff-auditor", "orphan"),
+					done("2026-10-06T11:42:00.000Z", "", null),
+				].join("\n")}\n`,
+			);
+			const res = spawnSync(process.execPath, [READER], {
+				cwd: repo,
+				encoding: "utf-8",
+				timeout: 20_000,
+			});
+			expect(res.stderr).toBe("");
+			expect(res.status).toBe(0);
+			expect(res.stdout.split(/\r?\n/).filter(Boolean)).toEqual([
+				"cycles: feat/x",
+				`log: ${path}`,
+				"stage: 2026-10-06T10:00:00.000Z research (1h 10m)",
+				"stage: 2026-10-06T11:10:00.000Z implement (32m 00s)",
+				"decisions: 4",
+				"dispatches: 4",
+				"waiting: 2m 10s over 2 asks (1 ask without time)",
+				"agent-time: rpiv:slice-verifier 2 runs 15m 00s",
+				"agent-time: rpiv:codebase-locator 2 runs 2m 00s",
+				"agents without finish: 1",
+				"diagnostic: 2 agent finishes without a start",
+				"first: 2026-10-06T10:00:00.000Z",
+				"last: 2026-10-06T11:42:00.000Z",
+			]);
 		},
 		TEST_TIMEOUT,
 	);

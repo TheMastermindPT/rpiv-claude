@@ -1,5 +1,5 @@
 {
-  "description": "rpiv lifecycle hooks: session bootstrap/restore, read-only enforcement and auto-approval for rpiv agents, approval prompts before outward actions (git push, branch/worktree creation, GitHub writes) and before commits off an approved branch, recording of approved branches, cycle metrics (stages, developer decisions, agent dispatches), artifact validation and fence-duplication detection on Write, agent model/output checks, compaction state preservation, the chain handoff shown once after /clear and retired when the next chain stage starts, and pending rpiv issue drafts shown at session start.",
+  "description": "rpiv lifecycle hooks: session bootstrap/restore, read-only enforcement and auto-approval for rpiv agents, approval prompts before outward actions (git push, branch/worktree creation, GitHub writes) and before commits off an approved branch, recording of approved branches, cycle metrics (stages, developer decisions and answer times, agent dispatches and finishes), artifact validation and fence-duplication detection on Write, agent model/output checks, compaction state preservation, the chain handoff shown once after /clear and retired when the next chain stage starts, and pending rpiv issue drafts shown at session start.",
   "hooks": {
     "SessionStart": [
       {
@@ -182,6 +182,16 @@
       }
     ],
     "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/.claude/hooks/record-cycle-event.mjs\"",
+            "timeout": 10
+          }
+        ]
+      },
       {
         "matcher": "",
         "hooks": [

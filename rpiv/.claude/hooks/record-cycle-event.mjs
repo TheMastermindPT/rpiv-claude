@@ -6,7 +6,10 @@
 //   - decision: an answered AskUserQuestion (PostToolUse fires only after the tool
 //     succeeded), counting each of its questions;
 //   - dispatch: a subagent start (SubagentStart; also fires on resume, so the reader
-//     counts distinct agent ids).
+//     counts distinct agent ids);
+//   - agent-done: a subagent finish (SubagentStop), so the reader can time agents.
+// A decision line also carries `wait_ms`, how long the developer took to answer,
+// when the event reports the tool's time as a whole number of milliseconds.
 // Lines are keyed by the branch checked out in the event's directory and hold no
 // prompt, argument, question or answer text. A directory outside any repository and
 // any other event record nothing and say nothing; a broken event, git or write says
@@ -22,13 +25,16 @@ import {
 } from "../../skills/_shared/cycles.mjs";
 import { limitGitTime, runGit } from "./_git-branch.mjs";
 
+const AGENT_EVENTS = { SubagentStart: "dispatch", SubagentStop: "agent-done" };
+
 const textOrNull = (value) => (typeof value === "string" ? value : null);
 
 /** The fields this event adds to a line, or null when it is no cycle event. */
 function eventFields(event) {
-	if (event.hook_event_name === "SubagentStart")
+	const agentEvent = AGENT_EVENTS[event.hook_event_name];
+	if (agentEvent)
 		return {
-			event: "dispatch",
+			event: agentEvent,
 			agent: textOrNull(event.agent_type),
 			agent_id: textOrNull(event.agent_id),
 		};
@@ -42,8 +48,17 @@ function eventFields(event) {
 	// A changed tool shape must not silently count zero decisions (W2).
 	if (!Array.isArray(questions))
 		return { problem: "AskUserQuestion input has no questions list" };
-	return { event: "decision", questions: questions.length };
+	return {
+		event: "decision",
+		questions: questions.length,
+		...waitField(event.duration_ms),
+	};
 }
+
+/** `{ wait_ms }` for a whole, non-negative tool time; `{}` when the event has
+    none, so a missing time never reads as an instant answer. */
+const waitField = (ms) =>
+	Number.isInteger(ms) && ms >= 0 ? { wait_ms: ms } : {};
 
 /** A stage line's fields for an rpiv command or skill name, else null. */
 function stageFields(name, via) {
@@ -81,7 +96,9 @@ function recordEvent(event) {
 	const fields = eventFields(event);
 	if (!fields) return null;
 	if (fields.problem) return fields.problem;
-	const place = placeOf(typeof event.cwd === "string" ? event.cwd : process.cwd());
+	const place = placeOf(
+		typeof event.cwd === "string" ? event.cwd : process.cwd(),
+	);
 	if (place.absent) return null;
 	if (place.problem) return place.problem;
 	const line = {
@@ -100,7 +117,12 @@ function recordEvent(event) {
 	return null;
 }
 
-const EVENTS = new Set(["PostToolUse", "SubagentStart", "UserPromptExpansion"]);
+const EVENTS = new Set([
+	"PostToolUse",
+	"SubagentStart",
+	"SubagentStop",
+	"UserPromptExpansion",
+]);
 
 /** `{ eventName, note }`: the note says why nothing was recorded, or is null. */
 function readAndRecord() {
@@ -108,7 +130,10 @@ function readAndRecord() {
 	try {
 		event = JSON.parse(readFileSync(0, "utf-8"));
 	} catch {
-		return { eventName: "PostToolUse", note: "the hook event is not valid JSON" };
+		return {
+			eventName: "PostToolUse",
+			note: "the hook event is not valid JSON",
+		};
 	}
 	const name = event?.hook_event_name;
 	const eventName = EVENTS.has(name) ? name : "PostToolUse";
