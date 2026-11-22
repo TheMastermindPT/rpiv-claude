@@ -283,7 +283,8 @@ if (ecosystem === "js-ts") {
 	// jscpd -> D (duplication). v5 is a self-contained Rust binary on PATH (also `cpd`),
 	// NOT a node module — detect via the CLI, not require-resolve. Works without a config.
 	const jscpdBin = binAvailable(["jscpd", "cpd"]);
-	const jscpdCfg = firstFile([".jscpd.json", ".jscpd.jsonc"]) || (pkg?.jscpd ? "package.json#jscpd" : "");
+	// jscpd does NOT auto-load any of these: a configured repo's file must be passed with -c.
+	const jscpdCfg = firstFile([".jscpd.json", ".jscpd.jsonc", "jscpd.json"]) || (pkg?.jscpd ? "package.json#jscpd" : "");
 	row("jscpd", "D",
 		jscpdBin ? (jscpdCfg ? "configured" : "installed") : "absent",
 		[

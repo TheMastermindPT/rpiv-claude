@@ -34,6 +34,8 @@ try {
 	writeFileSync(join(repo, ".dependency-cruiser.cjs"), "module.exports = { forbidden: [] };\n");
 	// tsconfig present -> ts-morph is `configured` when resolvable (else `absent`).
 	writeFileSync(join(repo, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true }, include: ["src"] }));
+	// jscpd's own config under its undotted name (slopstop ships this one): must read as configured.
+	writeFileSync(join(repo, "jscpd.json"), JSON.stringify({ minTokens: 60 }));
 	git(repo, ["init", "-q"]);
 	git(repo, ["add", "-A"]);
 
@@ -55,6 +57,10 @@ try {
 	// jscpd maps to D; status is env-dependent (a PATH binary), so just assert a valid value.
 	assert.ok(/lens=D/.test(rowFor("jscpd")), `jscpd must map to lens D, got: ${rowFor("jscpd")}`);
 	assert.ok(/status=(installed|configured|absent)/.test(rowFor("jscpd")), `jscpd must have a valid status, got: ${rowFor("jscpd")}`);
+	if (!/status=absent/.test(rowFor("jscpd"))) {
+		assert.ok(/status=configured/.test(rowFor("jscpd")) && /config=jscpd\.json/.test(rowFor("jscpd")),
+			`an installed jscpd with jscpd.json must be configured and name it, got: ${rowFor("jscpd")}`);
+	}
 	// ast-grep -> D/M; PATH binary, status env-dependent (no sgconfig in fixture).
 	assert.ok(/lens=D\/M/.test(rowFor("ast-grep")), `ast-grep must map to lens D/M, got: ${rowFor("ast-grep")}`);
 	assert.ok(/status=(installed|configured|absent)/.test(rowFor("ast-grep")), `ast-grep must have a valid status, got: ${rowFor("ast-grep")}`);
