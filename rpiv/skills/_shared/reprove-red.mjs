@@ -12,8 +12,14 @@
 // commit: the parent → commit diff for a one-commit slice or an amended-away sibling,
 // and every commit's tests for a slice of several.
 // prints `reprove-red:`, `base:`, `test:`/`fixture:`, `exit:`, `log:` and last
-// `result: red | green | no-tests`, exit 0. A broken call prints
-// `reprove-red: broken: <detail>` on stderr and exits 2, never a result.
+// `result: red | green | no-tests | broken: <why>`, exit 0. Outside a Python run any
+// non-zero exit is red. In a Python run (S1-pytest-report: its runner tests are `.py`
+// only) the line follows pytest's exit code: exit 5 prints `result: no-tests` after its
+// `exit:` line, and exits 2, 3, 4, any unknown code, and exit 1 with no readable report
+// print `result: broken: <why>`; a named test that report lacks then reads
+// `unavailable`. A broken call (bad arguments, an unknown revision, a timeout, runner
+// tests in Python and another language) prints `reprove-red: broken: <detail>` on
+// stderr and exits 2, with nothing on stdout.
 //
 // Importable: exitCodeOf.
 
@@ -32,7 +38,15 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isMain } from "./is-main.mjs";
-import { isFixture, isManifest, isTest } from "./source-vocab.mjs";
+import {
+	extOf,
+	isFixture,
+	isManifest,
+	isPythonTest,
+	isSource,
+	isTest,
+	isTestData,
+} from "./source-vocab.mjs";
 
 /** git's stdout as text, run in `cwd`; a failure throws one line naming git. */
 const gitIn = (cwd, args, { env } = {}) => {
@@ -97,11 +111,10 @@ const OPTIONS = {
 };
 
 /** A parsed call missing its commit or command, or naming tests with no report, is broken. */
-const requireComplete = ({ commit, tests, command }) => {
+const requireComplete = ({ commit, tests, command, promisesReport }) => {
 	if (commit === undefined) throw new Error("missing --commit <rev>");
 	if (command.length === 0) throw new Error("missing command after --");
-	const hasReport = command.some((arg) => arg.includes("{junit}"));
-	if (tests.length > 0 && !hasReport) {
+	if (tests.length > 0 && !promisesReport) {
 		throw new Error("--test needs {junit} in the command");
 	}
 };
@@ -126,6 +139,9 @@ const parseArgs = (argv) => {
 		if (value === undefined) throw new Error(`${name} needs a value`);
 		store(parsed, value);
 	}
+	// One answer to "does the command promise a report": `--test` needs it, and a Python
+	// run's exit 1 is red only when it is kept (D8).
+	parsed.promisesReport = parsed.command.some((arg) => arg.includes("{junit}"));
 	requireComplete(parsed);
 	return parsed;
 };
@@ -366,7 +382,8 @@ const faultMessage = ([, , attrText, inner = ""]) =>
 		.split(/\r?\n/)[0]
 		.trim();
 
-/** The `<testcase>` records of a JUnit report; a text with no suite element is broken. */
+/** The `<testcase>` records of a JUnit report; a text with no suite element is broken.
+    `fault` keeps a `<failure>`/`<error>`'s message attribute and decoded body. */
 const parseJunit = (text) => {
 	if (!/<testsuites?\b/.test(text))
 		throw new Error("no <testsuites> or <testsuite> element");
@@ -378,9 +395,30 @@ const parseJunit = (text) => {
 			classname: classname.replace(/\\/g, "/"),
 			name,
 			failure: fault ? faultMessage(fault) : undefined,
+			fault: fault && {
+				message: attributes(fault[2]).message ?? "",
+				body: decode(fault[3] ?? ""),
+			},
 			skipped: /<skipped\b/.test(body),
 		};
 	});
+};
+
+// A pytest traceback marker line: `E` then whitespace or nothing, never `E:\…` (D9).
+const PYTEST_MARKER = /^E(\s|$)/;
+
+/** A pytest load failure's reason (D9): the last marker line with text after the
+    marker, else the body's first non-blank line, else the fault's message's first
+    line, so a reason is always one stdout line. */
+const pytestFaultReason = ({ message, body }) => {
+	const bodyLines = body.split("\n").map((line) => line.replace(/\r$/, ""));
+	const marked = bodyLines
+		.filter((line) => PYTEST_MARKER.test(line))
+		.map((line) => line.slice(1).replace(/^\s+/, ""))
+		.filter((text) => text.trim() !== "");
+	if (marked.length > 0) return marked.at(-1);
+	const first = bodyLines.find((line) => line.trim() !== "");
+	return (first ?? message).trim().split(/\r?\n/)[0].trim();
 };
 
 const outcomeOf = (record) =>
@@ -421,20 +459,72 @@ const nameMatcher = (wanted, path) => {
 	return (name) => name !== path && title.test(name);
 };
 
-/** The bucket of one named test: its matching records agree, disagree (`mixed`), or
-    none exists — then a file-level failure (name = classname = path) is a load failure. */
-const bucketOf = (records, { path, name }) => {
+/** A vitest/jest record of the test: its classname is the file path. */
+const pathRecordMatcher = ({ path, name }) => {
 	const isNamed = nameMatcher(name, path);
-	const matches = records.filter(
-		(r) => r.classname === path && isNamed(r.name),
+	return (r) => r.classname === path && isNamed(r.name);
+};
+
+/** A `.py` test path's dotted form: `src/pkg/test_mod.py` → `src.pkg.test_mod`. */
+const dottedOf = (path) => path.slice(0, -".py".length).replaceAll("/", ".");
+
+/** A pytest record of the test, matched forward from the `--test` path (D1): the
+    classname is the path's dotted form, plus the classes when the name gives them; the
+    function's name may carry a `[…]` case id unless the wanted name has its own. */
+const pytestRecordMatcher = ({ path, name }) => {
+	const dotted = dottedOf(path);
+	// Split on `::` only before the first `[`: a case id may hold `::` itself.
+	const bracket = name.indexOf("[");
+	const head = bracket < 0 ? name : name.slice(0, bracket);
+	const parts = head.split("::");
+	const fn = parts.at(-1) + name.slice(head.length);
+	const classes = parts.slice(0, -1);
+	const inClass =
+		classes.length === 0
+			? (c) => c === dotted || c.startsWith(`${dotted}.`)
+			: (c) => c === [dotted, ...classes].join(".");
+	const isNamed = fn.includes("[")
+		? (n) => n === fn
+		: (n) => n === fn || (n.startsWith(`${fn}[`) && n.endsWith("]"));
+	return (r) => inClass(r.classname) && isNamed(r.name);
+};
+
+/** The reason a vitest file failed to load: a failed record named after the file, whose
+    classname is the file too; undefined when the file loaded. */
+const pathLoadReason = (records, { path }) =>
+	records.find(
+		(r) => r.failure !== undefined && r.classname === path && r.name === path,
+	)?.failure;
+
+/** The reason a pytest file failed to load: a record with an empty classname, named
+    after the file's dotted form, holding a fault (D9); undefined when the file loaded. */
+const pytestLoadReason = (records, { path }) => {
+	const dotted = dottedOf(path);
+	const load = records.find(
+		(r) => r.fault && r.classname === "" && r.name === dotted,
 	);
+	return load && pytestFaultReason(load.fault);
+};
+
+// How a named test is found in the report, chosen by its path's extension (D2).
+const PYTEST_DIALECT = {
+	matcher: pytestRecordMatcher,
+	loadReason: pytestLoadReason,
+};
+const PATH_DIALECT = { matcher: pathRecordMatcher, loadReason: pathLoadReason };
+const dialectOf = (test) =>
+	extOf(test.path) === "py" ? PYTEST_DIALECT : PATH_DIALECT;
+
+/** The bucket of one named test: its matching records agree, disagree (`mixed`), or
+    none exists — then the file's load failure, if any, is `failed-to-load`. */
+const bucketOf = (records, test) => {
+	const dialect = dialectOf(test);
+	const matches = records.filter(dialect.matcher(test));
 	if (matches.length === 0) {
-		const load = records.find(
-			(r) => r.failure !== undefined && r.classname === path && r.name === path,
-		);
-		return load
-			? { bucket: "failed-to-load", reason: load.failure }
-			: { bucket: "not-found" };
+		const reason = dialect.loadReason(records, test);
+		return reason === undefined
+			? { bucket: "not-found" }
+			: { bucket: "failed-to-load", reason };
 	}
 	const outcomes = new Set(matches.map(outcomeOf));
 	if (outcomes.size > 1) return { bucket: "mixed" };
@@ -444,24 +534,31 @@ const bucketOf = (records, { path, name }) => {
 		: { bucket };
 };
 
-/** The `report:` line and one `test-result:` (plus `reason:`) per named test. A missing
-    or unparsable report makes every named test `unavailable`, never a pass. */
-const reportLines = (junit, named) => {
-	const unavailable = named.map(({ id }) => `test-result: unavailable ${id}`);
-	if (!existsSync(junit)) return ["report: missing", ...unavailable];
-	let records;
+/** The report at `junit`, read once: `{ records }`, or `{ line }` naming why it cannot
+    be read (`report: missing`, `report: broken: <why>`). */
+const readReport = (junit) => {
+	if (!existsSync(junit)) return { line: "report: missing" };
 	try {
-		records = parseJunit(readFileSync(junit, "utf-8"));
+		return { records: parseJunit(readFileSync(junit, "utf-8")) };
 	} catch (error) {
-		return [
-			`report: broken: ${String(error?.message ?? error).split("\n")[0]}`,
-			...unavailable,
-		];
+		return {
+			line: `report: broken: ${String(error?.message ?? error).split("\n")[0]}`,
+		};
 	}
+};
+
+/** The `report:` line and one `test-result:` (plus `reason:`) per named test. A missing
+    or unparsable report makes every named test `unavailable`, never a pass. Under a
+    `broken` run line, a named test the report lacks is `unavailable`, not `not-found`. */
+const reportLines = (junit, report, named, broken) => {
+	const unavailable = named.map(({ id }) => `test-result: unavailable ${id}`);
+	if (!report.records) return [report.line, ...unavailable];
+	const { records } = report;
 	return [
 		`report: ${junit}`,
 		...named.flatMap((test) => {
-			const { bucket, reason } = bucketOf(records, test);
+			const { bucket: found, reason } = bucketOf(records, test);
+			const bucket = broken && found === "not-found" ? "unavailable" : found;
 			const result = `test-result: ${bucket} ${test.id}`;
 			return reason === undefined
 				? [result]
@@ -472,6 +569,47 @@ const reportLines = (junit, named) => {
 
 const lines = (list) => list.map((line) => `${line}\n`).join("");
 
+// ---- pytest dialect (S1-pytest-report) ----
+
+/** The language of a slice's runner tests (changed tests that are not test data):
+    `python` (Python only), `mixed` (Python and another source language) or `other`. */
+const runnerLanguage = (tests) => {
+	const runners = tests.filter((path) => !isTestData(path));
+	const python = runners.some(isPythonTest);
+	const other = runners.some((path) => extOf(path) !== "py" && isSource(path));
+	if (!python) return "other";
+	return other ? "mixed" : "python";
+};
+
+// pytest's exit codes 2–4 (pytest.ExitCode); 0, 1 and 5 have run lines of their own.
+const PYTEST_EXIT = {
+	2: "collection error or interrupted",
+	3: "internal error",
+	4: "usage error",
+};
+
+/** A Python run's run line, from pytest's exit code. An exit 1 is red only when the
+    report it promised can be read (`readable`). */
+const pytestRunLine = (code, readable) => {
+	if (code === 0) return "result: green";
+	if (code === 5) return "result: no-tests";
+	if (code === 1) {
+		return readable
+			? "result: red"
+			: "result: broken: exit 1 (pytest: no readable report)";
+	}
+	const why = Object.hasOwn(PYTEST_EXIT, code)
+		? PYTEST_EXIT[code]
+		: "unknown exit code";
+	return `result: broken: exit ${code} (pytest: ${why})`;
+};
+
+/** The run line: pytest's meanings for a Python run, else non-zero is red. */
+const runLineOf = (code, { python, promisesReport, report }) =>
+	python
+		? pytestRunLine(code, !promisesReport || report.records !== undefined)
+		: `result: ${code === 0 ? "green" : "red"}`;
+
 const runCli = (argv, cwd) => {
 	const {
 		commit: rev,
@@ -480,6 +618,7 @@ const runCli = (argv, cwd) => {
 		links: linkArgs,
 		timeout,
 		command,
+		promisesReport,
 	} = parseArgs(argv);
 	const top = resolve(cwd, gitIn(cwd, ["rev-parse", "--show-toplevel"]).trim());
 	const { commit, parent } = resolveCommit(cwd, rev);
@@ -489,6 +628,12 @@ const runCli = (argv, cwd) => {
 			? parent
 			: gitIn(cwd, ["merge-base", base, commit]).trim();
 	const { tests, fixtures, manifests } = slicePaths(top, from, commit);
+	const language = runnerLanguage(tests);
+	if (language === "mixed") {
+		throw new Error(
+			"tests in Python and another language need one run per runner",
+		);
+	}
 	const header = [
 		`reprove-red: ${commit}`,
 		`base: ${base}`,
@@ -528,12 +673,20 @@ const runCli = (argv, cwd) => {
 	} finally {
 		removeScratch(scratch, links);
 	}
+	const report = readReport(junit);
+	const runLine = runLineOf(code, {
+		python: language === "python",
+		promisesReport,
+		report,
+	});
 	return lines([
 		...header,
 		`exit: ${code}`,
 		`log: ${log}`,
-		...(named.length > 0 ? reportLines(junit, named) : []),
-		`result: ${code === 0 ? "green" : "red"}`,
+		...(named.length > 0
+			? reportLines(junit, report, named, runLine.startsWith("result: broken:"))
+			: []),
+		runLine,
 	]);
 };
 

@@ -16,7 +16,8 @@
 // so the lane classifier and review-range read one list instead of copies.
 //
 // Importable-only: no CLI, no isMain.
-// Importable: SOURCE_EXT, CITE_EXT, extOf, isSource, isTest, isFixture, isTestTree, TEST_EXCLUDE_RE,
+// Importable: SOURCE_EXT, CITE_EXT, extOf, isSource, isTest, isFixture, isTestTree,
+// isPythonTest, isTestData, TEST_EXCLUDE_RE,
 // isManifest, isLockfile, isMigration, isCiConfig, isContainerFile, LANE_CONFIG_FILE,
 // isLaneConfig, isEnvFile, isGenerated, isMedia.
 
@@ -85,6 +86,24 @@ export const isTestTree = (p) =>
 	isFixture(p) ||
 	/(^|\/)(tests?|specs?)\//i.test(p) ||
 	/[._-]fixtures?\.[a-z]+$/i.test(p);
+
+/**
+ * True for a `.py` file isTest accepts outside a Maven/Gradle `src/test/` tree, where
+ * `.py` files are resources. pytest runs any file it is handed by path, so every `.py`
+ * file rpiv calls a test counts: `test_*.py`, `*_test.py`, `*_tests.py`, `x.test.py`,
+ * and any `.py` file under `__tests__/`.
+ * Narrower than isTest; reprove-red counts a slice's Python runner tests with it.
+ */
+export const isPythonTest = (p) =>
+	isTest(p) && extOf(p) === "py" && !/(^|\/)src\/test\//.test(p);
+
+/**
+ * True for a path in a test-DATA folder: `fixtures`, `fixture` or `__fixtures__`.
+ * Narrower than isFixture, which also takes `e2e/`, `testing/`, `mocks/` and
+ * `__mocks__/` — folders that hold real tests, not data a test reads.
+ */
+export const isTestData = (p) =>
+	/(^|\/)(fixtures?|__fixtures__)(\/|$)/i.test(p);
 
 // Regex-source STRING for the generated .dependency-cruiser.cjs (layer-rules), kept
 // byte-identical to the prior inline literal so the generated CI config is unchanged.

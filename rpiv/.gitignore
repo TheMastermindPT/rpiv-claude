@@ -6,5 +6,10 @@ coverage/
 .stryker-tmp/
 reports/
 
+# Python tooling (the pytest sample under tests/fixtures/)
+__pycache__/
+.pytest_cache/
+.venv/
+
 # Local secrets (API keys)
 .env
