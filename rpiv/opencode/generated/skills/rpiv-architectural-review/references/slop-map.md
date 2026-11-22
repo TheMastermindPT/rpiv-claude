@@ -11,7 +11,7 @@ Low-cohesion (Lc): {path  coh  syms  islands rows from ---low-cohesion--- — di
 Complexity (context): {path  decisions  per100  loc rows from ---complexity--- — severity anchor for G/Lc, NOT a gate}
 Export-usage flags: {path  exports  inbound rows where inbound is 0 or low; PLUS dead-exports-semantic rows when semantic.mjs ran (on `ran-partial` an empty block proves nothing — keep the inbound=0 rows)}
 Test-density flags: {path  cases  asserts  ratio rows}
-Dup-candidates: {jscpd clones when present = AUTHORITATIVE; ---dup-candidates--- = corroboration + structural-Type-2 supplement}
+Dup-candidates: {jscpd ran: the dup-families.mjs ---dup-families--- rows (copy families ranked by spread, with ---dup-areas---) = AUTHORITATIVE, plus its header counts (test_test, test_prod, same_file, import_only); ---dup-candidates--- = corroboration + structural-Type-2 supplement}
 Co-change pairs (Tc): {fileA | fileB  support  conf rows — hidden coupling, no import edge}
 Feature-envy (Fe): {feature-envy-semantic rows when semantic ran clean (warrant `semantic: ran`); on `ran-partial`, or when the semantic block is empty, ALSO the ---feature-envy-candidates--- rows; else ---feature-envy-candidates---}
 Write-sites (S ownership): {write-sites-semantic rows when semantic ran clean and the block is non-empty; on `ran-partial` the union of write-sites-semantic and ---write-sites--- rows; else ---write-sites--- — writers>=2 = scattered write path}

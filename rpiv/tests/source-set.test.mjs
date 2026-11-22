@@ -4,7 +4,7 @@
 // isSource/isTest classification the AR helpers share.
 
 import { describe, expect, it } from "vitest";
-import { SOURCE_EXT, isFixture, isSource, isTest } from "../skills/architectural-review/_helpers/source-set.mjs";
+import { SOURCE_EXT, isFixture, isSource, isTest, isTestTree } from "../skills/architectural-review/_helpers/source-set.mjs";
 
 describe("SOURCE_EXT is the 18-extension union", () => {
 	it("contains the cts/mts members mutation.mjs had dropped", () => {
@@ -56,5 +56,36 @@ describe("isFixture names test-SUPPORT trees, separately from isTest", () => {
 	it("is disjoint from isTest for support trees that no runner executes", () => {
 		expect(isTest("lib/e2e/scenarios.ts")).toBe(false);
 		expect(isFixture("lib/e2e/scenarios.ts")).toBe(true);
+	});
+});
+
+describe("isTestTree: anything that exists for tests, for clone classification", () => {
+	// slopstop keeps test support as apps/harness/tests/integration/*-fixture.ts: neither
+	// isTest nor isFixture sees it, so a production block copied into it ranked as an
+	// architecture duplication instead of a test re-implementing production code.
+	it("covers test and spec directories and fixture-named files", () => {
+		expect(isTestTree("apps/harness/tests/integration/project-storage-create-fixture.ts")).toBe(true);
+		expect(isTestTree("test/helpers/build-user.ts")).toBe(true);
+		expect(isTestTree("spec/support/db.rb")).toBe(true);
+		expect(isTestTree("src/users.fixture.ts")).toBe(true);
+		expect(isTestTree("src/user-fixtures.ts")).toBe(true);
+	});
+
+	it("includes everything isTest and isFixture already match", () => {
+		expect(isTestTree("x/y.test.mjs")).toBe(true);
+		expect(isTestTree("lib/e2e/scenarios.ts")).toBe(true);
+	});
+
+	it("does not match production paths that merely contain the word", () => {
+		expect(isTestTree("lib/testimonials/card.tsx")).toBe(false);
+		expect(isTestTree("src/attest/verify.ts")).toBe(false);
+		expect(isTestTree("src/fixtured-layout.ts")).toBe(false);
+		expect(isTestTree("lib/domain/profile.ts")).toBe(false);
+	});
+
+	// Broader than isTest ON PURPOSE and kept separate: folding `tests/` dirs into isTest
+	// would move metrics' test-theater counts, mutation eligibility and the depcruise exclude.
+	it("leaves isTest itself unchanged", () => {
+		expect(isTest("test/helpers/build-user.ts")).toBe(false);
 	});
 });

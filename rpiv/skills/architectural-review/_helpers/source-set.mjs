@@ -6,7 +6,7 @@
 // the AR-specific Fe thresholds that are metrics calibration, not language vocab.
 // Importable-only: no CLI, no isMain.
 //
-// Importable: SOURCE_EXT, isSource, isTest, isFixture, TEST_EXCLUDE_RE,
+// Importable: SOURCE_EXT, isSource, isTest, isFixture, isTestTree, TEST_EXCLUDE_RE,
 //             ENVY_MIN_REFS, ENVY_MIN_RATIO.
 
 export {
@@ -15,6 +15,7 @@ export {
 	isFixture,
 	isSource,
 	isTest,
+	isTestTree,
 	TEST_EXCLUDE_RE,
 } from "../../_shared/source-vocab.mjs";
 

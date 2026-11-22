@@ -16,7 +16,7 @@
 // so the lane classifier and review-range read one list instead of copies.
 //
 // Importable-only: no CLI, no isMain.
-// Importable: SOURCE_EXT, CITE_EXT, extOf, isSource, isTest, isFixture, TEST_EXCLUDE_RE,
+// Importable: SOURCE_EXT, CITE_EXT, extOf, isSource, isTest, isFixture, isTestTree, TEST_EXCLUDE_RE,
 // isManifest, isLockfile, isMigration, isCiConfig, isContainerFile, LANE_CONFIG_FILE,
 // isLaneConfig, isEnvFile, isGenerated, isMedia.
 
@@ -71,6 +71,20 @@ export const isTest = (p) =>
  */
 export const isFixture = (p) =>
 	/(^|\/)(e2e|fixtures?|__fixtures__|__mocks__|mocks|testing)(\/|$)/i.test(p);
+
+/**
+ * True if the path exists FOR tests in any form: isTest, isFixture, a `test/`, `tests/` or
+ * `spec/` directory, or a fixture-named file (`users.fixture.ts`, `user-fixtures.ts`).
+ * Broader than isTest ON PURPOSE and kept separate from it — the generic test directories
+ * isTest deliberately leaves out would move metrics' test-theater counts, mutation
+ * eligibility and the depcruise exclude. For classifying duplication: test support
+ * copying production code is a test finding, not an architecture one.
+ */
+export const isTestTree = (p) =>
+	isTest(p) ||
+	isFixture(p) ||
+	/(^|\/)(tests?|specs?)\//i.test(p) ||
+	/[._-]fixtures?\.[a-z]+$/i.test(p);
 
 // Regex-source STRING for the generated .dependency-cruiser.cjs (layer-rules), kept
 // byte-identical to the prior inline literal so the generated CI config is unchanged.
