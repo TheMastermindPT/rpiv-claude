@@ -36,8 +36,12 @@
 // when a record is unfinished, whatever pytest's exit code. A guarded process records a
 // module when it opens its file for import as well as at exit (S2b-guard-proof), and a
 // temporary folder inside the checkout is refused before the guard folder is made.
-// Outside a Python run the copy, the header, `{tests}` and the environment stay as they
-// were.
+// In a Python run (S2c-copy-modes) a changed symlink is left as the base had it
+// (`diagnostic: symlink not copied:`), a changed test-tree path inside a `src` folder that
+// the copy does not take is named (`diagnostic: production test folder not copied:`), a
+// folder replaced by a file is written as the file, and `--link` targets are placed by
+// real paths. Outside a Python run the copy, the header, `{tests}` and the environment
+// stay as they were.
 //
 // Importable: exitCodeOf.
 
@@ -73,6 +77,7 @@ import {
 	isSource,
 	isTest,
 	isTestData,
+	isTestTree,
 } from "./source-vocab.mjs";
 
 /** git's stdout as text, run in `cwd`; a failure throws one line naming git. */
@@ -222,10 +227,12 @@ const changesOf = (top, parent, commit) => {
 	for (let i = 0; i < fields.length; i += 2) {
 		// `:<old mode> <new mode> <old sha> <new sha> <status>`, then the path.
 		const [oldMode, newMode, , , status] = fields[i].slice(1).split(" ");
+		const either = (mode) => oldMode === mode || newMode === mode;
 		changes.push({
 			status,
 			path: fields[i + 1],
-			submodule: oldMode === "160000" || newMode === "160000",
+			submodule: either("160000"),
+			symlink: either("120000"),
 		});
 	}
 	return changes;
@@ -249,21 +256,21 @@ const slicePaths = (changes) => {
 	};
 };
 
-/** A Python run's copy (FR8, D16, D17): every changed test-tree path, written from the
-    commit or removed when deleted; a submodule entry is neither, only named. */
+/** A Python run's copy (FR8, D16, D17, D28): every changed test-tree path, written from
+    the commit or removed when deleted; a submodule entry or a symlink is neither, only
+    named. A test-tree path inside a `src` folder that the copy does not take is named
+    too (B27). */
 const pythonCopy = (changes) => {
-	const set = changes.filter(
-		({ path }) => isFixture(path) || isPythonTestSupport(path),
-	);
-	const paths = (keep) =>
-		set
-			.filter(keep)
-			.map(({ path }) => path)
-			.sort();
+	const inSet = ({ path }) => isFixture(path) || isPythonTestSupport(path);
+	const set = changes.filter(inSet);
+	const sorted = (list) => list.map(({ path }) => path).sort();
+	const plain = set.filter((c) => !c.submodule && !c.symlink);
 	return {
-		written: paths((c) => !c.submodule && c.status !== "D"),
-		removed: paths((c) => !c.submodule && c.status === "D"),
-		submodules: paths((c) => c.submodule),
+		written: sorted(plain.filter((c) => c.status !== "D")),
+		removed: sorted(plain.filter((c) => c.status === "D")),
+		submodules: sorted(set.filter((c) => c.submodule)),
+		symlinks: sorted(set.filter((c) => c.symlink && !c.submodule)),
+		production: sorted(changes.filter((c) => !inSet(c) && isTestTree(c.path))),
 	};
 };
 
@@ -289,7 +296,10 @@ const copyPlan = (changes, { tests, fixtures, manifests }, python) => {
 	const runners = tests.filter(
 		(path) => !isTestData(path) && isPythonTest(path),
 	);
-	const { written, removed, submodules } = pythonCopy(changes);
+	const { written, removed, submodules, symlinks, production } =
+		pythonCopy(changes);
+	const named = (what, list) =>
+		list.map((path) => `diagnostic: ${what} not copied: ${path}`);
 	return {
 		tests: runners,
 		paths: written,
@@ -300,7 +310,9 @@ const copyPlan = (changes, { tests, fixtures, manifests }, python) => {
 				.filter((path) => !runners.includes(path))
 				.map((path) => `fixture: ${path}`),
 			...removed.map((path) => `removed: ${path}`),
-			...submodules.map((path) => `diagnostic: submodule not copied: ${path}`),
+			...named("submodule", submodules),
+			...named("symlink", symlinks),
+			...named("production test folder", production),
 			...dependencies,
 		],
 	};
@@ -328,8 +340,13 @@ const buildScratch = (top, scratch, { parent, commit, paths, removed }) => {
 				maxBuffer: 64 * 1024 * 1024,
 			},
 		);
-		mkdirSync(dirname(join(scratch, path)), { recursive: true });
-		writeFileSync(join(scratch, path), bytes);
+		const at = join(scratch, path);
+		mkdirSync(dirname(at), { recursive: true });
+		// A folder replaced by a file in a Python run (B29); only removals empty it.
+		if (removed.length > 0 && lstatSafe(at)?.isDirectory()) {
+			rmSync(at, { recursive: true, force: true });
+		}
+		writeFileSync(at, bytes);
 	}
 };
 
@@ -403,13 +420,16 @@ const removeScratch = (scratch, links) => {
 	rmSync(scratch, { recursive: true, force: true });
 };
 
-const isLink = (path) => {
+/** The lstat of `path`, or undefined when it does not exist. */
+const lstatSafe = (path) => {
 	try {
-		return lstatSync(path).isSymbolicLink();
+		return lstatSync(path);
 	} catch {
-		return false;
+		return undefined;
 	}
 };
+
+const isLink = (path) => lstatSafe(path)?.isSymbolicLink() ?? false;
 
 /** The exit code of a `spawnSync` result. A command that cannot start or outlives
     `timeout` seconds is broken. */
@@ -784,12 +804,13 @@ const runCli = (argv, cwd) => {
 			`rpiv/reprove-red/${baseRev === undefined ? commit : `${commit}-${base}`}`,
 		]).trim(),
 	);
-	const links = checkLinks(linkArgs, { cwd, top, scratch });
+	const python = language === "python";
+	const place = placesOf(top, cwd, python);
+	// A Python run checks and places links by real paths, like its run folder (D29).
+	const links = checkLinks(linkArgs, { ...place, scratch });
 	if (tests.length === 0) return lines([...header, "result: no-tests"]);
 	const log = `${scratch}.log`;
 	const junit = `${scratch}.junit.xml`;
-	const python = language === "python";
-	const place = placesOf(top, cwd, python);
 	const testsFromCwd = plan.tests.map((path) =>
 		relative(place.cwd, join(place.top, path)).replace(/\\/g, "/"),
 	);

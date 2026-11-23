@@ -4,6 +4,7 @@
 // .rpiv/artifacts/designs/2026-11-22_14-04-13_python-project-support.md).
 // The runner is a node stand-in (RECORDER), so these tests need no Python.
 
+import { execFileSync } from "node:child_process";
 import {
 	existsSync,
 	mkdirSync,
@@ -146,23 +147,23 @@ describe("Python scratch copy and import guard (S2-scratch-copy)", () => {
 			const slice = commitAll(repo, "slice", { "tests/data": SUB_B });
 			const run = recRun(repo, slice, { runner: ["--code", "1"] });
 			expect.soft(run.status).toBe(0);
-			expect
-				.soft(headerBody(run.lines))
-				.toEqual([
-					"test: tests/test_ok.py",
-					"fixture: conftest.py",
-					"fixture: src/pkg/conftest.py",
-					"fixture: tests/__init__.py",
-					"fixture: tests/conftest.py",
-					"fixture: tests/fixtures/x.json",
-					"fixture: tests/golden/out.json",
-					"fixture: tests/helpers.py",
-					"fixture: tests/requirements.txt",
-					"removed: tests/golden/old.json",
-					"diagnostic: submodule not copied: tests/data",
-					"diagnostic: dependencies changed: tests/requirements.txt",
-					"diagnostic: dependencies changed: uv.lock",
-				]);
+			expect.soft(headerBody(run.lines)).toEqual([
+				"test: tests/test_ok.py",
+				"fixture: conftest.py",
+				"fixture: src/pkg/conftest.py",
+				"fixture: tests/__init__.py",
+				"fixture: tests/conftest.py",
+				"fixture: tests/fixtures/x.json",
+				"fixture: tests/golden/out.json",
+				"fixture: tests/helpers.py",
+				"fixture: tests/requirements.txt",
+				"removed: tests/golden/old.json",
+				"diagnostic: submodule not copied: tests/data",
+				// From S2c on (B27), a production test folder is named.
+				"diagnostic: production test folder not copied: src/demo/test/utils.py",
+				"diagnostic: dependencies changed: tests/requirements.txt",
+				"diagnostic: dependencies changed: uv.lock",
+			]);
 			expect.soft(run.lines.slice(-3, -2)).toEqual(["exit: 1"]);
 			expect.soft(run.lines.at(-2)).toMatch(/^log: /);
 			expect.soft(lastLine(run.lines)).toBe("result: red");
@@ -226,6 +227,187 @@ describe("Python scratch copy and import guard (S2-scratch-copy)", () => {
 				.soft(gone.lines.filter((line) => line.startsWith("removed: ")))
 				.toEqual([]);
 			expect.soft(lastLine(gone.lines)).toBe("result: red");
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"B27: a Python run names each production test folder path it does not copy and copies fixture folders under src",
+		() => {
+			const PROD = ["src/demo/test/utils.py", "py/src/demo/test/x.py"];
+			const { repo } = baseRepo(
+				Object.fromEntries(PROD.map((path) => [path, base(path)])),
+			);
+			for (const path of [
+				"tests/test_ok.py",
+				...PROD,
+				"src/demo/fixtures/data.json",
+			]) {
+				put(repo, path, changed(path));
+			}
+			const slice = commitAll(repo, "slice");
+			const run = recRun(repo, slice, { runner: ["--code", "1"] });
+			expect
+				.soft(headerBody(run.lines))
+				.toEqual([
+					"test: tests/test_ok.py",
+					"fixture: src/demo/fixtures/data.json",
+					"diagnostic: production test folder not copied: py/src/demo/test/x.py",
+					"diagnostic: production test folder not copied: src/demo/test/utils.py",
+				]);
+			for (const path of PROD) {
+				expect.soft(run.seen?.files?.[path], path).toBe(base(path));
+			}
+			expect.soft(lastLine(run.lines)).toBe("result: red");
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"B28: a Python run names a changed symlink and keeps its base state",
+		() => {
+			const { repo } = baseRepo({ "tests/data.json": base("tests/data.json") });
+			drop(repo, "tests/data.json");
+			put(repo, "tests/test_ok.py", changed("tests/test_ok.py"));
+			git(repo, "add", "-A");
+			const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], {
+				cwd: repo,
+				input: "other.json",
+				encoding: "utf-8",
+			}).trim();
+			git(
+				repo,
+				"update-index",
+				"--add",
+				"--cacheinfo",
+				`120000,${blob},tests/data.json`,
+			);
+			git(repo, "commit", "-q", "-m", "file becomes a link");
+			const slice = git(repo, "rev-parse", "HEAD");
+			const run = recRun(repo, slice, { runner: ["--code", "1"] });
+			expect
+				.soft(headerBody(run.lines))
+				.toEqual([
+					"test: tests/test_ok.py",
+					"diagnostic: symlink not copied: tests/data.json",
+				]);
+			expect
+				.soft(run.seen?.files?.["tests/data.json"])
+				.toBe(base("tests/data.json"));
+			expect.soft(lastLine(run.lines)).toBe("result: red");
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"B29: a Python run writes a folder replaced by a file in the same slice",
+		() => {
+			const { repo } = baseRepo({
+				"tests/golden/a.json": base("tests/golden/a.json"),
+			});
+			drop(repo, "tests/golden");
+			put(repo, "tests/golden", changed("tests/golden"));
+			put(repo, "tests/test_ok.py", changed("tests/test_ok.py"));
+			const slice = commitAll(repo, "folder becomes file");
+			const run = recRun(repo, slice, { runner: ["--code", "1"] });
+			expect.soft(run.stderr).toBe("");
+			expect.soft(run.lines).toContain("removed: tests/golden/a.json");
+			expect.soft(run.lines).toContain("fixture: tests/golden");
+			expect
+				.soft(run.seen?.files?.["tests/golden"])
+				.toBe(changed("tests/golden"));
+			expect.soft(lastLine(run.lines)).toBe("result: red");
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"B30: a moved conftest is removed and written, a deleted test stays out of {tests}, an e2e test is in it, and the header names every Python line",
+		() => {
+			const moved = baseRepo({
+				"tests/conftest.py": base("tests/conftest.py"),
+			}).repo;
+			drop(moved, "tests/conftest.py");
+			put(moved, "tests/unit/conftest.py", changed("tests/unit/conftest.py"));
+			put(moved, "tests/test_ok.py", changed("tests/test_ok.py"));
+			const movedRun = recRun(moved, commitAll(moved, "move"), {
+				runner: ["--code", "1"],
+			});
+			expect.soft(movedRun.lines).toContain("removed: tests/conftest.py");
+			expect.soft(movedRun.lines).toContain("fixture: tests/unit/conftest.py");
+			expect
+				.soft(Object.hasOwn(movedRun.seen?.files ?? {}, "tests/conftest.py"))
+				.toBe(false);
+
+			const { repo } = baseRepo({
+				"tests/test_old.py": base("tests/test_old.py"),
+			});
+			drop(repo, "tests/test_old.py");
+			for (const path of ["tests/test_ok.py", "e2e/test_flow.py"]) {
+				put(repo, path, changed(path));
+			}
+			const run = recRun(repo, commitAll(repo, "slice"), {
+				runner: ["{tests}", "--code", "1"],
+			});
+			const args = run.seen?.args ?? [];
+			expect
+				.soft(
+					args
+						.slice(0, args.indexOf("--code"))
+						.filter((a) => a.endsWith(".py")),
+				)
+				.toEqual(["e2e/test_flow.py", "tests/test_ok.py"]);
+			expect.soft(run.lines).toContain("removed: tests/test_old.py");
+
+			for (const path of [
+				"skills/_shared/reprove-red.mjs",
+				"opencode/generated/skills/_shared/reprove-red.mjs",
+			]) {
+				const lines = readFileSync(join(ROOT, path), "utf-8").split(/\r?\n/);
+				const end = lines.findIndex((line) => !line.startsWith("//"));
+				const header = lines.slice(0, end).join(" ");
+				for (const text of [
+					"removed:",
+					"submodule not copied",
+					"symlink not copied",
+					"production test folder not copied",
+					"PYTHONDONTWRITEBYTECODE",
+				]) {
+					expect.soft(header, `${path}: ${text}`).toContain(text);
+				}
+			}
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"B31: a Python run from a junction to the top folder accepts a link and a run that is not a Python run keeps the broken call",
+		() => {
+			const py = pythonSlice();
+			put(py.repo, ".venv/x.py", "");
+			const via = join(tempDir(), "via");
+			symlinkSync(py.repo, via, "junction");
+			const run = recRun(py.repo, py.slice, {
+				before: ["--link", ".venv"],
+				runner: ["--code", "1"],
+				cwd: via,
+			});
+			expect.soft(run.stderr).toBe("");
+			expect.soft(lastLine(run.lines)).toBe("result: red");
+
+			const js = sliceOf(["tests/a.test.mjs"]);
+			put(js.repo, ".venv/x.py", "");
+			const jsVia = join(tempDir(), "via");
+			symlinkSync(js.repo, jsVia, "junction");
+			const plain = recRun(js.repo, js.slice, {
+				before: ["--link", ".venv"],
+				runner: ["--code", "1"],
+				cwd: jsVia,
+			});
+			expect.soft(plain.status).toBe(2);
+			expect
+				.soft(plain.stderr.split(/\r?\n/)[0])
+				.toBe("reprove-red: broken: link target outside the repository: .venv");
 		},
 		TEST_TIMEOUT,
 	);
