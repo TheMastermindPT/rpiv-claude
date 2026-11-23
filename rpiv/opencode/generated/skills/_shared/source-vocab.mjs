@@ -19,7 +19,7 @@
 // Importable: SOURCE_EXT, CITE_EXT, extOf, isSource, isTest, isFixture, isTestTree,
 // isPythonTest, isTestData, isPythonTestSupport, TEST_EXCLUDE_RE,
 // isManifest, isLockfile, isMigration, isCiConfig, isContainerFile, LANE_CONFIG_FILE,
-// isLaneConfig, isEnvFile, isGenerated, isMedia.
+// isLaneConfig, isEnvFile, isGenerated, isMedia, COSMIC_SESSIONS.
 
 /** Extensions that count as reviewable source code (metrics, mutation, semantic). */
 export const SOURCE_EXT = new Set([
@@ -162,6 +162,10 @@ export const isContainerFile = (p) => CONTAINER_NAME_RE.test(baseOf(p));
 
 /** The repo-root file of per-repository lane thresholds (D9, D33). */
 export const LANE_CONFIG_FILE = ".rpiv-lanes.json";
+
+/** The Cosmic Ray session files looked for at a project root, in order (D52 of the
+    Python-support design, S8-cosmic-ray): read by mutation.mjs, reported by tool-probe. */
+export const COSMIC_SESSIONS = ["cosmic-ray.sqlite", "session.sqlite"];
 /** The root lane thresholds file itself — never a nested or look-alike name (D33). */
 export const isLaneConfig = (p) =>
 	slashed(p).replace(/^\.\//, "") === LANE_CONFIG_FILE;

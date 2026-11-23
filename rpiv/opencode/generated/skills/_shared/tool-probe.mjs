@@ -35,6 +35,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { isAbsolute, join, resolve } from "node:path";
 import { findProjectRoot } from "./project-root.mjs";
+import { COSMIC_SESSIONS } from "./source-vocab.mjs";
 
 const safe = (args, fb = "") => {
 	try {
@@ -425,7 +426,8 @@ const pythonExtras = (tool, status, config) => {
 };
 
 /** The Python rows of a root, read from its `.venv` and config files. Returns its
-    coverage.py report (`coverage.lcov` at the root, D40 of S5-coverage). */
+    coverage.py report (`coverage.lcov` at the root, D40 of S5-coverage) and its Cosmic
+    Ray session as the mutation report (D56 of S8-cosmic-ray). */
 const pythonRows = (ctx, row) => {
 	const dists = installedDists(ctx.root);
 	const pyprojectPath = join(ctx.root, "pyproject.toml");
@@ -435,7 +437,8 @@ const pythonRows = (ctx, row) => {
 		const status = pythonStatus(tool, dists.has(tool.dist), config);
 		row(tool.tool, tool.lens, status, pythonExtras(tool, status, config));
 	}
-	return { covReport: ctx.firstFile(["coverage.lcov"]) };
+	// A Cosmic Ray session reads as the mutation report (D56 of S8-cosmic-ray).
+	return { covReport: ctx.firstFile(["coverage.lcov"]), strykerReport: ctx.firstFile(COSMIC_SESSIONS) };
 };
 
 /** One root's ecosystem rows into `out`; `suffix` fields end each row (a further root's
