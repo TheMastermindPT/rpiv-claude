@@ -424,7 +424,8 @@ const pythonExtras = (tool, status, config) => {
 	return tool.needsConfig ? [`hint=add a ${tool.tool} config`] : [];
 };
 
-/** The Python rows of a root, read from its `.venv` and config files. */
+/** The Python rows of a root, read from its `.venv` and config files. Returns its
+    coverage.py report (`coverage.lcov` at the root, D40 of S5-coverage). */
 const pythonRows = (ctx, row) => {
 	const dists = installedDists(ctx.root);
 	const pyprojectPath = join(ctx.root, "pyproject.toml");
@@ -434,7 +435,7 @@ const pythonRows = (ctx, row) => {
 		const status = pythonStatus(tool, dists.has(tool.dist), config);
 		row(tool.tool, tool.lens, status, pythonExtras(tool, status, config));
 	}
-	return {};
+	return { covReport: ctx.firstFile(["coverage.lcov"]) };
 };
 
 /** One root's ecosystem rows into `out`; `suffix` fields end each row (a further root's

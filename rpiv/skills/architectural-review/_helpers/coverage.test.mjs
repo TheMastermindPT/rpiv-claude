@@ -87,11 +87,14 @@ try {
 	writeFileSync(join(repo3, "pkgB", "package.json"), JSON.stringify({ name: "b" }));
 	git(repo3, ["init", "-q"]);
 	const out3 = execFileSync("node", [COV, "pkgA", "pkgB"], { cwd: repo3, encoding: "utf-8" });
+	// S5-coverage (D39): every project root's report is read; a further root gets an
+	// also_coverage_report: line, so it is never silently dropped.
 	assert.ok(
-		out3.includes("note: targets span 2 project roots — coverage read from the first"),
-		`multi-project targets must announce the coverage anchor, got:\n${out3}`,
+		/^also_coverage_report: \S*\/pkgB\tnone$/m.test(out3),
+		`multi-project targets must name every root's report, got:\n${out3}`,
 	);
-	console.log("OK (coverage span note) — multi-project anchor announced, never silent.");
+	assert.ok(!out3.includes("note:"), `no first-root note any more, got:\n${out3}`);
+	console.log("OK (coverage span) — every project root's report named, never silent.");
 } finally {
 	rmSync(repo3, { recursive: true, force: true });
 }
