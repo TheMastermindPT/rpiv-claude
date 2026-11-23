@@ -209,11 +209,13 @@ const functionsNamedFor = (source, id) => {
 };
 
 /** Every test title in `source` that starts with `<id>:` (`'B3: rejects …'`), as written;
-    in a `.py` file, the functions named after the ID instead. */
+    in a `.py` file, the functions named after the ID instead. A title runs to the next
+    unescaped quote of its own kind, so it may hold the other quote characters
+    (`"B1: the run's line"`; rpiv issue draft 20261122-185409-54f3bade). */
 const titlesStartingWith = (source, id, path) => {
 	if (isPython(path)) return functionsNamedFor(source, id);
 	const quoted = new RegExp(
-		`(['"\`])(${escapeRegExp(id)}:[^'"\`\\n]*)\\1`,
+		`(['"\`])(${escapeRegExp(id)}:(?:\\\\.|(?!\\1)[^\\\\\\n])*)\\1`,
 		"g",
 	);
 	return [...source.matchAll(quoted)].map((m) => m[2]);

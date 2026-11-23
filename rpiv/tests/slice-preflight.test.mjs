@@ -938,3 +938,51 @@ describe("slice-preflight on pytest tests (S3-preflight-python)", () => {
 		TEST_TIMEOUT,
 	);
 });
+
+describe("slice-preflight on titles holding another quote style (draft 20261122-185409-54f3bade)", () => {
+	it(
+		"finds an ID-titled test whose title holds a quote character of another style",
+		() => {
+			const repo = tempDir();
+			git(repo, "init", "-q", "-b", "main");
+			git(repo, "config", "user.email", "p@example.invalid");
+			git(repo, "config", "user.name", "p");
+			git(repo, "config", "core.autocrlf", "false");
+			put(repo, "README.md", "base\n");
+			git(repo, "add", "-A");
+			git(repo, "commit", "-q", "-m", "base");
+			const base = git(repo, "rev-parse", "HEAD");
+			put(
+				repo,
+				"tests/q.test.mjs",
+				[
+					`it("B1: the run's line is red", () => {});`,
+					`it('B2: say "hi" twice', () => {});`,
+					"it(`B3: it's \"both\"`, () => {});",
+					`it("B4: an escaped \\"quote\\" stays", () => {});`,
+					"",
+				].join("\n"),
+			);
+			git(repo, "add", "-A");
+			git(repo, "commit", "-q", "-m", "slice");
+			const candidate = git(repo, "rev-parse", "HEAD");
+			const outside = tempDir();
+			put(
+				outside,
+				"b.md",
+				"### Test Contract: s\n\n- **Behavior B1**: one\n- **Behavior B2**: two\n- **Behavior B3**: three\n- **Behavior B4**: four\n",
+			);
+			const res = run(repo, "--artifact", join(outside, "b.md"), "--slice", "s", "--base", base, "--candidate", candidate);
+			expect(res.stderr).toBe("");
+			expect(res.lines.filter((l) => l.startsWith("finding:"))).toEqual([]);
+			const call = `reprove: --commit ${candidate} --base ${base} --test tests/q.test.mjs::`;
+			expect(res.lines.filter((l) => l.startsWith("reprove:"))).toEqual([
+				`${call}B1: the run's line is red`,
+				`${call}B2: say "hi" twice`,
+				`${call}B3: it's "both"`,
+				`${call}B4: an escaped \\"quote\\" stays`,
+			]);
+		},
+		TEST_TIMEOUT,
+	);
+});
