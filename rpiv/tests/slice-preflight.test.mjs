@@ -756,3 +756,46 @@ describe("slice-preflight on whole-file tests and a slice of several commits", (
 		TEST_TIMEOUT,
 	);
 });
+
+describe("slice-preflight on a slice with only TDD-exempt items", () => {
+	it(
+		"is clean with a diagnostic and no re-proof plan when every item is TDD-exempt, and still checks the evidence",
+		() => {
+			const f = fixture();
+			put(
+				f.outside,
+				"docs.md",
+				"### Test Contract: S1\n\n- **TDD-exempt**: `CLAUDE.md` and the ledger files - documentation\n  with no executable behavior.\n\n### Success Criteria: S1\n\n1. a check script exits 0.\n",
+			);
+			const args = [
+				"--artifact",
+				join(f.outside, "docs.md"),
+				"--slice",
+				"S1",
+				"--base",
+				f.base,
+				"--candidate",
+				f.candidate,
+			];
+			const clean = run(f.repo, ...args);
+			expect(clean.stderr).toBe("");
+			expect(clean.status).toBe(0);
+			expect(clean.lines).toEqual([
+				"preflight: clean",
+				"diagnostic: every item of the contract is TDD-exempt: no test to check or re-prove",
+			]);
+			const unbound = run(
+				f.repo,
+				...args,
+				"--evidence",
+				join(f.outside, "unbound.log"),
+			);
+			expect(unbound.status).toBe(1);
+			expect(unbound.lines.slice(0, 2)).toEqual([
+				"preflight: findings",
+				`finding: evidence-unbound: ${join(f.outside, "unbound.log")}`,
+			]);
+		},
+		TEST_TIMEOUT,
+	);
+});

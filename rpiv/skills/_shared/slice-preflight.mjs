@@ -16,7 +16,9 @@
 // could not be read and are listed as `unchecked:`, never reported clean) or
 // `preflight: findings` (exit 1), then `finding:`, `unchecked:`, `diagnostic:` and
 // `reprove:` lines. A broken call prints `slice-preflight: broken: <detail>` on stderr
-// and exits 2, never a result.
+// and exits 2, never a result. A contract of TDD-exempt items only (a docs slice) is
+// checked like any other, with a `diagnostic:` line saying so and no `reprove:` lines;
+// a contract with neither behaviors nor exemptions is a broken call.
 //
 // Importable: parseTestContract (pure).
 
@@ -163,7 +165,10 @@ const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /** Every test title in `source` that starts with `<id>:` (`'B3: rejects …'`), as written. */
 const titlesStartingWith = (source, id) => {
-	const quoted = new RegExp(`(['"\`])(${escapeRegExp(id)}:[^'"\`\\n]*)\\1`, "g");
+	const quoted = new RegExp(
+		`(['"\`])(${escapeRegExp(id)}:[^'"\`\\n]*)\\1`,
+		"g",
+	);
 	return [...source.matchAll(quoted)].map((m) => m[2]);
 };
 
@@ -323,17 +328,25 @@ const resolveRepo = (cwd, options) => {
 	return { root, candidate, base };
 };
 
-/** The slice's behaviors; throws when the contract has none. */
+/** The slice's behaviors and TDD exemptions; throws when the contract has neither. A
+    contract of TDD-exempt items only (a docs slice) has no behaviors and is checkable. */
 const loadBehaviors = (options) => {
-	const { behaviors } = parseTestContract(
+	const { behaviors, exempt } = parseTestContract(
 		readFileSync(options.artifact, "utf-8"),
 		options.slice,
 	);
-	if (behaviors.length === 0)
+	if (behaviors.length === 0 && exempt.length === 0)
 		throw new Error(
-			`\`### Test Contract: ${options.slice}\` has no Behavior entries`,
+			`\`### Test Contract: ${options.slice}\` has no Behavior entries and no TDD-exempt item`,
 		);
-	return behaviors;
+	return {
+		behaviors,
+		diagnostics: behaviors.length
+			? []
+			: [
+					"diagnostic: every item of the contract is TDD-exempt: no test to check or re-prove",
+				],
+	};
 };
 
 const headline = (findings, unchecked) => {
@@ -345,7 +358,7 @@ const headline = (findings, unchecked) => {
 const runCli = (argv, cwd) => {
 	const options = parseArgs(argv);
 	const { root, candidate, base } = resolveRepo(cwd, options);
-	const behaviors = loadBehaviors(options);
+	const { behaviors, diagnostics } = loadBehaviors(options);
 	const tests = testChecks(repoView(root, base, candidate), behaviors);
 	const findings = [
 		...tests.findings,
@@ -359,6 +372,7 @@ const runCli = (argv, cwd) => {
 		`preflight: ${headline(findings, unchecked)}`,
 		...findings.map((f) => `finding: ${f}`),
 		...unchecked,
+		...diagnostics,
 		...tests.diagnostics,
 		...reprovePlan(candidate, base, tests.behaviors),
 	];
