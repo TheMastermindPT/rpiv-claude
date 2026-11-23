@@ -124,16 +124,29 @@ export function approvedCopies(artifactPath) {
 	return [...dirs].flatMap(listApproved);
 }
 
-/** Where a new approved copy of `artifactPath` goes: `.rpiv/evidence/<stem>/` in the main
-    worktree (the folder is gitignored, so a linked worktree's copy would be lost), else
-    beside the artifact's own `.rpiv/`. Null for a file outside `.rpiv/artifacts/`. */
+/** Where a new approved copy of `artifactPath` goes: `.rpiv/evidence/<stem>/` beside the
+    artifact's own `.rpiv/`, unless that folder is gitignored in a linked worktree, where
+    the copy would be lost with the worktree: then in the main worktree. A repository
+    that tracks its evidence keeps each worktree's copy in that worktree, so parallel
+    workers do not write into the main checkout. Null for a file outside
+    `.rpiv/artifacts/`. */
 export function approvedCopyDir(artifactPath) {
 	const p = artifactPath.replaceAll("\\", "/");
 	const at = p.lastIndexOf("/.rpiv/artifacts/");
 	if (at === -1) return null;
 	const home = p.slice(0, at);
 	const stem = basename(p).replace(/\.md$/, "");
+	const own = resolve(home, ".rpiv", "evidence", stem);
+	if (!isIgnored(home, own)) return own;
 	return resolve(mainWorktreeTwin(home) ?? home, ".rpiv", "evidence", stem);
+}
+
+/** True when git ignores files in `folder` for the repository at `dir`; false when it
+    does not, or outside a git repository. */
+function isIgnored(dir, folder) {
+	const probe = join(folder, "approved-probe.md");
+	const res = spawnSync("git", ["check-ignore", "-q", "--no-index", "--", probe], { cwd: dir });
+	return res.status === 0;
 }
 
 /** The `approved-*.md` files in `dir`; none when it does not exist. */

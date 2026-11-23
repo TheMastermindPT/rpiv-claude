@@ -82,6 +82,49 @@ describe("approval.mjs record", () => {
 		expect(res.stdout).toContain(`copy: ${copy}`);
 	});
 
+	// A linked worktree keeps its approved copy when its .rpiv/evidence is tracked (the
+	// rocket-league-trainer worker, M0-01 S5); a gitignored one would lose it with the
+	// worktree, so that copy still goes to the main checkout.
+	it("saves a linked worktree's copy in that worktree when evidence is tracked, else in the main checkout", () => {
+		const execGit = (cwd, ...args) => {
+			const res = spawnSync("git", args, { cwd, encoding: "utf-8" });
+			if (res.status !== 0) throw new Error(res.stderr);
+		};
+		for (const [label, ignore, inLinked] of [
+			["tracked", "", true],
+			["gitignored", ".rpiv/evidence/\n", false],
+		]) {
+			const parent = mkdtempSync(join(tmpdir(), "rpiv-approval-wt-"));
+			dirs.push(parent);
+			const main = join(parent, "main");
+			const linked = join(parent, "linked");
+			mkdirSync(main);
+			execGit(main, "init", "-q", "-b", "main");
+			execGit(main, "config", "user.email", "p@example.invalid");
+			execGit(main, "config", "user.name", "p");
+			writeFileSync(join(main, ".gitignore"), ignore || "# nothing\n");
+			execGit(main, "add", "-A");
+			execGit(main, "commit", "-q", "-m", "base");
+			execGit(main, "worktree", "add", "-q", "-b", "slice", linked);
+			const path = join(linked, ".rpiv/artifacts/designs/brief.md");
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, BRIEF);
+
+			const res = run("record", path);
+			expect.soft(res.status, label).toBe(0);
+			const copy = `approved-${hashOf(path)}.md`;
+			const home = inLinked ? linked : main;
+			const other = inLinked ? main : linked;
+			expect
+				.soft(existsSync(join(home, ".rpiv/evidence/brief", copy)), label)
+				.toBe(true);
+			expect
+				.soft(existsSync(join(other, ".rpiv/evidence/brief", copy)), label)
+				.toBe(false);
+			expect.soft(run("check", path).stdout, label).toContain("approval: keep");
+		}
+	});
+
 	it("records nothing when validation fails", () => {
 		const b = brief();
 		appendFileSync(b.path, "\nTODO finish this\n");
