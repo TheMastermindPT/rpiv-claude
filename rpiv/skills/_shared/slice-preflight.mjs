@@ -4,7 +4,10 @@
 // and title, or for a whole-file test (no title named) as a file the slice changed
 // (a pin's file need only exist); a behavior with no Test line has at least one test
 // titled `<id>: …` in a test file the slice changed; every Expected-red revision resolves; every evidence
-// log exists and names the slice's base or candidate. Contract paths resolve against
+// log exists and names the slice's base or candidate. In a `.py` test file a title is a
+// definition, never a string: `def <fn>(` (with `class` lines for `A::fn`), and a
+// behavior's own tests are the functions `test_<id>` or `test_<id>_<more>` (D30, D31 of
+// the Python-support design, S3-preflight-python). Contract paths resolve against
 // the repository root, never the run folder. The base must be an ancestor of the
 // candidate; the slice may span several commits. It also prints the re-proof plan for
 // reprove-red.mjs, always with a `--base` (pins are never re-proved).
@@ -88,9 +91,36 @@ const resolveTestPath = (repo, written) => {
 	return { path, also: matches.filter((f) => f !== path).sort() };
 };
 
+const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const isPython = (path) => path.toLowerCase().endsWith(".py");
+
+/** True when the line pattern `pattern` matches a line of `source`. */
+const hasLine = (source, pattern) => new RegExp(pattern, "m").test(source);
+
+/** True when Python `source` defines `title` (D30): `def` or `async def` of its function,
+    at any indent, as a whole name, and a `class` for each class before it (`A::B::fn`).
+    A `[…]` case id is dropped first. Strings never count. */
+const definesTitle = (source, title) => {
+	const names = title.split("[")[0].split("::");
+	const fn = escapeRegExp(names.pop());
+	return (
+		hasLine(
+			source,
+			String.raw`^[ \t]*(?:async[ \t]+)?def[ \t]+${fn}[ \t]*\(`,
+		) &&
+		names.every((name) =>
+			hasLine(
+				source,
+				String.raw`^[ \t]*class[ \t]+${escapeRegExp(name)}[ \t]*[(:]`,
+			),
+		)
+	);
+};
+
 /** True when `source` holds `title` as a whole string literal in any quote style
     (its own quote escaped), so a shorter title never matches a longer test name. */
-const hasTitle = (source, title) =>
+const hasQuoted = (source, title) =>
 	[
 		["'", "\\'"],
 		['"', '\\"'],
@@ -98,6 +128,11 @@ const hasTitle = (source, title) =>
 	].some(([quote, escaped]) =>
 		source.includes(quote + title.replaceAll(quote, escaped) + quote),
 	);
+
+/** True when the file at `path` holds the test `title`: a `.py` file by its definitions,
+    any other by a quoted title. */
+const hasTitle = (source, title, path) =>
+	isPython(path) ? definesTitle(source, title) : hasQuoted(source, title);
 
 const OPTIONS = {
 	"--artifact": "artifact",
@@ -137,7 +172,7 @@ const resolvedFinding = (repo, b, { title, path: written }, path) => {
 		return b.pin || repo.changed.has(path)
 			? null
 			: `untouched-test-file: ${b.id} ${written}`;
-	return hasTitle(repo.sourceOf(path), title)
+	return hasTitle(repo.sourceOf(path), title, path)
 		? null
 		: `missing-test-title: ${b.id} ${written} :: ${title}`;
 };
@@ -159,11 +194,26 @@ const testOutcome = (repo, b, test) => {
 	};
 };
 
-const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** The Python test functions in `source` named after `id` (D31): `test_<id>` or
+    `test_<id>_<more>`, the ID in any case with each `-` read as `_`, so `test_b1_`
+    never matches `test_b10_`. */
+const functionsNamedFor = (source, id) => {
+	const name = escapeRegExp(`test_${id.replaceAll("-", "_")}`);
+	const defined = new RegExp(
+		String.raw`^[ \t]*(?:async[ \t]+)?def[ \t]+(${name}(?:_\w*)?)[ \t]*\(`,
+		"gim",
+	);
+	return [...source.matchAll(defined)].map((m) => m[1]);
+};
 
-/** Every test title in `source` that starts with `<id>:` (`'B3: rejects …'`), as written. */
-const titlesStartingWith = (source, id) => {
-	const quoted = new RegExp(`(['"\`])(${escapeRegExp(id)}:[^'"\`\\n]*)\\1`, "g");
+/** Every test title in `source` that starts with `<id>:` (`'B3: rejects …'`), as written;
+    in a `.py` file, the functions named after the ID instead. */
+const titlesStartingWith = (source, id, path) => {
+	if (isPython(path)) return functionsNamedFor(source, id);
+	const quoted = new RegExp(
+		`(['"\`])(${escapeRegExp(id)}:[^'"\`\\n]*)\\1`,
+		"g",
+	);
 	return [...source.matchAll(quoted)].map((m) => m[2]);
 };
 
@@ -174,10 +224,12 @@ const testsById = (repo, b) =>
 	[...repo.changed]
 		.filter((path) => isTest(path) && repo.tree.has(path))
 		.flatMap((path) =>
-			titlesStartingWith(repo.sourceOf(path) ?? "", b.id).map((title) => ({
-				title,
-				path,
-			})),
+			titlesStartingWith(repo.sourceOf(path) ?? "", b.id, path).map(
+				(title) => ({
+					title,
+					path,
+				}),
+			),
 		);
 
 /** The behavior with its tests: the contract's, or else the ones found by ID. */

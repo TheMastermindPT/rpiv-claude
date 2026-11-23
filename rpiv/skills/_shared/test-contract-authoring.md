@@ -45,7 +45,11 @@ Implementation detail stays out of the approved text: seams, test paths, Expecte
 red reasons, bindings, mutation scopes, commands, run order and cross-references.
 Each behavior's test starts its title with the behavior ID (`B1: rejects an item
 at capacity`), so the slice preflight finds it in the test files the slice
-changed. The implementer writes the expected red reason into the TDD evidence
+changed. A Python test is a function titled `test_<id>_<what>`
+(`test_b1_rejects_empty_item`), which the preflight finds by its `def`; its
+Expected red is a pytest outcome: an `AssertionError`, or an
+`ImportError`/`AttributeError` that names the new symbol the slice adds, never xfail.
+The implementer writes the expected red reason into the TDD evidence
 before the first run.
 
 What reopens approval: adding, removing or changing a behavior or its example.
@@ -78,6 +82,9 @@ lists it as `unchecked`, and `validate-artifact.mjs --finalizing` rejects it in
 the sections being approved: those its `--slice <id>` options name, or without
 them every section no approved copy already holds word for word. Other sections
 only warn, so approved text is never edited to pass.
+In a `.py` file a title is a test function's name, with its classes before it
+(`TestCart::test_b1_x`) and an optional `[case]` id; the preflight checks its
+`def` and `class` lines, never a string.
 `test-contract.mjs` is the one reader of this grammar.
 
 Use the strongest checkable oracle. Justify any genuinely nondeterministic
