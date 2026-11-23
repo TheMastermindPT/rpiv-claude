@@ -188,7 +188,7 @@ describe("OpenCode definition inventory", () => {
 	it("registers every RPIV agent, skill, and namespaced command", () => {
 		const definitions = buildOpenCodeDefinitions(ROOT);
 
-		expect(Object.keys(definitions.agents)).toHaveLength(20);
+		expect(Object.keys(definitions.agents)).toHaveLength(21);
 		expect(definitions.skills).toHaveLength(21);
 		expect(Object.keys(definitions.commands)).toHaveLength(21);
 		expect(definitions.commands["rpiv:plan"].template).toContain("rpiv-plan");

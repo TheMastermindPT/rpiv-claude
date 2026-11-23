@@ -45,6 +45,8 @@ Present the smallest change that addresses the feedback and its effect on scope,
 
 Pending work may split, merge, or reorder while preserving intent IDs. Give newly separated execution slices distinct slice IDs and retain an explicit old-to-new mapping; renumbering display phases must not change identity. For a merge, retain every covered intent ID and its original evidence links. Explain changed dependencies and what becomes invalid rather than silently relabeling old evidence.
 
+In the normal lane, when the revision adds or changes a load-bearing mechanism (the trigger in `dimension-sweep-and-checkpoint.md`), or when a candidate-review blocker tagged `mechanism` in triage is being switched, run its **Mechanism Options** step before agreeing the change, so the fix is chosen among structurally different options rather than patched in place. Revise runs no Approach Check: the rejections this creates go to the revised slice's review as open questions, and the switch counts against the round cap as the shared **Lanes** rules say.
+
 Place unresolved or later detail under `Deferred Work`, with its intent ID, reason, and trigger for refinement. Deferred Work is not a fake executable phase, a completed item, or an excuse to omit the active slice's contract. Keep the next real slice short and agreed; defer implementation detail until that slice is active.
 
 Completion criterion: the human agrees the changed intent and the active slice has the shared behavioral contract, or the unresolved work is explicitly deferred and not executable.

@@ -152,6 +152,7 @@ predecessor; the normal lane means the human-accepted one.
 | Per-slice human acceptance | no | yes |
 | Deep-review depth | light | full |
 | Approach check | no | yes |
+| Mechanism options | no | yes |
 
 A fast slice falls back to a linked worktree when the main working tree has
 uncommitted changes unrelated to the slice; never stash, move, or commit them.
@@ -179,6 +180,13 @@ happens (design, plan or revise); if the rerun still finds a blocker, stop with
 the cap choices below instead of starting another intent round.
 Reopening the approach starts a new 2-round cap for the revised contract; the
 earlier rounds stay in evidence.
+A triage switch to another mechanism (`artifact-review-dispatch.md` section 4) is
+owned by the skill that holds the contract: in an intent review, design or plan
+reopens the affected commitment and reruns **Mechanism Options** itself (no approved
+copy exists yet, so it is not a revise); in a candidate review, it is a revise of the
+active slice and counts as reopening the approach, starting the new cap once. A
+second switch on the same slice is not started: stop and ask the developer with the
+cap choices below.
 After 2 fix rounds, stop and ask the developer with `question`,
 presenting the open findings and the choices: one more fix round, accept the
 post-round fixes as residual risk, pause, or reopen the approach (route the
@@ -315,7 +323,9 @@ branch name. Preserve the chain so final validation can inspect the whole change
    cleanup; preserve other work.
 7. After acceptance (normal) or passing gates (fast), make this exact
    candidate the next predecessor. Continue
-   only within recorded build authority. Detail the next slice just in time;
+   only within recorded build authority. Detail the next slice just in time; in
+   the normal lane, run **Mechanism Options** (`dimension-sweep-and-checkpoint.md`)
+   on it when its trigger fires, before its contract is agreed;
    scope/behavior/permissions or major decision changes need renewed approval.
    Stop on deferred blockers instead of filling them with guesses.
 

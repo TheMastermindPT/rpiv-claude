@@ -94,6 +94,62 @@ Use the grounded-questions-one-at-a-time pattern. Use a **❓ Question:** prefix
 **Scope adjustment** (e.g., "skip the UI, backend only", "include tests"):
 - Record in Developer Context. Adjust scope.
 
+## Mechanism Options (normal lane)
+
+The Approach Check below tests the reasons for options the author already listed; it
+cannot find an option nobody listed. This step looks for them before a mechanism is
+settled, from an agent that was not anchored on the author's answer. It runs wherever a
+slice's contract is settled in the normal lane: design, revise, and implement's
+just-in-time detailing of a later slice. Review triage uses the same agent per blocker
+(`artifact-review-dispatch.md` section 4).
+
+**Trigger.** Run it only when the slice adds or changes a mechanism that:
+(a) decides what reads as broken, clean, skipped or exempt (a classification, a gate
+rule, an exemption);
+(b) owns state or ordering across a process, file or network boundary; or
+(c) fixes an output or format that is persisted or crosses a process boundary.
+Otherwise record `mechanism options: not run (no load-bearing mechanism)`. A choice an
+`explore` solutions document already compared records `mechanism options: not run
+(explored: <path>)`. Not in the fast lane.
+
+1. **One scout per slice.** Pick the slice's most load-bearing triggering mechanism (the
+   one whose failure the most behaviors would show); record each other one as
+   `mechanism options: not run (covered by <mechanism>)`.
+2. **Build the problem packet, never the answer.** The intent and non-goals; the
+   constraints and standing decisions; each affected behavior's exact example; the seam
+   as it is at the slice's base revision (quote it, with `path:line` at that revision);
+   which trigger fired; and a `do not read:` list of the files the candidate or the
+   draft changed. The packet never names the chosen mechanism or quotes Decisions, so
+   `rpiv:mechanism-scout` never sees the chosen mechanism.
+3. **Dispatch one `rpiv:mechanism-scout`** with that packet. It returns `OPTION` rows
+   and `options: <k>`, with `fewer than two real options: <why>` when that is the honest
+   answer, and `anchored: <what it saw>` when the packet or the code showed it the
+   chosen mechanism anyway.
+4. **Compare, then decide with the developer.** Put the author's mechanism beside the
+   options at the checkpoint: which failure cases each one has, and what switching
+   later costs. An option that beats the author's mechanism on a behavior's example is a
+   question for the developer, never a silent swap.
+5. **Record the options not taken as rejections.** Each becomes `D<n>.R<n>` under its
+   decision, with the reason and its failure case; its citation is the option's
+   `fails at:` location, the place the failing input shows the risk. The `grounding:` is
+   context only, because it shows the option working, not the risk. A row with
+   `fails at: n/a` becomes a rejection the Approach Check shows as `ungrounded: no
+   citation`. In design, the Approach Check verifies these rejections; elsewhere they go
+   to the next intent or candidate review as open questions, never as verified facts.
+6. **Keep the states distinct, and show them.** No dispatch possible: `mechanism options:
+   unavailable`. No parseable `options:` line, a count that differs from the `OPTION`
+   rows, or a row without its failure case, `fails at:`, switch cost or grounding:
+   `mechanism options: broken: <what is missing>` — never read as "no alternatives". An
+   `anchored:` line: `mechanism options: anchored: <what it saw>`; its rows are shown
+   but marked as possibly anchored. Every state goes in the checkpoint summary's
+   `Mechanism options:` line and to the intent review beside the Approach check rows.
+   It never blocks by itself; `unavailable`, `broken` and `anchored` are open
+   questions there, never a clean result.
+7. **Save each run on its own.** Write the packet and the raw rows to
+   `.rpiv/evidence/<design-slug>_<topic>/mechanism-options-<slice-id>-<n>.md`, where `<n>`
+   counts this slice's runs, and reference that path from Developer Context. A later
+   run never overwrites an earlier one.
+
 ## Approach Check (design, normal lane)
 
 The checkpoint is where a better approach can still change the outcome, so test the
@@ -141,6 +197,7 @@ Decisions:
 Scope: {what's in} | Not building: {what's out}
 Files: {N} new, {M} modified
 
+Mechanism options (advisory): {OPTION rows with the author's mechanism beside them, or not run (…) / unavailable / broken: … / anchored: …}
 Approach check (advisory): {rows like "D2.R1 Verified — research §5 still shows barging (path:line)", or the not-run / unavailable / broken state}
 ```
 
