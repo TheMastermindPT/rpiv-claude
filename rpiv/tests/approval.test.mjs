@@ -11,6 +11,7 @@ import {
 	readdirSync,
 	readFileSync,
 	rmSync,
+	utimesSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -148,7 +149,9 @@ describe("approval.mjs check", () => {
 		expect(res.status).toBe(0);
 		expect(res.stdout).toContain("approval: keep");
 		expect(hashOf(b.path)).not.toBe(before);
-		expect(readdirSync(b.evidence)).toHaveLength(1);
+		expect(
+			readdirSync(b.evidence).filter((name) => name.endsWith(".md")),
+		).toHaveLength(1);
 	});
 
 	it("asks, showing the changed line, when an approved behavior changes", () => {
@@ -180,5 +183,110 @@ describe("approval.mjs check", () => {
 		const bad = run("approve");
 		expect(bad.status).toBe(2);
 		expect(bad.stderr).toContain("approval: broken:");
+	});
+});
+
+// rpiv issue draft 20261123-163840-6e36ac6d: after a merge two approved copies had file
+// times 1 ms apart and check governed by the older approval. Git keeps no file times, so
+// the order is recorded: a sidecar per copy, else the commit that added the copy.
+describe("approval.mjs picks the latest recorded approval, never by file time", () => {
+	const git = (cwd, args, env = {}) => {
+		const res = spawnSync("git", args, {
+			cwd,
+			encoding: "utf-8",
+			env: { ...process.env, ...env },
+		});
+		if (res.status !== 0) throw new Error(res.stderr);
+		return res.stdout.trim();
+	};
+	const OLD = new Date("2020-01-01T00:00:00Z");
+	const NEW = new Date("2030-01-01T00:00:00Z");
+
+	/** A brief approved twice: copy A, then (after a change beyond the append-only rule)
+	    copy B, which the artifact now equals. Copy A's file time is made the newest. */
+	const approvedTwice = () => {
+		const b = brief();
+		run("record", b.path);
+		const a = join(b.evidence, `approved-${hashOf(b.path)}.md`);
+		writeFileSync(
+			b.path,
+			readFileSync(b.path, "utf-8").replace(
+				"add C -> failure",
+				"add C -> refused",
+			),
+		);
+		run("record", b.path);
+		const second = join(b.evidence, `approved-${hashOf(b.path)}.md`);
+		utimesSync(a, NEW, NEW);
+		utimesSync(second, OLD, OLD);
+		return { ...b, a, b: second };
+	};
+	const governing = (res) =>
+		/^approved copy: (.*)$/m.exec(res.stdout)?.[1]?.trim();
+	const sidecar = (copy) => copy.replace(/\.md$/, ".json");
+
+	it("record writes a sidecar naming the content_hash and when it was recorded", () => {
+		const b = brief();
+		run("record", b.path);
+		const hash = hashOf(b.path);
+		const side = JSON.parse(
+			readFileSync(join(b.evidence, `approved-${hash}.json`), "utf-8"),
+		);
+		expect(side.content_hash).toBe(hash);
+		expect(Number.isNaN(Date.parse(side.recorded_at))).toBe(false);
+	});
+
+	it("governs by the sidecars' recorded_at even when the older copy has the newer file time", () => {
+		const t = approvedTwice();
+		const res = run("check", t.path);
+		expect(res.stdout).toContain("approval: keep");
+		expect(governing(res)).toBe(t.b);
+	});
+
+	it("governs a copy recorded before sidecars by the commit that added it", () => {
+		const t = approvedTwice();
+		for (const copy of [t.a, t.b]) rmSync(sidecar(copy));
+		git(t.home, ["init", "-q", "-b", "main"]);
+		git(t.home, ["config", "user.email", "a@example.invalid"]);
+		git(t.home, ["config", "user.name", "a"]);
+		const commitAt = (path, date) => {
+			git(t.home, ["add", path]);
+			git(t.home, ["commit", "-q", "-m", path], {
+				GIT_AUTHOR_DATE: date,
+				GIT_COMMITTER_DATE: date,
+			});
+		};
+		commitAt(t.a, "2026-01-01T00:00:00Z");
+		commitAt(t.b, "2026-01-02T00:00:00Z");
+		utimesSync(t.a, NEW, NEW);
+		const res = run("check", t.path);
+		expect(res.stdout).toContain("approval: keep");
+		expect(governing(res)).toBe(t.b);
+	});
+
+	it("asks, naming both, when two different copies are equally the latest", () => {
+		const t = approvedTwice();
+		const at = { recorded_at: "2026-11-23T12:00:00.000Z" };
+		for (const copy of [t.a, t.b])
+			writeFileSync(sidecar(copy), JSON.stringify(at));
+		const res = run("check", t.path);
+		expect(res.status).toBe(1);
+		expect(res.stdout).toContain("approval: ask");
+		expect(res.stdout).toContain(
+			"reason: cannot tell which approved copy is the latest:",
+		);
+		expect(res.stdout).toContain(t.a);
+		expect(res.stdout).toContain(t.b);
+	});
+
+	it("is broken, never a verdict, when a sidecar cannot be read", () => {
+		const t = approvedTwice();
+		writeFileSync(sidecar(t.b), "{ not json");
+		const res = run("check", t.path);
+		expect(res.status).toBe(2);
+		expect(res.stdout).toBe("");
+		expect(res.stderr).toContain(
+			"approval: broken: unreadable approval sidecar:",
+		);
 	});
 });

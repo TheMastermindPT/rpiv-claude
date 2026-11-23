@@ -31,7 +31,9 @@ by hand. Whoever records an approval runs
 it validates with `--finalizing`, stamps `content_hash`, and saves the exact file
 as the approved copy, `.rpiv/evidence/<artifact-stem>/approved-<content_hash>.md`;
 the approval names that hash. The latest approved copy of a document governs;
-earlier copies stay history.
+earlier copies stay history. "Latest" is when the copy was recorded: its sidecar
+`approved-<content_hash>.json` (commit it with the copy), else the commit that added
+the copy, never the file's time, which git does not keep.
 
 Before asking the developer to approve a later version, run
 `node "$RPIV_PLUGIN_ROOT/skills/_shared/approval.mjs" check <artifact>`.

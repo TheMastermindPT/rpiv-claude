@@ -47,10 +47,15 @@
 // the copy does not take is named (`diagnostic: production test folder not copied:`), a
 // folder replaced by a file is written as the file, and `--link` targets are placed by
 // real paths. Outside a Python run the copy, the header and `{tests}` stay as they were.
+// A call that names tests (S3 report, rpiv issue draft 20261123-174308-8fd52ed1) keeps its
+// own log and report, named with a short hash of the named tests; in a Python run its
+// `{tests}` is only the named tests' pytest node ids. When the run is red while a named
+// test passed or was skipped, a `diagnostic:` line says the red came from the whole run.
 //
 // Importable: exitCodeOf.
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
 	closeSync,
 	existsSync,
@@ -833,6 +838,49 @@ const rerun = ({ top, place, build, links, python, run }) => {
 	}
 };
 
+/** The log and report path stem, under the git dir: one per commit, plus the base when
+    `--base` names one, plus a short hash of the named tests when there are any, so two
+    calls naming different tests on one pair never share a log (rpiv issue draft
+    20261123-174308-8fd52ed1). */
+const outputOf = (cwd, { commit, base, baseRev, named }) => {
+	const pair = baseRev === undefined ? commit : `${commit}-${base}`;
+	const ids = named.map(({ id }) => id).sort();
+	const suffix = ids.length
+		? `-${createHash("sha256").update(ids.join("\n")).digest("hex").slice(0, 8)}`
+		: "";
+	const stem = `rpiv/reprove-red/${pair}${suffix}`;
+	return resolve(cwd, gitIn(cwd, ["rev-parse", "--git-path", stem]).trim());
+};
+
+/** What `{tests}` expands to, relative to the caller's folder: the plan's tests; in a
+    Python run that names tests, only those tests as pytest node ids (`<path>::<name>`), so
+    the run, its report and its run line cover what was named. */
+const selectionOf = (planTests, named, { place, python }) => {
+	const fromCwd = (path) =>
+		relative(place.cwd, join(place.top, path)).replace(/\\/g, "/");
+	if (!python || named.length === 0) return planTests.map(fromCwd);
+	return [
+		...new Set(named.map(({ path, name }) => `${fromCwd(path)}::${name}`)),
+	];
+};
+
+const PASSED_OR_SKIPPED = /^test-result: (?:passed|skipped) (.*)$/;
+
+/** A `diagnostic:` line when the run is red but a named test passed or was skipped: the
+    run line is the whole run's, so that red came from other tests and the named test is
+    not re-proved red (rpiv issue draft 20261123-174308-8fd52ed1). */
+const redElsewhere = (results, runLine) => {
+	if (runLine !== "result: red") return [];
+	const notRed = results
+		.map((line) => PASSED_OR_SKIPPED.exec(line)?.[1])
+		.filter(Boolean);
+	return notRed.length
+		? [
+				`diagnostic: result: red is the whole run's; these named tests passed or were skipped, so they are not re-proved red: ${notRed.join(", ")}`,
+			]
+		: [];
+};
+
 /** The places (placesOf) and the checked links of a run. A Python run checks and places
     links by real paths, like its run folder (D29). The run folder is the caller's folder
     inside the scratch copy, so a caller outside the top folder (a junction to it, outside
@@ -874,26 +922,16 @@ const runCli = (argv, cwd) => {
 	}
 	const plan = copyPlan(changes, sliced, language === "python");
 	const header = [`reprove-red: ${commit}`, `base: ${base}`, ...plan.lines];
-	// The log and the report stay under the git dir; a run on another base keeps its own.
-	const output = resolve(
-		cwd,
-		gitIn(cwd, [
-			"rev-parse",
-			"--git-path",
-			`rpiv/reprove-red/${baseRev === undefined ? commit : `${commit}-${base}`}`,
-		]).trim(),
-	);
+	const output = outputOf(cwd, { commit, base, baseRev, named });
 	const python = language === "python";
 	const { place, links } = checkedPlaces({ top, cwd, python, linkArgs });
 	if (tests.length === 0) return lines([...header, "result: no-tests"]);
 	mkdirSync(dirname(output), { recursive: true });
 	const log = `${output}.log`;
 	const junit = `${output}.junit.xml`;
-	const testsFromCwd = plan.tests.map((path) =>
-		relative(place.cwd, join(place.top, path)).replace(/\\/g, "/"),
-	);
+	const selected = selectionOf(plan.tests, named, { place, python });
 	const args = command.flatMap((arg) =>
-		arg === "{tests}" ? testsFromCwd : [arg.split("{junit}").join(junit)],
+		arg === "{tests}" ? selected : [arg.split("{junit}").join(junit)],
 	);
 	rmSync(junit, { force: true }); // a report from an earlier run is never read
 	const { code, verdict } = rerun({
@@ -908,13 +946,16 @@ const runCli = (argv, cwd) => {
 	// The guard's line wins over pytest's in a Python run (S2-scratch-copy).
 	const runLine =
 		verdict ?? runLineOf(code, { python, promisesReport, report });
+	const results =
+		named.length > 0
+			? reportLines(junit, report, named, runLine.startsWith("result: broken:"))
+			: [];
 	return lines([
 		...header,
 		`exit: ${code}`,
 		`log: ${log}`,
-		...(named.length > 0
-			? reportLines(junit, report, named, runLine.startsWith("result: broken:"))
-			: []),
+		...results,
+		...redElsewhere(results, runLine),
 		runLine,
 	]);
 };

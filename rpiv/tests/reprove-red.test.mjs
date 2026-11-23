@@ -4,6 +4,7 @@
 // The CLI is spawned in throwaway git repositories under the OS temp folder.
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
 	existsSync,
 	lstatSync,
@@ -84,6 +85,10 @@ const runHelper = (args, cwd) => {
 const gitPath = (repo, path) =>
 	resolve(repo, git(repo, "rev-parse", "--git-path", path));
 const scratchOf = (repo, sha) => gitPath(repo, `rpiv/reprove-red/${sha}`);
+/** The log/report stem of a call naming `ids` on `pair` (`<commit>` or `<commit>-<base>`):
+    the pair plus the first 8 hex of the sha256 of the sorted ids, one per line. */
+const namedStem = (repo, pair, ids) =>
+	`${scratchOf(repo, pair)}-${createHash("sha256").update([...ids].sort().join(String.fromCharCode(10))).digest("hex").slice(0, 8)}`;
 
 /** What "the checkout is untouched" compares. */
 const snapshot = (repo) => ({
@@ -660,7 +665,6 @@ second line</failure>
 				'<testsuites><testsuite name="x"><testcase classname="tests/a.test.mjs" name="grp &gt; passes"></testcase>',
 			);
 			const slice = commitAll(repo, "slice");
-			const junit = gitPath(repo, `rpiv/reprove-red/${slice}.junit.xml`);
 			const named = [
 				"tests/a.test.mjs::fails a check",
 				"tests/a.test.mjs::grp > passes",
@@ -676,7 +680,7 @@ second line</failure>
 			const run = reportRun(repo, slice, named, "tests/fixtures/report.xml");
 
 			expect(run.status).toBe(0);
-			const from = run.lines.indexOf(`report: ${junit}`);
+			const from = run.lines.indexOf(`report: ${namedStem(repo, slice, named)}.junit.xml`);
 			expect(from).toBeGreaterThan(-1);
 			expect(run.lines.slice(from + 1)).toEqual([
 				"test-result: failed tests/a.test.mjs::fails a check",
@@ -691,10 +695,11 @@ second line</failure>
 				"test-result: failed-to-load tests/load.test.mjs::never runs",
 				"reason: tests/load.test.mjs::never runs: Cannot find module '../src/missing.mjs' imported from x",
 				"test-result: not-found tests/b.test.mjs::passes",
+				"diagnostic: result: red is the whole run's; these named tests passed or were skipped, so they are not re-proved red: tests/a.test.mjs::grp > passes, tests/a.test.mjs::passes, tests/a.test.mjs::skipped one",
 				"result: red",
 			]);
 
-			put(dirname(junit), `${slice}.junit.xml`, REPORT);
+			put(dirname(scratchOf(repo, slice)), `${slice}.junit.xml`, REPORT);
 			const missing = runHelper(
 				[
 					"--commit",
@@ -896,13 +901,13 @@ describe("re-proving red at another revision and parameterised titles (S19)", ()
 			expect(atSeven.lines.filter((line) => line.startsWith("test: "))).toEqual(["test: tests/sum.test.mjs"]);
 			expect(atSeven.lines).toContain(`test-result: failed ${id}`);
 			expect(atSeven.lines).toContain(`reason: ${id}: got 7`);
-			expect(logOf(atSeven)).toBe(`log: ${scratchOf(repo, `${slice}-${seven}`)}.log`);
+			expect(logOf(atSeven)).toBe(`log: ${namedStem(repo, `${slice}-${seven}`, [id])}.log`);
 			expect(lastLine(atSeven.lines)).toBe("result: red");
 
 			const atParent = call();
 			expect(atParent.lines[1]).toBe(`base: ${base}`);
 			expect(atParent.lines).toContain(`reason: ${id}: got 0`);
-			expect(logOf(atParent)).toBe(`log: ${scratchOf(repo, slice)}.log`);
+			expect(logOf(atParent)).toBe(`log: ${namedStem(repo, slice, [id])}.log`);
 			expect(lastLine(atParent.lines)).toBe("result: red");
 
 			const atGood = call(good);
@@ -1039,6 +1044,7 @@ process.exit(1);
 				"test-result: failed-to-load tests/l.test.mjs::%s",
 				"reason: tests/l.test.mjs::%s: cannot load",
 				"test-result: passed tests/t.test.mjs::b %s",
+				"diagnostic: result: red is the whole run's; these named tests passed or were skipped, so they are not re-proved red: tests/t.test.mjs::b %s",
 				"result: red",
 			]);
 		},
