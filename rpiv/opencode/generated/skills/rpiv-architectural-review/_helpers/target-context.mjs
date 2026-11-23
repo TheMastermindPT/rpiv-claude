@@ -6,8 +6,8 @@
 // Importable: toPosix, safeGit, resolveTarget, relOf, underTarget.
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
+import { findProjectRoot } from "../../_shared/project-root.mjs";
 
 export const toPosix = (p) => p.replaceAll("\\", "/");
 
@@ -26,19 +26,9 @@ export const safeGit = (args, fb = "") => {
 	}
 };
 
-// Nearest package.json at/above the target, bounded by the git toplevel — the project
-// root (reports/, coverage/ live here), which is not the git root when nested.
-// Module-private: consumers go through resolveTarget().
-const findProjectRoot = (startAbs, top) => {
-	let dir = startAbs;
-	for (;;) {
-		if (existsSync(join(dir, "package.json"))) return toPosix(dir);
-		if (toPosix(dir) === top) return top;
-		const parent = dirname(dir);
-		if (parent === dir) return top;
-		dir = parent;
-	}
-};
+// The project root (reports/, coverage/ live here) is findProjectRoot's
+// (_shared/project-root.mjs): the nearest package.json or pyproject.toml at or above the
+// target, bounded by the git toplevel. Consumers go through resolveTarget().
 
 export const relOf = (k, cwd) => {
 	const p = toPosix(k);
