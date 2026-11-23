@@ -29,13 +29,12 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { ENVY_MIN_REFS, ENVY_MIN_RATIO, isFixture, isTest } from "./source-set.mjs";
+import { ENVY_MIN_BEH, ENVY_MIN_REFS, ENVY_MIN_RATIO, isFixture, isTest } from "./source-set.mjs";
 import { safeGit, toPosix } from "./target-context.mjs";
 import { findProjectRoot } from "../../_shared/project-root.mjs";
 
 const SEMANTIC_MAX_FILES = 4000; // skip programs larger than this (degrade to regex)
 const SEMANTIC_REF_EXAMINE_CAP = 1200; // cap exports examined for dead-code (findReferences is the hot path)
-const ENVY_MIN_BEH = 3; // Fe: require at least this many BEHAVIORAL refs to the envied module
 const TYPE_MIN_PROPS = 3; // C: ignore trivial shapes (< 3 props, e.g. {id:string}) — FP guard
 const TYPE_EXAMINE_CAP = 2000; // C: bound the type-shape scan (AST-only, cheap)
 const PROJ_MIN_PROPS = 8; // M/D: object-literal projections below this are config-object noise

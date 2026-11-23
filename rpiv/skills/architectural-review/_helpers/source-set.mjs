@@ -7,7 +7,7 @@
 // Importable-only: no CLI, no isMain.
 //
 // Importable: SOURCE_EXT, isSource, isTest, isFixture, isTestTree, TEST_EXCLUDE_RE,
-//             ENVY_MIN_REFS, ENVY_MIN_RATIO.
+//             ENVY_MIN_REFS, ENVY_MIN_RATIO, ENVY_MIN_BEH.
 
 export {
 	SOURCE_EXT,
@@ -20,4 +20,5 @@ export {
 } from "../../_shared/source-vocab.mjs";
 
 export const ENVY_MIN_REFS = 5; // Fe: a module must be referenced at least this many times to count
+export const ENVY_MIN_BEH = 3; // Fe (semantic.mjs, python-semantic.mjs): behavioral refs to the envied module
 export const ENVY_MIN_RATIO = 0.6; // Fe: external refs / (external + own) must clear this
