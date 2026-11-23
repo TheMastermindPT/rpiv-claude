@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="1" failures="0" skipped="0" tests="1" time="0.169" timestamp="2026-11-22T18:22:28.475164+00:00" hostname="&lt;host&gt;"><testcase classname="" name="tests.test_broken" time="0.000"><error message="collection failure">ImportError while importing test module '&lt;root&gt;\tests\test_broken.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+&lt;python&gt;\Lib\importlib\__init__.py:88: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests\test_broken.py:3: in &lt;module&gt;
+    from demo import missing
+E   ImportError: cannot import name 'missing' from 'demo' (&lt;root&gt;\src\demo\__init__.py)</error></testcase></testsuite></testsuites>

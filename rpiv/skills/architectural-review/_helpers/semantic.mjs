@@ -29,12 +29,12 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { ENVY_MIN_REFS, ENVY_MIN_RATIO, isFixture, isTest } from "./source-set.mjs";
+import { ENVY_MIN_BEH, ENVY_MIN_REFS, ENVY_MIN_RATIO, isFixture, isTest } from "./source-set.mjs";
 import { safeGit, toPosix } from "./target-context.mjs";
+import { findProjectRoot } from "../../_shared/project-root.mjs";
 
 const SEMANTIC_MAX_FILES = 4000; // skip programs larger than this (degrade to regex)
 const SEMANTIC_REF_EXAMINE_CAP = 1200; // cap exports examined for dead-code (findReferences is the hot path)
-const ENVY_MIN_BEH = 3; // Fe: require at least this many BEHAVIORAL refs to the envied module
 const TYPE_MIN_PROPS = 3; // C: ignore trivial shapes (< 3 props, e.g. {id:string}) — FP guard
 const TYPE_EXAMINE_CAP = 2000; // C: bound the type-shape scan (AST-only, cheap)
 const PROJ_MIN_PROPS = 8; // M/D: object-literal projections below this are config-object noise
@@ -114,22 +114,12 @@ const findTsconfig = () => {
 const tsConfigFilePath = findTsconfig();
 if (!tsConfigFilePath) status("unavailable: no tsconfig.json found at or above the target");
 
-// Project root = nearest package.json at/above the target (bounded by the git
-// toplevel), so knip / node_modules / package.json detection works when the
-// project is nested under the repo (our rpiv/, a monorepo package). tsconfig
-// discovery already walks up via findTsconfig; this covers the other configs.
-const findProjectRoot = () => {
-	let dir = isDir(targetAbs) ? targetAbs : dirname(targetAbs);
-	for (let guard = 0; guard < 100; guard += 1) {
-		if (existsSync(join(dir, "package.json"))) return toPosix(dir);
-		if (toPosix(dir) === root) break;
-		const parent = dirname(dir);
-		if (parent === dir) break;
-		dir = parent;
-	}
-	return root;
-};
-const projectRoot = findProjectRoot();
+// Project root = nearest package.json or pyproject.toml at/above the target (bounded by
+// the git toplevel; findProjectRoot, _shared/project-root.mjs), so knip / node_modules /
+// package.json detection works when the project is nested under the repo (our rpiv/, a
+// monorepo package). tsconfig discovery already walks up via findTsconfig; this covers
+// the other configs.
+const projectRoot = findProjectRoot(isDir(targetAbs) ? targetAbs : dirname(targetAbs), root);
 
 // --- Load the program (bounded) ---------------------------------------------
 let project;

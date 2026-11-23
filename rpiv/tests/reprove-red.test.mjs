@@ -1126,3 +1126,633 @@ describe("re-proving a slice of several commits from its base", () => {
 		TEST_TIMEOUT,
 	);
 });
+
+// S1-pytest-report (.rpiv/artifacts/designs/2026-11-22_14-04-13_python-project-support.md):
+// reprove-red reads pytest's JUnit report and exit codes. The runner is a node stand-in
+// for pytest, so these tests need no Python; the captured reports are real pytest 9.2.0
+// output (tests/fixtures/pytest-sample/CAPTURE.md).
+describe("pytest reports and exit codes (S1-pytest-report)", () => {
+	const SAMPLE = join(ROOT, "tests/fixtures/pytest-sample/junit");
+	const OK_XML = join(SAMPLE, "ok.xml");
+	const COLLECTION_ERROR_XML = join(SAMPLE, "collection-error.xml");
+	const NO_TESTS_XML = join(SAMPLE, "no-tests.xml");
+
+	// The pytest stand-in: `--copy <src>` copies a report to the `--junitxml=` path,
+	// `--write <text>` writes text there, `--marker <file>` records every argument and
+	// whether it exists in the working folder (plus `["probe", <exists>]` for a
+	// `--probe=<path>` argument), `--code <n>` is the exit code. In a Python run it writes
+	// one complete clean import record into the guard folder first on its PYTHONPATH
+	// (D12 of S2-scratch-copy).
+	const FAKE_PYTEST = `import { copyFileSync, existsSync, writeFileSync } from "node:fs";
+import { delimiter, join } from "node:path";
+const guard = (process.env.PYTHONPATH ?? "").split(delimiter)[0];
+if (guard && existsSync(join(guard, "records"))) {
+	const lines = ["start: 10", "package: " + guard, "module: " + join(process.cwd(), "fake.mjs"), "end: 10"];
+	writeFileSync(join(guard, "records", "clean"), lines.join("\\n") + "\\n");
+}
+const args = process.argv.slice(2);
+const opt = (name) => {
+	const at = args.indexOf(name);
+	return at < 0 ? undefined : args[at + 1];
+};
+const report = args.find((arg) => arg.startsWith("--junitxml="))?.slice(11);
+if (opt("--copy") && report) copyFileSync(opt("--copy"), report);
+if (opt("--write") && report) writeFileSync(report, opt("--write"));
+const probe = args.find((arg) => arg.startsWith("--probe="))?.slice(8);
+if (opt("--marker")) {
+	const seen = args.map((arg) => [arg, existsSync(arg)]);
+	if (probe) seen.push(["probe", existsSync(probe)]);
+	writeFileSync(opt("--marker"), JSON.stringify(seen));
+}
+process.exit(Number(opt("--code")));
+`;
+
+	/** A repository whose base holds the stand-in, and a slice commit adding `files`. */
+	const sliceRepo = (files) => {
+		const repo = newRepo();
+		put(repo, "fake.mjs", FAKE_PYTEST);
+		commitAll(repo, "base");
+		for (const path of files) put(repo, path, "# test data\n");
+		return { repo, slice: commitAll(repo, "slice") };
+	};
+
+	/** The helper on `slice`, one `--test` per name, the stand-in given `runner` args. */
+	const pyRun = (repo, slice, { names = [], runner }) =>
+		runHelper(
+			[
+				"--commit",
+				slice,
+				...names.flatMap((name) => ["--test", name]),
+				"--",
+				NODE,
+				"fake.mjs",
+				...runner,
+			],
+			repo,
+		);
+
+	/** A hand-written report in a temp folder; returns its absolute path. */
+	const handReport = (cases) => {
+		const path = join(tempDir(), "report.xml");
+		writeFileSync(
+			path,
+			`<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest">${cases}</testsuite></testsuites>`,
+		);
+		return path;
+	};
+
+	/** The `test-result:`/`reason:` lines of a run. */
+	const resultLines = (run) =>
+		run.lines.filter(
+			(line) => line.startsWith("test-result: ") || line.startsWith("reason: "),
+		);
+
+	it(
+		"B5: the run line of a Python run follows the pytest exit code, and exit 1 with no readable report is broken",
+		() => {
+			const { repo, slice } = sliceRepo(["tests/test_ok.py"]);
+			for (const [code, want] of [
+				[0, "result: green"],
+				[1, "result: red"],
+				[5, "result: no-tests"],
+				[2, "result: broken: exit 2 (pytest: collection error or interrupted)"],
+				[3, "result: broken: exit 3 (pytest: internal error)"],
+				[4, "result: broken: exit 4 (pytest: usage error)"],
+				[7, "result: broken: exit 7 (pytest: unknown exit code)"],
+			]) {
+				const run = pyRun(repo, slice, {
+					runner: ["--copy", OK_XML, "--junitxml={junit}", "--code", String(code)],
+				});
+				expect.soft(run.status, `exit ${code}`).toBe(0);
+				expect.soft(run.lines, `exit ${code}`).toContain(`exit: ${code}`);
+				expect.soft(lastLine(run.lines), `exit ${code}`).toBe(want);
+			}
+
+			const NO_REPORT = "result: broken: exit 1 (pytest: no readable report)";
+			const noReport = pyRun(repo, slice, {
+				runner: ["--junitxml={junit}", "--code", "1"],
+			});
+			expect.soft(noReport.status).toBe(0);
+			expect.soft(lastLine(noReport.lines)).toBe(NO_REPORT);
+			const notXml = pyRun(repo, slice, {
+				runner: ["--write", "not xml", "--junitxml={junit}", "--code", "1"],
+			});
+			expect.soft(lastLine(notXml.lines)).toBe(NO_REPORT);
+			const noJunitArg = pyRun(repo, slice, { runner: ["--code", "1"] });
+			expect.soft(lastLine(noJunitArg.lines)).toBe("result: red");
+
+			const id = "tests/test_ok.py::test_b1_add";
+			const titledMissing = pyRun(repo, slice, {
+				names: [id],
+				runner: ["--junitxml={junit}", "--code", "1"],
+			});
+			expect.soft(titledMissing.status).toBe(0);
+			expect.soft(titledMissing.lines).toContain("report: missing");
+			expect.soft(titledMissing.lines).toContain(`test-result: unavailable ${id}`);
+			expect.soft(lastLine(titledMissing.lines)).toBe(NO_REPORT);
+			const titledNotXml = pyRun(repo, slice, {
+				names: [id],
+				runner: ["--write", "not xml", "--junitxml={junit}", "--code", "1"],
+			});
+			expect.soft(titledNotXml.status).toBe(0);
+			expect.soft(hasLineStarting(titledNotXml.lines, "report: broken: ")).toBe(true);
+			expect.soft(titledNotXml.lines).toContain(`test-result: unavailable ${id}`);
+			expect.soft(lastLine(titledNotXml.lines)).toBe(NO_REPORT);
+		},
+		TEST_TIMEOUT,
+	);
+	it(
+		"B7: Python and non-Python runner tests make a broken call; test data, uncounted files and JS extensions do not",
+		() => {
+			const MIXED =
+				"reprove-red: broken: tests in Python and another language need one run per runner";
+			const BROKEN_2 = "result: broken: exit 2 (pytest: collection error or interrupted)";
+			// [changed files, runner exit, last line or MIXED, a path the marker must list as
+			// existing, a path that must exist in the scratch copy but not be an argument (D14)]
+			const ROWS = [
+				[["tests/test_ok.py", "tests/a.test.mjs"], 1, MIXED],
+				[["tests/foo_test.py", "tests/a.test.mjs"], 1, MIXED],
+				[
+					["tests/a.test.mjs", "tests/fixtures/py/tests/test_ok.py"],
+					2,
+					"result: red",
+					"tests/fixtures/py/tests/test_ok.py",
+				],
+				[["tests/e2e/test_login.py"], 2, BROKEN_2],
+				[["testing/test_x.py"], 2, BROKEN_2],
+				[["tests/foo_test.py"], 2, BROKEN_2],
+				[["tests/foo_tests.py"], 2, BROKEN_2],
+				[["tests/x.test.py"], 2, BROKEN_2],
+				[["src/test/resources/helper.py"], 2, "result: red"],
+				[["src/test/java/FooTest.java", "src/test/resources/helper.py"], 2, "result: red"],
+				[["tests/test_api.py", "docker-compose.test.yml"], 2, BROKEN_2],
+				// S2-scratch-copy, D14: the `.mjs` test data is copied, no longer an argument.
+				[
+					["tests/test_ok.py", "tests/fixtures/js/a.test.mjs"],
+					2,
+					BROKEN_2,
+					undefined,
+					"tests/fixtures/js/a.test.mjs",
+				],
+				[["tests/test_ok.py", "tests/fixtures/golden.json"], 2, BROKEN_2],
+				[["tests/a.test.ts", "tests/b.test.tsx", "tests/c.test.mjs"], 1, "result: red"],
+				// A Python test beside changed files the count leaves out stays a Python run.
+				[["tests/test_ok.py", "src/test/resources/helper.py"], 2, BROKEN_2],
+				[["tests/test_ok.py", "src/app.mjs"], 2, BROKEN_2],
+				[["tests/test_ok.py", "tests/e2e/helper.mjs"], 2, BROKEN_2],
+			];
+			for (const [files, code, want, listed, copiedOnly] of ROWS) {
+				const label = files.join(" + ");
+				const { repo, slice } = sliceRepo(files);
+				const marker = join(tempDir(), "marker.json");
+				const probe = copiedOnly === undefined ? [] : [`--probe=${copiedOnly}`];
+				const run = pyRun(repo, slice, {
+					runner: ["--marker", marker, "{tests}", "--code", String(code), ...probe],
+				});
+				if (want === MIXED) {
+					expect.soft(run.status, label).toBe(2);
+					expect.soft(run.stdout, label).toBe("");
+					expect.soft(run.stderr.split(/\r?\n/)[0], label).toBe(MIXED);
+					expect.soft(existsSync(marker), label).toBe(false);
+					continue;
+				}
+				expect.soft(run.status, label).toBe(0);
+				expect.soft(lastLine(run.lines), label).toBe(want);
+				expect.soft(existsSync(marker), label).toBe(true);
+				if (listed !== undefined && existsSync(marker)) {
+					expect
+						.soft(JSON.parse(readFileSync(marker, "utf-8")), label)
+						.toContainEqual([listed, true]);
+				}
+				if (copiedOnly !== undefined && existsSync(marker)) {
+					const seen = JSON.parse(readFileSync(marker, "utf-8"));
+					expect.soft(seen, label).toContainEqual(["probe", true]);
+					expect
+						.soft(seen.map(([arg]) => arg), label)
+						.not.toContain(copiedOnly);
+				}
+			}
+		},
+		TEST_TIMEOUT,
+	);
+	/** One hand-written pytest record; `fault` is `failure:<message>` or omitted. */
+	const rec = (classname, name, fault) =>
+		`<testcase classname="${classname}" name="${name}">${
+			fault === undefined ? "" : `<failure message="${fault}"/>`
+		}</testcase>`;
+
+	/** The result lines for `names` on a Python slice whose runner copies `report`, exit 1. */
+	const namedRun = (names, report, files = ["tests/test_ok.py"]) => {
+		const { repo, slice } = sliceRepo(files);
+		return pyRun(repo, slice, {
+			names,
+			runner: ["--copy", report, "--junitxml={junit}", "--code", "1"],
+		});
+	};
+
+	it(
+		"B1: a named .py test is found by its dotted classname, file path and function, with or without classes",
+		() => {
+			const reportA = handReport(
+				[
+					rec("tests.test_ok", "test_b1_add", "assert 1 == 2"),
+					rec("other.tests.test_ok", "test_b1_add"),
+					rec("tests.test_okay", "test_b1_add"),
+					rec("src.pkg.test_mod", "test_b1_mod", "boom"),
+				].join(""),
+			);
+			const a = namedRun(
+				[
+					"tests/test_ok.py::test_b1_add",
+					"tests/test_ok.py::test_b1_ad",
+					"src/pkg/test_mod.py::test_b1_mod",
+					"tests\\test_ok.py::test_b1_add",
+				],
+				reportA,
+			);
+			expect.soft(resultLines(a)).toEqual([
+				"test-result: failed tests/test_ok.py::test_b1_add",
+				"reason: tests/test_ok.py::test_b1_add: assert 1 == 2",
+				"test-result: not-found tests/test_ok.py::test_b1_ad",
+				"test-result: failed src/pkg/test_mod.py::test_b1_mod",
+				"reason: src/pkg/test_mod.py::test_b1_mod: boom",
+				"test-result: failed tests\\test_ok.py::test_b1_add",
+				"reason: tests\\test_ok.py::test_b1_add: assert 1 == 2",
+			]);
+
+			const reportB = handReport(
+				[
+					rec("tests.test_ok.TestBar", "test_b3_method"),
+					rec("tests.test_ok.TestBar.Inner", "test_b3_method", "inner"),
+					rec("tests.test_ok.TestBarX", "test_b3_method", "x"),
+				].join(""),
+			);
+			const b = namedRun(
+				[
+					"tests/test_ok.py::TestBar::test_b3_method",
+					"tests/test_ok.py::TestBar::Inner::test_b3_method",
+					"tests/test_ok.py::OtherClass::test_b3_method",
+					"tests/test_ok.py::test_b3_method",
+				],
+				reportB,
+			);
+			expect.soft(resultLines(b)).toEqual([
+				"test-result: passed tests/test_ok.py::TestBar::test_b3_method",
+				"test-result: failed tests/test_ok.py::TestBar::Inner::test_b3_method",
+				"reason: tests/test_ok.py::TestBar::Inner::test_b3_method: inner",
+				"test-result: not-found tests/test_ok.py::OtherClass::test_b3_method",
+				"test-result: mixed tests/test_ok.py::test_b3_method",
+			]);
+
+			const reportC = handReport(
+				[
+					rec("tests.test_ok.TestBar", "test_b3_p[1]", "p1"),
+					rec("tests.test_ok.TestBar", "test_b3_p[2]", "p2"),
+					rec("tests.test_ok.TestBar", "test_b3_q[1]"),
+					rec("tests.test_ok.TestBar", "test_b3_q[2]", "q2"),
+				].join(""),
+			);
+			const c = namedRun(
+				[
+					"tests/test_ok.py::TestBar::test_b3_p",
+					"tests/test_ok.py::TestBar::test_b3_p[2]",
+					"tests/test_ok.py::TestBar::test_b3_q",
+				],
+				reportC,
+			);
+			expect.soft(resultLines(c)).toEqual([
+				"test-result: failed tests/test_ok.py::TestBar::test_b3_p",
+				"reason: tests/test_ok.py::TestBar::test_b3_p: p1",
+				"test-result: failed tests/test_ok.py::TestBar::test_b3_p[2]",
+				"reason: tests/test_ok.py::TestBar::test_b3_p[2]: p2",
+				"test-result: mixed tests/test_ok.py::TestBar::test_b3_q",
+			]);
+
+			// Matching is chosen per named test, even in a run that is not a Python run.
+			const helper = namedRun(
+				["src/test/resources/helper.py::test_b1_h"],
+				handReport(rec("src.test.resources.helper", "test_b1_h", "boom")),
+				["src/test/resources/helper.py"],
+			);
+			expect.soft(resultLines(helper)).toEqual([
+				"test-result: failed src/test/resources/helper.py::test_b1_h",
+				"reason: src/test/resources/helper.py::test_b1_h: boom",
+			]);
+			expect.soft(lastLine(helper.lines)).toBe("result: red");
+		},
+		TEST_TIMEOUT,
+	);
+	it(
+		"B2: a base name covers every parametrize case; a case id covers only that case, read literally",
+		() => {
+			const CASES = ["1", "a/b", "c::d", "[e]"];
+			const paramRecords = (passing) =>
+				CASES.map((id, i) =>
+					rec(
+						"tests.test_ok",
+						`test_b2_param[${id}]`,
+						i === passing ? undefined : `assert ${i}`,
+					),
+				).join("");
+			const others = [
+				rec("tests.test_ok", "test_b2_param_extra"),
+				rec("tests.test_ok", "test_b2_parameter[1]"),
+				rec("tests.test_ok", "test_b2_cur[$usd]", "usd"),
+				rec("tests.test_ok", "test_b2_cur[eur]"),
+			].join("");
+			const run = namedRun(
+				[
+					"tests/test_ok.py::test_b2_param",
+					"tests/test_ok.py::test_b2_param[c::d]",
+					"tests/test_ok.py::test_b2_param[9]",
+					"tests/test_ok.py::test_b2_cur[$usd]",
+					"tests/test_ok.py::test_b2_cur",
+				],
+				handReport(paramRecords(-1) + others),
+			);
+			expect.soft(resultLines(run)).toEqual([
+				"test-result: failed tests/test_ok.py::test_b2_param",
+				"reason: tests/test_ok.py::test_b2_param: assert 0",
+				"test-result: failed tests/test_ok.py::test_b2_param[c::d]",
+				"reason: tests/test_ok.py::test_b2_param[c::d]: assert 2",
+				"test-result: not-found tests/test_ok.py::test_b2_param[9]",
+				"test-result: failed tests/test_ok.py::test_b2_cur[$usd]",
+				"reason: tests/test_ok.py::test_b2_cur[$usd]: usd",
+				"test-result: mixed tests/test_ok.py::test_b2_cur",
+			]);
+			for (const passing of [0, 1, 2, 3]) {
+				const variant = namedRun(
+					["tests/test_ok.py::test_b2_param"],
+					handReport(paramRecords(passing) + others),
+				);
+				expect
+					.soft(resultLines(variant), `case ${CASES[passing]} passes`)
+					.toEqual(["test-result: mixed tests/test_ok.py::test_b2_param"]);
+			}
+		},
+		TEST_TIMEOUT,
+	);
+	it(
+		"B3: a pytest collection error is failed-to-load for every named test in its file, with its last E line as the reason",
+		() => {
+			const loadRecord = (body) =>
+				`<testcase classname="" name="tests.test_broken" time="0.000"><error message="collection failure">${body}</error></testcase>`;
+			const X = "tests/test_broken.py::test_b3_x";
+			const Y = "tests/test_broken.py::TestX::test_b3_y";
+
+			const importError = namedRun(
+				[X, Y, "tests/test_broken_more.py::test_b3_x"],
+				handReport(
+					loadRecord(
+						[
+							"ImportError while importing test module &apos;&lt;root&gt;/tests/test_broken.py&apos;.",
+							"Traceback:",
+							"tests/test_broken.py:3: in &lt;module&gt;",
+							"    from demo import missing",
+							"E   ImportError: cannot import name &apos;missing&apos; from &apos;demo&apos; (&lt;root&gt;/src/demo/__init__.py)",
+						].join("\n"),
+					),
+				),
+			);
+			const IMPORT_REASON =
+				"ImportError: cannot import name 'missing' from 'demo' (<root>/src/demo/__init__.py)";
+			expect.soft(resultLines(importError)).toEqual([
+				`test-result: failed-to-load ${X}`,
+				`reason: ${X}: ${IMPORT_REASON}`,
+				`test-result: failed-to-load ${Y}`,
+				`reason: ${Y}: ${IMPORT_REASON}`,
+				"test-result: not-found tests/test_broken_more.py::test_b3_x",
+			]);
+
+			const SYNTAX = [
+				'E     File "tests/test_broken.py", line 1',
+				"E:\\Python\\Lib\\importlib\\__init__.py:90: in import_module",
+				"E   SyntaxError: invalid syntax",
+				"E",
+			];
+			const syntax = namedRun([X], handReport(loadRecord(SYNTAX.join("\n"))));
+			expect.soft(resultLines(syntax)).toEqual([
+				`test-result: failed-to-load ${X}`,
+				`reason: ${X}: SyntaxError: invalid syntax`,
+			]);
+
+			const crlf = namedRun(
+				[X],
+				handReport(loadRecord(`${SYNTAX.join("\r\n")}\r\n`)),
+			);
+			expect.soft(resultLines(crlf)).toEqual([
+				`test-result: failed-to-load ${X}`,
+				`reason: ${X}: SyntaxError: invalid syntax`,
+			]);
+			expect.soft(crlf.stdout).toContain(`reason: ${X}: SyntaxError: invalid syntax\n`);
+			expect.soft(crlf.stdout).not.toContain("\r");
+
+			const noMarker = namedRun(
+				[X],
+				handReport(
+					loadRecord(
+						["", "  ", "import file mismatch:", "imported module has this __file__"].join("\n"),
+					),
+				),
+			);
+			expect.soft(resultLines(noMarker)).toEqual([
+				`test-result: failed-to-load ${X}`,
+				`reason: ${X}: import file mismatch:`,
+			]);
+
+			const empty = namedRun([X], handReport(loadRecord("")));
+			expect.soft(resultLines(empty)).toEqual([
+				`test-result: failed-to-load ${X}`,
+				`reason: ${X}: collection failure`,
+			]);
+
+			// A drive frame that is the last line with text is not a marker line.
+			const driveLast = namedRun(
+				[X],
+				handReport(
+					loadRecord(
+						[
+							"E   SyntaxError: invalid syntax",
+							"E:\\Python\\Lib\\importlib\\__init__.py:90: in import_module",
+						].join("\n"),
+					),
+				),
+			);
+			expect.soft(resultLines(driveLast)).toEqual([
+				`test-result: failed-to-load ${X}`,
+				`reason: ${X}: SyntaxError: invalid syntax`,
+			]);
+
+			// An empty body's message gives one line, never a stray stdout line.
+			const multiLine = namedRun(
+				[X],
+				handReport(
+					'<testcase classname="" name="tests.test_broken"><error message="first line&#10;second line"></error></testcase>',
+				),
+			);
+			expect.soft(resultLines(multiLine)).toEqual([
+				`test-result: failed-to-load ${X}`,
+				`reason: ${X}: first line`,
+			]);
+			expect.soft(multiLine.lines).not.toContain("second line");
+
+			const noFault = namedRun(
+				[X],
+				handReport('<testcase classname="" name="tests.test_broken" time="0.000"></testcase>'),
+			);
+			expect.soft(resultLines(noFault)).toEqual([`test-result: not-found ${X}`]);
+		},
+		TEST_TIMEOUT,
+	);
+	it(
+		"B4: when the run line of a Python run is broken, a named test the report lacks reads unavailable",
+		() => {
+			const { repo, slice } = sliceRepo(["tests/test_ok.py"]);
+			const X = "tests/test_broken.py::test_b3_x";
+			const ADD = "tests/test_ok.py::test_b1_add";
+			const captured = (report, code) =>
+				pyRun(repo, slice, {
+					names: [X, ADD],
+					runner: ["--copy", report, "--junitxml={junit}", "--code", String(code)],
+				});
+			const LOAD = [
+				`test-result: failed-to-load ${X}`,
+				`reason: ${X}: ImportError: cannot import name 'missing' from 'demo' (<root>\\src\\demo\\__init__.py)`,
+			];
+			for (const [code, add, last] of [
+				[2, "unavailable", "result: broken: exit 2 (pytest: collection error or interrupted)"],
+				[3, "unavailable", "result: broken: exit 3 (pytest: internal error)"],
+				[4, "unavailable", "result: broken: exit 4 (pytest: usage error)"],
+				[7, "unavailable", "result: broken: exit 7 (pytest: unknown exit code)"],
+				[1, "not-found", "result: red"],
+				[5, "not-found", "result: no-tests"],
+			]) {
+				const run = captured(COLLECTION_ERROR_XML, code);
+				expect.soft(run.status, `exit ${code}`).toBe(0);
+				expect
+					.soft(resultLines(run), `exit ${code}`)
+					.toEqual([...LOAD, `test-result: ${add} ${ADD}`]);
+				expect.soft(lastLine(run.lines), `exit ${code}`).toBe(last);
+			}
+
+			const okAtThree = captured(OK_XML, 3);
+			expect.soft(okAtThree.status).toBe(0);
+			expect.soft(resultLines(okAtThree)).toEqual([
+				`test-result: unavailable ${X}`,
+				`test-result: failed ${ADD}`,
+				`reason: ${ADD}: assert 2 == 3`,
+			]);
+			expect.soft(lastLine(okAtThree.lines)).toBe("result: broken: exit 3 (pytest: internal error)");
+		},
+		TEST_TIMEOUT,
+	);
+	it(
+		"B8: a run with no Python test keeps red and not-found for every non-zero exit",
+		() => {
+			const { repo, slice } = sliceRepo(["tests/a.test.mjs"]);
+			const report = handReport(rec("tests/a.test.mjs", "present"));
+			for (const code of [2, 4, 5]) {
+				const run = pyRun(repo, slice, {
+					names: ["tests/a.test.mjs::absent"],
+					runner: ["--copy", report, "--junitxml={junit}", "--code", String(code)],
+				});
+				expect.soft(run.status, `exit ${code}`).toBe(0);
+				expect
+					.soft(resultLines(run), `exit ${code}`)
+					.toEqual(["test-result: not-found tests/a.test.mjs::absent"]);
+				expect.soft(lastLine(run.lines), `exit ${code}`).toBe("result: red");
+			}
+		},
+		TEST_TIMEOUT,
+	);
+	it("B9: validate names a result: broken run line as its own outcome and the .py load-failure reason", () => {
+		for (const path of [
+			"skills/validate/SKILL.md",
+			"opencode/generated/skills/rpiv-validate/SKILL.md",
+		]) {
+			const validate = joined(path);
+			expect
+				.soft(validate, path)
+				.toMatch(
+					/Every other outcome — [^—]*`result: no-tests`, a `result: broken: [^`]*` run line[^—]*— is reported under its own name, never as red and never as a pass/,
+				);
+			expect
+				.soft(validate, path)
+				.toMatch(/a `\.py` test that fails to load[^.]*its last pytest `E` line/i);
+		}
+		// The helper's header documents its CLI output, Python run lines included.
+		for (const path of [
+			"skills/_shared/reprove-red.mjs",
+			"opencode/generated/skills/_shared/reprove-red.mjs",
+		]) {
+			const header = readFileSync(join(ROOT, path), "utf-8")
+				.split(/\r?\n/)
+				.filter((line) => line.startsWith("//"))
+				.join(" ");
+			expect.soft(header, path).toMatch(/`result: broken: <why>`/);
+			expect.soft(header, path).toMatch(/exit 5[^.]*`result: no-tests`/);
+		}
+	});
+	it(
+		"B6: a pytest xfailed or skipped case reads skipped",
+		() => {
+			const run = namedRun(
+				["tests/test_ok.py::test_b6_xf", "tests/test_ok.py::test_b6_skip"],
+				OK_XML,
+			);
+			expect(resultLines(run)).toEqual([
+				"test-result: skipped tests/test_ok.py::test_b6_xf",
+				"test-result: skipped tests/test_ok.py::test_b6_skip",
+			]);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"B10: every record shape the matcher relies on is read from the captured pytest reports",
+		() => {
+			const ok = namedRun(
+				[
+					"tests/test_ok.py::test_b1_add",
+					"tests/test_ok.py::TestBar::test_b3_method",
+					"tests/test_ok.py::TestBar::TestInner::test_b3_inner",
+					"tests/test_ok.py::test_b2_param",
+					"tests/test_ok.py::test_b2_param[[e]]",
+					"tests/test_ok.py::test_b2_param[a/b]",
+					"tests/test_ok.py::test_b2_param[c::d]",
+					"tests/test_ok.py::test_b6_xf",
+					"tests/test_ok.py::test_b6_skip",
+				],
+				OK_XML,
+			);
+			expect.soft(resultLines(ok)).toEqual([
+				"test-result: failed tests/test_ok.py::test_b1_add",
+				"reason: tests/test_ok.py::test_b1_add: assert 2 == 3",
+				"test-result: passed tests/test_ok.py::TestBar::test_b3_method",
+				"test-result: passed tests/test_ok.py::TestBar::TestInner::test_b3_inner",
+				"test-result: failed tests/test_ok.py::test_b2_param",
+				"reason: tests/test_ok.py::test_b2_param: assert 1 is None",
+				"test-result: failed tests/test_ok.py::test_b2_param[[e]]",
+				"reason: tests/test_ok.py::test_b2_param[[e]]: AssertionError: assert '[e]' is None",
+				"test-result: failed tests/test_ok.py::test_b2_param[a/b]",
+				"reason: tests/test_ok.py::test_b2_param[a/b]: AssertionError: assert 'a/b' is None",
+				"test-result: failed tests/test_ok.py::test_b2_param[c::d]",
+				"reason: tests/test_ok.py::test_b2_param[c::d]: AssertionError: assert 'c::d' is None",
+				"test-result: skipped tests/test_ok.py::test_b6_xf",
+				"test-result: skipped tests/test_ok.py::test_b6_skip",
+			]);
+			expect.soft(lastLine(ok.lines)).toBe("result: red");
+
+			const { repo, slice } = sliceRepo(["tests/test_ok.py"]);
+			const none = pyRun(repo, slice, {
+				names: ["tests/test_ok.py::test_b1_add"],
+				runner: ["--copy", NO_TESTS_XML, "--junitxml={junit}", "--code", "5"],
+			});
+			expect.soft(resultLines(none)).toEqual([
+				"test-result: not-found tests/test_ok.py::test_b1_add",
+			]);
+			expect.soft(lastLine(none.lines)).toBe("result: no-tests");
+		},
+		TEST_TIMEOUT,
+	);
+});

@@ -12,4 +12,7 @@ node_modules/
 coverage/
 reports/
 .stryker-tmp/
+__pycache__/
+.pytest_cache/
+.venv/
 /rpiv/.playwright-mcp

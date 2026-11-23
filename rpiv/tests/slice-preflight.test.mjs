@@ -799,3 +799,142 @@ describe("slice-preflight on a slice with only TDD-exempt items", () => {
 		TEST_TIMEOUT,
 	);
 });
+
+describe("slice-preflight on pytest tests (S3-preflight-python)", () => {
+	/** A repo whose slice commit adds `files`, on a base holding `baseFiles`. */
+	const pyRepo = (baseFiles, files) => {
+		const repo = tempDir();
+		git(repo, "init", "-q", "-b", "main");
+		git(repo, "config", "user.email", "p@example.invalid");
+		git(repo, "config", "user.name", "p");
+		git(repo, "config", "core.autocrlf", "false");
+		put(repo, "README.md", "base\n");
+		for (const [path, text] of Object.entries(baseFiles)) put(repo, path, text);
+		git(repo, "add", "-A");
+		git(repo, "commit", "-q", "-m", "base");
+		const base = git(repo, "rev-parse", "HEAD");
+		for (const [path, text] of Object.entries(files)) put(repo, path, text);
+		git(repo, "add", "-A");
+		git(repo, "commit", "-q", "-m", "slice");
+		const candidate = git(repo, "rev-parse", "HEAD");
+		return { repo, base, candidate, outside: tempDir() };
+	};
+	const preflightOn = (r, lines) => {
+		put(r.outside, "b.md", `### Test Contract: s\n\n${lines.join("\n")}\n`);
+		return run(
+			r.repo,
+			"--artifact",
+			join(r.outside, "b.md"),
+			"--slice",
+			"s",
+			"--base",
+			r.base,
+			"--candidate",
+			r.candidate,
+		);
+	};
+	const findings = (res) => res.lines.filter((l) => l.startsWith("finding:"));
+	const reproves = (res) => res.lines.filter((l) => l.startsWith("reprove:"));
+
+	it(
+		"B32: a titled py test is found by its def or async def, classes and case ids included, never by a string",
+		() => {
+			const r = pyRepo(
+				{},
+				{
+					"tests/test_found.py": [
+						"def test_b1_x():",
+						"    pass",
+						"",
+						"class TestBar:",
+						"    async def test_b1_y(self):",
+						"        pass",
+						"",
+						"    def test_b3_m(self):",
+						"        pass",
+						"",
+						"def test_b2_p(n):",
+						"    pass",
+						"",
+					].join("\n"),
+					"tests/test_x.py": 'def test_b1_xy():\n    s = "test_b1_x"\n',
+					"tests/test_noclass.py": "def test_b3_m():\n    pass\n",
+				},
+			);
+			const res = preflightOn(r, [
+				"- **Behavior B1**: plain and async",
+				"  - Test: `test_b1_x` in `tests/test_found.py`; `TestBar::test_b1_y` in `tests/test_found.py`",
+				"- **Behavior B2**: a case id",
+				"  - Test: `test_b2_p[1]` in `tests/test_found.py`",
+				"- **Behavior B3**: a class",
+				"  - Test: `TestBar::test_b3_m` in `tests/test_found.py`",
+				"- **Behavior B7**: only a longer name and a string",
+				"  - Test: `test_b1_x` in `tests/test_x.py`",
+				"- **Behavior B8**: no such class",
+				"  - Test: `TestBar::test_b3_m` in `tests/test_noclass.py`",
+			]);
+			expect(res.stderr).toBe("");
+			expect(findings(res)).toEqual([
+				"finding: missing-test-title: B7 tests/test_x.py :: test_b1_x",
+				"finding: missing-test-title: B8 tests/test_noclass.py :: TestBar::test_b3_m",
+			]);
+			const call = `reprove: --commit ${r.candidate} --base ${r.base} --test`;
+			expect(reproves(res)).toEqual(
+				expect.arrayContaining([
+					`${call} tests/test_found.py::test_b1_x`,
+					`${call} tests/test_found.py::TestBar::test_b1_y`,
+					`${call} tests/test_found.py::test_b2_p[1]`,
+					`${call} tests/test_found.py::TestBar::test_b3_m`,
+				]),
+			);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"B33: with no Test line a behavior finds the py functions named after its ID in changed test files, up to the next underscore",
+		() => {
+			const r = pyRepo(
+				{ "tests/test_old.py": "def test_b6_old():\n    pass\n" },
+				{
+					"tests/test_cart.py": [
+						"def test_b1_rejects():",
+						'    assert "B4: x"',
+						"",
+						"def test_b10_x():",
+						"    pass",
+						"",
+						"def test_B2():",
+						"    pass",
+						"",
+						"class TestS:",
+						"    def test_s3_b5_x(self):",
+						"        pass",
+						"",
+					].join("\n"),
+				},
+			);
+			const res = preflightOn(r, [
+				"- **Behavior B1**: one",
+				"- **Behavior B10**: ten",
+				"- **Behavior B2**: two",
+				"- **Behavior B4**: only a string",
+				"- **Behavior S3-B5**: a hyphenated ID",
+				"- **Behavior B6**: an unchanged file",
+			]);
+			expect(res.stderr).toBe("");
+			expect(findings(res)).toEqual([
+				"finding: no-test-line: B4",
+				"finding: no-test-line: B6",
+			]);
+			const call = `reprove: --commit ${r.candidate} --base ${r.base} --test`;
+			expect(reproves(res)).toEqual([
+				`${call} tests/test_cart.py::test_b1_rejects`,
+				`${call} tests/test_cart.py::test_b10_x`,
+				`${call} tests/test_cart.py::test_B2`,
+				`${call} tests/test_cart.py::test_s3_b5_x`,
+			]);
+		},
+		TEST_TIMEOUT,
+	);
+});

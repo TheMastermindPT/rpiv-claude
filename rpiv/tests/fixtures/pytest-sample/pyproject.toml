@@ -1,0 +1,8 @@
+[project]
+name = "pytest-sample"
+version = "0.0.0"
+description = "rpiv test data: a tiny pytest project whose JUnit reports are captured in junit/"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

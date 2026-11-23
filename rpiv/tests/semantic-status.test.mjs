@@ -69,10 +69,12 @@ const isolatedHelper = () => {
 	mkdirSync(join(dir, "skills/_shared"), { recursive: true });
 	for (const f of ["semantic.mjs", "source-set.mjs", "target-context.mjs"])
 		copyFileSync(join(HELPERS, f), join(helpers, f));
-	copyFileSync(
-		join(ROOT, "skills/_shared/source-vocab.mjs"),
-		join(dir, "skills/_shared/source-vocab.mjs"),
-	);
+	// project-root.mjs: semantic.mjs and target-context.mjs take the root walk from it (S4).
+	for (const f of ["source-vocab.mjs", "project-root.mjs"])
+		copyFileSync(
+			join(ROOT, "skills/_shared", f),
+			join(dir, "skills/_shared", f),
+		);
 	return { dir, helper: join(helpers, "semantic.mjs") };
 };
 

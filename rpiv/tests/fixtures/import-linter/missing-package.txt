@@ -1,0 +1,5 @@
+=============
+Import Linter
+=============
+
+Could not find package 'shop' in your Python path.

@@ -1,0 +1,33 @@
+=============
+Import Linter
+=============
+
+
+---------
+Contracts
+---------
+
+Analyzed 5 files, 3 dependencies.
+---------------------------------
+
+Layers KEPT
+API must not touch db BROKEN
+
+Contracts: 1 kept, 1 broken.
+
+
+----------------
+Broken contracts
+----------------
+
+API must not touch db
+---------------------
+
+shop.api is not allowed to import shop.db:
+
+-   shop.api.views -> shop.core (l.1)
+    shop.core -> shop.db (l.1)
+
+-   shop.api.views -> shop.db (l.2)
+
+

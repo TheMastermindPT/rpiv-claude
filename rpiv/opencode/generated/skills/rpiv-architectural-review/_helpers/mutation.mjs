@@ -27,6 +27,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { cosmicLines, cosmicSession, dumpSession, readCosmicDump } from "./cosmic-ray.mjs";
 import { isSource, isTest } from "./source-set.mjs";
 import { resolveTargets, safeGit, toPosix } from "./target-context.mjs";
 
@@ -87,6 +88,60 @@ for (const p of reportPaths) {
 // --- Scope detection: compare target source files against report coverage ---------
 const targetSrcFiles = wholeRepo ? [] : collectSrc(targets.map((t) => t.target));
 const reportFileSet = new Set();
+
+/** The scope of a report covering `reportFiles` (relative paths), against the target. */
+const scopeOf = (reportFiles) => {
+	// Determine scope: does this report appear to be a full-project run or a scoped run?
+	// Heuristic: count how many report files fall OUTSIDE the target. If the report
+	// contains files well outside the target's subtree, it was a broader run (likely full).
+	// If ALL report files are within the target, the report was scoped to just this area.
+	// A report with 3+ files outside the target is almost certainly a full run.
+	// A report with 1-2 outside files could be a scoped run that picked up dependencies.
+	// Use a threshold: >= 3 outside files or outside files in >= 2 sibling directories.
+	const outside = [...reportFiles].filter((f) => !underAny(f));
+	const outsideDirs = new Set(outside.map((f) => (f.includes("/") ? f.slice(0, f.lastIndexOf("/")) : ".")));
+	const hasOutsideFiles = outside.length >= 3 || outsideDirs.size >= 2;
+	// Count how many target source files have mutation data.
+	const covered = targetSrcFiles.filter((sf) => reportFiles.has(sf)).length;
+	const missing = targetSrcFiles.length - covered;
+	// Scope classification:
+	// - "full": report covers files outside the target (different top-level dirs) →
+	//          likely a full-project mutation run. Missing files are genuinely clean
+	//          (no executable code — StrykerJS filtered them).
+	// - "partial": report only covers files within/near the target → likely a scoped run.
+	//          Missing files might have executable code but weren't mutated.
+	// - "detected": target is "." (whole repo) — can't distinguish; treat as "full" but note.
+	let scope;
+	if (wholeRepo) scope = "detected"; // whole-repo target — report IS the target
+	else if (hasOutsideFiles) scope = "full"; // report covers unrelated directories → full run
+	else scope = reportFiles.size > 0 ? "partial" : "none";
+	return { covered, missing, scope };
+};
+
+const noDataScope = (state) =>
+	`mutation_scope: target_has=${targetSrcFiles.length} report_covers=0 missing=${targetSrcFiles.length} (${state})`;
+
+// --- Cosmic Ray (Python): read when the root has no Stryker report (D52–D55) ------
+const cosmic = reportPath ? "" : cosmicSession(projectRoot);
+if (cosmic) {
+	const dump = dumpSession(projectRoot, cosmic);
+	if (dump.broken) {
+		process.stdout.write(`mutation_report: broken — ${dump.broken}\n${noDataScope("broken")}\n`);
+		process.exit(0);
+	}
+	const result = dump.parseError
+		? { state: "parse-error", why: dump.parseError, totals: {} }
+		: readCosmicDump(dump.text, { root: projectRoot, relOf, underAny });
+	const { head, rows } = cosmicLines(result, cosmic);
+	if (result.state !== "ok") {
+		process.stdout.write(`${head.join("\n")}\n${noDataScope(result.state)}\n`);
+		process.exit(0);
+	}
+	const { covered, missing, scope } = scopeOf(new Set(result.rows.map((r) => r.f)));
+	const scopeLine = `mutation_scope: target_has=${targetSrcFiles.length} report_covers=${covered} missing=${missing} (${scope})`;
+	process.stdout.write(`${[...head, scopeLine].join("\n")}\n---mutation---\n${rows.join("\n")}\n`);
+	process.exit(0);
+}
 
 if (!reportPath) {
 	// Broken != absent (M2 / dogfooding B): an HTML-only report means mutation RAN but
@@ -168,49 +223,7 @@ for (const filePath of Object.keys(files)) {
 	reportFileSet.add(rel);
 }
 
-// Determine scope: does this report appear to be a full-project run or a scoped run?
-// Heuristic: count how many report files fall OUTSIDE the target. If the report
-// contains files well outside the target's subtree, it was a broader run (likely full).
-// If ALL report files are within the target, the report was scoped to just this area.
-let outsideTarget = 0;
-for (const f of reportFileSet) {
-	if (!underAny(f)) outsideTarget += 1;
-}
-// A report with 3+ files outside the target is almost certainly a full run.
-// A report with 1-2 outside files could be a scoped run that picked up dependencies.
-// Use a threshold: >= 3 outside files or outside files in >= 2 sibling directories.
-const outsideDirs = new Set();
-for (const f of reportFileSet) {
-	if (!underAny(f)) {
-		const slash = f.indexOf("/");
-		const d = slash >= 0 ? f.slice(0, f.lastIndexOf("/")) : ".";
-		outsideDirs.add(d);
-	}
-}
-const hasOutsideFiles = outsideTarget >= 3 || outsideDirs.size >= 2;
-
-// Count how many target source files have mutation data.
-let covered = 0;
-for (const sf of targetSrcFiles) {
-	if (reportFileSet.has(sf)) covered += 1;
-}
-const missing = targetSrcFiles.length - covered;
-
-// Scope classification:
-// - "full": report covers files outside the target (different top-level dirs) →
-//          likely a full-project mutation run. Missing files are genuinely clean
-//          (no executable code — StrykerJS filtered them).
-// - "partial": report only covers files within/near the target → likely a scoped run.
-//          Missing files might have executable code but weren't mutated.
-// - "detected": target is "." (whole repo) — can't distinguish; treat as "full" but note.
-let scope;
-if (wholeRepo) {
-	scope = "detected";  // whole-repo target — report IS the target
-} else if (hasOutsideFiles) {
-	scope = "full";      // report covers unrelated directories → full run
-} else {
-	scope = reportFileSet.size > 0 ? "partial" : "none";
-}
+const { covered, missing, scope } = scopeOf(reportFileSet);
 
 let overallKilled = 0;
 let overallSurvived = 0;

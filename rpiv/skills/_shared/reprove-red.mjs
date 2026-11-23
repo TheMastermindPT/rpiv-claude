@@ -1,7 +1,8 @@
 // reprove-red.mjs — re-proves a slice's red (D23 of the risk-lanes design, S14, FR13).
-// Rebuilds the slice commit's parent in a scratch copy under the git dir, writes only
-// the slice's changed test and fixture files over it, runs the given command there and
-// reports the outcome. The real index, HEAD, branch and working tree are never touched.
+// Rebuilds the slice commit's parent in a scratch copy under the git dir, writes the
+// slice's changed test and fixture files over it (in a Python run, its whole changed test
+// tree; see below), runs the given command there and reports the outcome. The real
+// index, HEAD, branch and working tree are never touched.
 //
 // CLI, run only as the entry point:
 //   node reprove-red.mjs --commit <rev> [--base <rev>] [--test <path>::<name>]...
@@ -12,8 +13,35 @@
 // commit: the parent → commit diff for a one-commit slice or an amended-away sibling,
 // and every commit's tests for a slice of several.
 // prints `reprove-red:`, `base:`, `test:`/`fixture:`, `exit:`, `log:` and last
-// `result: red | green | no-tests`, exit 0. A broken call prints
-// `reprove-red: broken: <detail>` on stderr and exits 2, never a result.
+// `result: red | green | no-tests | broken: <why>`, exit 0. Outside a Python run any
+// non-zero exit is red. In a Python run (S1-pytest-report: its runner tests are `.py`
+// only) the line follows pytest's exit code: exit 5 prints `result: no-tests` after its
+// `exit:` line, and exits 2, 3, 4, any unknown code, and exit 1 with no readable report
+// print `result: broken: <why>`; a named test that report lacks then reads
+// `unavailable`. A broken call (bad arguments, an unknown revision, a timeout, runner
+// tests in Python and another language, a temporary folder inside the checkout) prints
+// `reprove-red: broken: <detail>` on stderr and exits 2, with nothing on stdout.
+//
+// A Python run (S2-scratch-copy) copies wider: every changed test-tree file — tests,
+// fixtures, `conftest.py` anywhere, and test-tree support outside a `src` folder — is
+// written from the commit and printed as `test:` or `fixture:`, each deleted one is
+// removed (`removed:`), and a submodule entry is left as the base had it
+// (`diagnostic: submodule not copied:`). In a Python run `{tests}` expands to the Python
+// runner tests only. Its runner gets the import guard (import-guard.mjs): a fresh guard
+// folder outside the checkout first on PYTHONPATH, the run folder's `src/` second, and
+// PYTHONDONTWRITEBYTECODE=1. Every guarded Python process records the modules it loaded,
+// and the run line becomes `result: broken: imported from the checkout: <path>` when one
+// came from a checkout folder of the repository, `result: broken: import guard did not
+// run` when no record exists, and `result: broken: import record incomplete: pid <n>`
+// when a record is unfinished, whatever pytest's exit code. A guarded process records a
+// module when it opens its file for import as well as at exit (S2b-guard-proof), and a
+// temporary folder inside the checkout is refused before the guard folder is made.
+// In a Python run (S2c-copy-modes) a changed symlink is left as the base had it
+// (`diagnostic: symlink not copied:`), a changed test-tree path inside a `src` folder that
+// the copy does not take is named (`diagnostic: production test folder not copied:`), a
+// folder replaced by a file is written as the file, and `--link` targets are placed by
+// real paths. Outside a Python run the copy, the header, `{tests}` and the environment
+// stay as they were.
 //
 // Importable: exitCodeOf.
 
@@ -30,9 +58,27 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
+import {
+	checkoutFolders,
+	createGuard,
+	guardEnv,
+	importVerdict,
+	realOf,
+	within,
+} from "./import-guard.mjs";
 import { isMain } from "./is-main.mjs";
-import { isFixture, isManifest, isTest } from "./source-vocab.mjs";
+import {
+	extOf,
+	isFixture,
+	isManifest,
+	isPythonTest,
+	isPythonTestSupport,
+	isSource,
+	isTest,
+	isTestData,
+	isTestTree,
+} from "./source-vocab.mjs";
 
 /** git's stdout as text, run in `cwd`; a failure throws one line naming git. */
 const gitIn = (cwd, args, { env } = {}) => {
@@ -97,11 +143,10 @@ const OPTIONS = {
 };
 
 /** A parsed call missing its commit or command, or naming tests with no report, is broken. */
-const requireComplete = ({ commit, tests, command }) => {
+const requireComplete = ({ commit, tests, command, promisesReport }) => {
 	if (commit === undefined) throw new Error("missing --commit <rev>");
 	if (command.length === 0) throw new Error("missing command after --");
-	const hasReport = command.some((arg) => arg.includes("{junit}"));
-	if (tests.length > 0 && !hasReport) {
+	if (tests.length > 0 && !promisesReport) {
 		throw new Error("--test needs {junit} in the command");
 	}
 };
@@ -126,6 +171,9 @@ const parseArgs = (argv) => {
 		if (value === undefined) throw new Error(`${name} needs a value`);
 		store(parsed, value);
 	}
+	// One answer to "does the command promise a report": `--test` needs it, and a Python
+	// run's exit 1 is red only when it is kept (D8).
+	parsed.promisesReport = parsed.command.some((arg) => arg.includes("{junit}"));
 	requireComplete(parsed);
 	return parsed;
 };
@@ -161,25 +209,41 @@ const resolveCommit = (cwd, rev) => {
 	return { commit, parent: parents[0] };
 };
 
-/** Changed paths of `parent` → commit that a re-run applies: tests and fixtures. */
-const slicePaths = (top, parent, commit) => {
+/** The changes of `parent` → commit, one `{ status, path, submodule }` each; a
+    submodule entry has mode 160000 on either side. */
+const changesOf = (top, parent, commit) => {
 	const fields = gitIn(top, [
 		"diff-tree",
 		"-r",
 		"-z",
 		"--no-commit-id",
 		"--no-renames",
-		"--name-status",
 		parent,
 		commit,
 	])
 		.split("\0")
 		.filter(Boolean);
+	const changes = [];
+	for (let i = 0; i < fields.length; i += 2) {
+		// `:<old mode> <new mode> <old sha> <new sha> <status>`, then the path.
+		const [oldMode, newMode, , , status] = fields[i].slice(1).split(" ");
+		const either = (mode) => oldMode === mode || newMode === mode;
+		changes.push({
+			status,
+			path: fields[i + 1],
+			submodule: either("160000"),
+			symlink: either("120000"),
+		});
+	}
+	return changes;
+};
+
+/** Changed paths that a re-run applies: tests and fixtures. */
+const slicePaths = (changes) => {
 	const tests = [];
 	const fixtures = [];
 	const manifests = [];
-	for (let i = 0; i < fields.length; i += 2) {
-		const [status, path] = [fields[i], fields[i + 1]];
+	for (const { status, path } of changes) {
 		if (isManifest(path)) manifests.push(path);
 		if (status === "D") continue;
 		if (isTest(path)) tests.push(path);
@@ -192,15 +256,80 @@ const slicePaths = (top, parent, commit) => {
 	};
 };
 
-/** Checks the parent's tree out into `scratch` through a temporary index, then writes
-    the slice's files over it from the commit. */
-const buildScratch = (top, scratch, { parent, commit, paths }) => {
+/** A Python run's copy (FR8, D16, D17, D28): every changed test-tree path, written from
+    the commit or removed when deleted; a submodule entry or a symlink is neither, only
+    named. A test-tree path inside a `src` folder that the copy does not take is named
+    too (B27). */
+const pythonCopy = (changes) => {
+	const inSet = ({ path }) => isFixture(path) || isPythonTestSupport(path);
+	const set = changes.filter(inSet);
+	const sorted = (list) => list.map(({ path }) => path).sort();
+	const plain = set.filter((c) => !c.submodule && !c.symlink);
+	return {
+		written: sorted(plain.filter((c) => c.status !== "D")),
+		removed: sorted(plain.filter((c) => c.status === "D")),
+		submodules: sorted(set.filter((c) => c.submodule)),
+		symlinks: sorted(set.filter((c) => c.symlink && !c.submodule)),
+		production: sorted(changes.filter((c) => !inSet(c) && isTestTree(c.path))),
+	};
+};
+
+/** What the scratch copy takes, what `{tests}` expands to and what the header lists:
+    today's tests and fixtures outside a Python run (D13); in one, the wider Python copy
+    and only the Python runner tests in `{tests}` (D14). Each path is listed once. */
+const copyPlan = (changes, { tests, fixtures, manifests }, python) => {
+	const dependencies = manifests.map(
+		(path) => `diagnostic: dependencies changed: ${path}`,
+	);
+	if (!python) {
+		return {
+			tests,
+			paths: [...tests, ...fixtures],
+			removed: [],
+			lines: [
+				...tests.map((path) => `test: ${path}`),
+				...fixtures.map((path) => `fixture: ${path}`),
+				...dependencies,
+			],
+		};
+	}
+	const runners = tests.filter(
+		(path) => !isTestData(path) && isPythonTest(path),
+	);
+	const { written, removed, submodules, symlinks, production } =
+		pythonCopy(changes);
+	const named = (what, list) =>
+		list.map((path) => `diagnostic: ${what} not copied: ${path}`);
+	return {
+		tests: runners,
+		paths: written,
+		removed,
+		lines: [
+			...runners.map((path) => `test: ${path}`),
+			...written
+				.filter((path) => !runners.includes(path))
+				.map((path) => `fixture: ${path}`),
+			...removed.map((path) => `removed: ${path}`),
+			...named("submodule", submodules),
+			...named("symlink", symlinks),
+			...named("production test folder", production),
+			...dependencies,
+		],
+	};
+};
+
+/** Checks the parent's tree out into `scratch` through a temporary index, removes the
+    slice's deleted paths, then writes the slice's files over it from the commit. */
+const buildScratch = (top, scratch, { parent, commit, paths, removed }) => {
 	rmSync(scratch, { recursive: true, force: true });
 	mkdirSync(scratch, { recursive: true });
 	const env = { GIT_INDEX_FILE: `${scratch}.index` };
 	gitIn(top, ["read-tree", parent], { env });
 	gitIn(top, [`--work-tree=${scratch}`, "checkout-index", "-a", "-f"], { env });
 	rmSync(env.GIT_INDEX_FILE, { force: true });
+	for (const path of removed) {
+		rmSync(join(scratch, path), { recursive: true, force: true });
+	}
 	for (const path of paths) {
 		const bytes = execFileSync(
 			"git",
@@ -211,15 +340,14 @@ const buildScratch = (top, scratch, { parent, commit, paths }) => {
 				maxBuffer: 64 * 1024 * 1024,
 			},
 		);
-		mkdirSync(dirname(join(scratch, path)), { recursive: true });
-		writeFileSync(join(scratch, path), bytes);
+		const at = join(scratch, path);
+		mkdirSync(dirname(at), { recursive: true });
+		// A folder replaced by a file in a Python run (B29); only removals empty it.
+		if (removed.length > 0 && lstatSafe(at)?.isDirectory()) {
+			rmSync(at, { recursive: true, force: true });
+		}
+		writeFileSync(at, bytes);
 	}
-};
-
-/** True when `path` is `folder` or lies inside it. */
-const within = (folder, path) => {
-	const rel = relative(folder, path);
-	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 };
 
 /** The folders a link must stay out of: `.git` at the top, the git dir, the common git dir. */
@@ -292,13 +420,16 @@ const removeScratch = (scratch, links) => {
 	rmSync(scratch, { recursive: true, force: true });
 };
 
-const isLink = (path) => {
+/** The lstat of `path`, or undefined when it does not exist. */
+const lstatSafe = (path) => {
 	try {
-		return lstatSync(path).isSymbolicLink();
+		return lstatSync(path);
 	} catch {
-		return false;
+		return undefined;
 	}
 };
+
+const isLink = (path) => lstatSafe(path)?.isSymbolicLink() ?? false;
 
 /** The exit code of a `spawnSync` result. A command that cannot start or outlives
     `timeout` seconds is broken. */
@@ -316,18 +447,19 @@ export const exitCodeOf = (result, command, timeout) => {
 	return result.status;
 };
 
-/** Runs the command without a shell in `runDir`, its output in `log`; returns the exit
-    code (see exitCodeOf). */
-const runCommand = (command, runDir, log, timeout) => {
+/** Runs the command (`args`) without a shell in `runDir` with `env` (undefined: the
+    caller's), its output in `log`; returns the exit code (see exitCodeOf). */
+const runCommand = ({ args, log, timeout }, runDir, env) => {
 	const fd = openSync(log, "w");
 	try {
-		const result = spawnSync(command[0], command.slice(1), {
+		const result = spawnSync(args[0], args.slice(1), {
 			cwd: runDir,
+			env,
 			stdio: ["ignore", fd, fd],
 			timeout: timeout * 1000,
 			windowsHide: true,
 		});
-		return exitCodeOf(result, command, timeout);
+		return exitCodeOf(result, args, timeout);
 	} finally {
 		closeSync(fd);
 	}
@@ -366,7 +498,8 @@ const faultMessage = ([, , attrText, inner = ""]) =>
 		.split(/\r?\n/)[0]
 		.trim();
 
-/** The `<testcase>` records of a JUnit report; a text with no suite element is broken. */
+/** The `<testcase>` records of a JUnit report; a text with no suite element is broken.
+    `fault` keeps a `<failure>`/`<error>`'s message attribute and decoded body. */
 const parseJunit = (text) => {
 	if (!/<testsuites?\b/.test(text))
 		throw new Error("no <testsuites> or <testsuite> element");
@@ -378,9 +511,30 @@ const parseJunit = (text) => {
 			classname: classname.replace(/\\/g, "/"),
 			name,
 			failure: fault ? faultMessage(fault) : undefined,
+			fault: fault && {
+				message: attributes(fault[2]).message ?? "",
+				body: decode(fault[3] ?? ""),
+			},
 			skipped: /<skipped\b/.test(body),
 		};
 	});
+};
+
+// A pytest traceback marker line: `E` then whitespace or nothing, never `E:\…` (D9).
+const PYTEST_MARKER = /^E(\s|$)/;
+
+/** A pytest load failure's reason (D9): the last marker line with text after the
+    marker, else the body's first non-blank line, else the fault's message's first
+    line, so a reason is always one stdout line. */
+const pytestFaultReason = ({ message, body }) => {
+	const bodyLines = body.split("\n").map((line) => line.replace(/\r$/, ""));
+	const marked = bodyLines
+		.filter((line) => PYTEST_MARKER.test(line))
+		.map((line) => line.slice(1).replace(/^\s+/, ""))
+		.filter((text) => text.trim() !== "");
+	if (marked.length > 0) return marked.at(-1);
+	const first = bodyLines.find((line) => line.trim() !== "");
+	return (first ?? message).trim().split(/\r?\n/)[0].trim();
 };
 
 const outcomeOf = (record) =>
@@ -421,20 +575,72 @@ const nameMatcher = (wanted, path) => {
 	return (name) => name !== path && title.test(name);
 };
 
-/** The bucket of one named test: its matching records agree, disagree (`mixed`), or
-    none exists — then a file-level failure (name = classname = path) is a load failure. */
-const bucketOf = (records, { path, name }) => {
+/** A vitest/jest record of the test: its classname is the file path. */
+const pathRecordMatcher = ({ path, name }) => {
 	const isNamed = nameMatcher(name, path);
-	const matches = records.filter(
-		(r) => r.classname === path && isNamed(r.name),
+	return (r) => r.classname === path && isNamed(r.name);
+};
+
+/** A `.py` test path's dotted form: `src/pkg/test_mod.py` → `src.pkg.test_mod`. */
+const dottedOf = (path) => path.slice(0, -".py".length).replaceAll("/", ".");
+
+/** A pytest record of the test, matched forward from the `--test` path (D1): the
+    classname is the path's dotted form, plus the classes when the name gives them; the
+    function's name may carry a `[…]` case id unless the wanted name has its own. */
+const pytestRecordMatcher = ({ path, name }) => {
+	const dotted = dottedOf(path);
+	// Split on `::` only before the first `[`: a case id may hold `::` itself.
+	const bracket = name.indexOf("[");
+	const head = bracket < 0 ? name : name.slice(0, bracket);
+	const parts = head.split("::");
+	const fn = parts.at(-1) + name.slice(head.length);
+	const classes = parts.slice(0, -1);
+	const inClass =
+		classes.length === 0
+			? (c) => c === dotted || c.startsWith(`${dotted}.`)
+			: (c) => c === [dotted, ...classes].join(".");
+	const isNamed = fn.includes("[")
+		? (n) => n === fn
+		: (n) => n === fn || (n.startsWith(`${fn}[`) && n.endsWith("]"));
+	return (r) => inClass(r.classname) && isNamed(r.name);
+};
+
+/** The reason a vitest file failed to load: a failed record named after the file, whose
+    classname is the file too; undefined when the file loaded. */
+const pathLoadReason = (records, { path }) =>
+	records.find(
+		(r) => r.failure !== undefined && r.classname === path && r.name === path,
+	)?.failure;
+
+/** The reason a pytest file failed to load: a record with an empty classname, named
+    after the file's dotted form, holding a fault (D9); undefined when the file loaded. */
+const pytestLoadReason = (records, { path }) => {
+	const dotted = dottedOf(path);
+	const load = records.find(
+		(r) => r.fault && r.classname === "" && r.name === dotted,
 	);
+	return load && pytestFaultReason(load.fault);
+};
+
+// How a named test is found in the report, chosen by its path's extension (D2).
+const PYTEST_DIALECT = {
+	matcher: pytestRecordMatcher,
+	loadReason: pytestLoadReason,
+};
+const PATH_DIALECT = { matcher: pathRecordMatcher, loadReason: pathLoadReason };
+const dialectOf = (test) =>
+	extOf(test.path) === "py" ? PYTEST_DIALECT : PATH_DIALECT;
+
+/** The bucket of one named test: its matching records agree, disagree (`mixed`), or
+    none exists — then the file's load failure, if any, is `failed-to-load`. */
+const bucketOf = (records, test) => {
+	const dialect = dialectOf(test);
+	const matches = records.filter(dialect.matcher(test));
 	if (matches.length === 0) {
-		const load = records.find(
-			(r) => r.failure !== undefined && r.classname === path && r.name === path,
-		);
-		return load
-			? { bucket: "failed-to-load", reason: load.failure }
-			: { bucket: "not-found" };
+		const reason = dialect.loadReason(records, test);
+		return reason === undefined
+			? { bucket: "not-found" }
+			: { bucket: "failed-to-load", reason };
 	}
 	const outcomes = new Set(matches.map(outcomeOf));
 	if (outcomes.size > 1) return { bucket: "mixed" };
@@ -444,24 +650,31 @@ const bucketOf = (records, { path, name }) => {
 		: { bucket };
 };
 
-/** The `report:` line and one `test-result:` (plus `reason:`) per named test. A missing
-    or unparsable report makes every named test `unavailable`, never a pass. */
-const reportLines = (junit, named) => {
-	const unavailable = named.map(({ id }) => `test-result: unavailable ${id}`);
-	if (!existsSync(junit)) return ["report: missing", ...unavailable];
-	let records;
+/** The report at `junit`, read once: `{ records }`, or `{ line }` naming why it cannot
+    be read (`report: missing`, `report: broken: <why>`). */
+const readReport = (junit) => {
+	if (!existsSync(junit)) return { line: "report: missing" };
 	try {
-		records = parseJunit(readFileSync(junit, "utf-8"));
+		return { records: parseJunit(readFileSync(junit, "utf-8")) };
 	} catch (error) {
-		return [
-			`report: broken: ${String(error?.message ?? error).split("\n")[0]}`,
-			...unavailable,
-		];
+		return {
+			line: `report: broken: ${String(error?.message ?? error).split("\n")[0]}`,
+		};
 	}
+};
+
+/** The `report:` line and one `test-result:` (plus `reason:`) per named test. A missing
+    or unparsable report makes every named test `unavailable`, never a pass. Under a
+    `broken` run line, a named test the report lacks is `unavailable`, not `not-found`. */
+const reportLines = (junit, report, named, broken) => {
+	const unavailable = named.map(({ id }) => `test-result: unavailable ${id}`);
+	if (!report.records) return [report.line, ...unavailable];
+	const { records } = report;
 	return [
 		`report: ${junit}`,
 		...named.flatMap((test) => {
-			const { bucket, reason } = bucketOf(records, test);
+			const { bucket: found, reason } = bucketOf(records, test);
+			const bucket = broken && found === "not-found" ? "unavailable" : found;
 			const result = `test-result: ${bucket} ${test.id}`;
 			return reason === undefined
 				? [result]
@@ -472,6 +685,88 @@ const reportLines = (junit, named) => {
 
 const lines = (list) => list.map((line) => `${line}\n`).join("");
 
+// ---- pytest dialect (S1-pytest-report) ----
+
+/** The language of a slice's runner tests (changed tests that are not test data):
+    `python` (Python only), `mixed` (Python and another source language) or `other`. */
+const runnerLanguage = (tests) => {
+	const runners = tests.filter((path) => !isTestData(path));
+	const python = runners.some(isPythonTest);
+	const other = runners.some((path) => extOf(path) !== "py" && isSource(path));
+	if (!python) return "other";
+	return other ? "mixed" : "python";
+};
+
+// pytest's exit codes 2–4 (pytest.ExitCode); 0, 1 and 5 have run lines of their own.
+const PYTEST_EXIT = {
+	2: "collection error or interrupted",
+	3: "internal error",
+	4: "usage error",
+};
+
+/** A Python run's run line, from pytest's exit code. An exit 1 is red only when the
+    report it promised can be read (`readable`). */
+const pytestRunLine = (code, readable) => {
+	if (code === 0) return "result: green";
+	if (code === 5) return "result: no-tests";
+	if (code === 1) {
+		return readable
+			? "result: red"
+			: "result: broken: exit 1 (pytest: no readable report)";
+	}
+	const why = Object.hasOwn(PYTEST_EXIT, code)
+		? PYTEST_EXIT[code]
+		: "unknown exit code";
+	return `result: broken: exit ${code} (pytest: ${why})`;
+};
+
+/** The run line: pytest's meanings for a Python run, else non-zero is red. */
+const runLineOf = (code, { python, promisesReport, report }) =>
+	python
+		? pytestRunLine(code, !promisesReport || report.records !== undefined)
+		: `result: ${code === 0 ? "green" : "red"}`;
+
+/** The top folder and the caller's folder that the run folder and `{tests}` are placed
+    by: real paths in a Python run, so a caller in a junction to the top folder runs inside
+    the copy with matching `{tests}`; as given otherwise, as before S2. */
+const placesOf = (top, cwd, python) =>
+	python ? { top: realOf(top), cwd: realOf(cwd) } : { top, cwd };
+
+/** Builds the scratch copy, places the links and runs the command in the caller's folder
+    of it (`place`, see placesOf); returns `{ code, verdict }`. A Python run gets a fresh
+    guard folder outside every checkout folder and the guarded environment (D11, D18); its
+    records are judged before cleanup (`verdict`: the guard's run line, or undefined). The
+    scratch copy and the guard folder are removed whatever happens, the guard folder even
+    when the scratch removal throws. */
+const rerun = ({ top, place, scratch, build, links, python, run }) => {
+	const checkouts = python ? checkoutFolders(top) : [];
+	const guard = python ? createGuard(checkouts) : undefined;
+	try {
+		buildScratch(top, scratch, build);
+		placeLinks(links);
+		const runDir = join(scratch, relative(place.top, place.cwd));
+		const env =
+			guard &&
+			guardEnv(guard, { runDir, hasSrc: existsSync(join(runDir, "src")) });
+		const code = runCommand(run, runDir, env);
+		const verdict =
+			guard &&
+			importVerdict({
+				recordsDir: join(guard, "records"),
+				checkouts,
+				exempt: [scratch, guard, ...links.map(({ target }) => target)],
+				top,
+			});
+		return { code, verdict };
+	} finally {
+		try {
+			removeScratch(scratch, links);
+		} finally {
+			if (guard) rmSync(guard, { recursive: true, force: true });
+		}
+	}
+};
+
 const runCli = (argv, cwd) => {
 	const {
 		commit: rev,
@@ -480,6 +775,7 @@ const runCli = (argv, cwd) => {
 		links: linkArgs,
 		timeout,
 		command,
+		promisesReport,
 	} = parseArgs(argv);
 	const top = resolve(cwd, gitIn(cwd, ["rev-parse", "--show-toplevel"]).trim());
 	const { commit, parent } = resolveCommit(cwd, rev);
@@ -488,14 +784,17 @@ const runCli = (argv, cwd) => {
 		baseRev === undefined
 			? parent
 			: gitIn(cwd, ["merge-base", base, commit]).trim();
-	const { tests, fixtures, manifests } = slicePaths(top, from, commit);
-	const header = [
-		`reprove-red: ${commit}`,
-		`base: ${base}`,
-		...tests.map((path) => `test: ${path}`),
-		...fixtures.map((path) => `fixture: ${path}`),
-		...manifests.map((path) => `diagnostic: dependencies changed: ${path}`),
-	];
+	const changes = changesOf(top, from, commit);
+	const sliced = slicePaths(changes);
+	const { tests } = sliced;
+	const language = runnerLanguage(tests);
+	if (language === "mixed") {
+		throw new Error(
+			"tests in Python and another language need one run per runner",
+		);
+	}
+	const plan = copyPlan(changes, sliced, language === "python");
+	const header = [`reprove-red: ${commit}`, `base: ${base}`, ...plan.lines];
 	const scratch = resolve(
 		cwd,
 		gitIn(cwd, [
@@ -505,35 +804,41 @@ const runCli = (argv, cwd) => {
 			`rpiv/reprove-red/${baseRev === undefined ? commit : `${commit}-${base}`}`,
 		]).trim(),
 	);
-	const links = checkLinks(linkArgs, { cwd, top, scratch });
+	const python = language === "python";
+	const place = placesOf(top, cwd, python);
+	// A Python run checks and places links by real paths, like its run folder (D29).
+	const links = checkLinks(linkArgs, { ...place, scratch });
 	if (tests.length === 0) return lines([...header, "result: no-tests"]);
 	const log = `${scratch}.log`;
 	const junit = `${scratch}.junit.xml`;
-	const testsFromCwd = tests.map((path) =>
-		relative(cwd, join(top, path)).replace(/\\/g, "/"),
+	const testsFromCwd = plan.tests.map((path) =>
+		relative(place.cwd, join(place.top, path)).replace(/\\/g, "/"),
 	);
 	const args = command.flatMap((arg) =>
 		arg === "{tests}" ? testsFromCwd : [arg.split("{junit}").join(junit)],
 	);
-	let code;
 	rmSync(junit, { force: true }); // a report from an earlier run is never read
-	try {
-		buildScratch(top, scratch, {
-			parent: base,
-			commit,
-			paths: [...tests, ...fixtures],
-		});
-		placeLinks(links);
-		code = runCommand(args, join(scratch, relative(top, cwd)), log, timeout);
-	} finally {
-		removeScratch(scratch, links);
-	}
+	const { code, verdict } = rerun({
+		top,
+		place,
+		scratch,
+		build: { parent: base, commit, paths: plan.paths, removed: plan.removed },
+		links,
+		python,
+		run: { args, log, timeout },
+	});
+	const report = readReport(junit);
+	// The guard's line wins over pytest's in a Python run (S2-scratch-copy).
+	const runLine =
+		verdict ?? runLineOf(code, { python, promisesReport, report });
 	return lines([
 		...header,
 		`exit: ${code}`,
 		`log: ${log}`,
-		...(named.length > 0 ? reportLines(junit, named) : []),
-		`result: ${code === 0 ? "green" : "red"}`,
+		...(named.length > 0
+			? reportLines(junit, report, named, runLine.startsWith("result: broken:"))
+			: []),
+		runLine,
 	]);
 };
 

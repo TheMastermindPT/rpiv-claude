@@ -20,7 +20,7 @@
 //   ---size-outliers---     path \t loc \t x_median   (loc > max(3*median, 1.5*p90); raw LOC context only)
 //   ---godfile-candidates--- path \t loc \t x_median \t cats=N \t coh=R \t reason   (the G gate: union of mixing + low-cohesion size)
 //   ---low-cohesion---      path \t coh=R \t syms=N \t islands=K   (Lc lens: disjoint responsibilities at any size; excludes G candidates)
-//   ---complexity---        path \t decisions=N \t per100=R \t loc=N   (approximate branch-point count: if/for/while/case/catch + &&/||; top files only. CONTEXT/severity anchor for G/Lc — never a gate, never a finding by itself; JS/TS files only this iteration)
+//   ---complexity---        path \t decisions=N \t per100=R \t loc=N   (approximate branch-point count: if/for/while/case/catch + &&/||; top files only. CONTEXT/severity anchor for G/Lc — never a gate, never a finding by itself; JS/TS and Python files; Python counts if/elif/for/while/except/case/and/or)
 //   ---feature-envy-candidates--- path \t envies=<module> \t ext=N \t own=M \t ratio=R   (Fe pre-signal: file leans on one internal module > its own symbols)
 //   ---churn-hotspots---    path \t commits            (commits in churn window, desc)
 //   ---export-usage---      path \t exports=N \t inbound=M   (speculative-generality signal)
@@ -53,6 +53,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { makeBoundedEmitter } from "./bounded-output.mjs";
+import { pythonSuffixIndex, resolvePythonImports } from "./python-imports.mjs";
 import { ENVY_MIN_REFS, ENVY_MIN_RATIO, SOURCE_EXT, isTest } from "./source-set.mjs";
 
 const OUT_LINE_CAP = 200; // max rows per block
@@ -117,6 +118,7 @@ const isGenerated = (p) => {
 };
 const JS_TS_EXT = new Set(["ts", "tsx", "js", "jsx", "mjs", "cjs", "cts", "mts"]);
 const isJsTs = (p) => JS_TS_EXT.has(extOf(p));
+const isPython = (p) => extOf(p) === "py";
 
 // Concern-category dictionary for the god-file responsibility-mixing signal.
 // Heuristic + tunable (JS/TS-first): a file pulling imports from many DISTINCT
@@ -483,18 +485,26 @@ const resolveImportSpecifier = (fromFile, spec, sourceSet) => {
 	return null;
 };
 
-// file -> Set<file> of resolved internal import targets (a real edge graph).
+/** One JS/TS file's resolved internal import targets. */
+const jsImportTargets = (f, text, sourceSet) => {
+	const out = new Set();
+	for (const spec of collectSpecifiers(text)) {
+		const target = resolveImportSpecifier(f, spec, sourceSet);
+		if (target && target !== f) out.add(target);
+	}
+	return out;
+};
+
+// file -> Set<file> of resolved internal import targets (a real edge graph). Python
+// files resolve by module path (python-imports.mjs, D42 of the Python-support design).
 const buildImportGraph = (files, sourceSet) => {
 	const edges = new Map();
+	const pyIndex = pythonSuffixIndex([...sourceSet].filter(isPython));
 	for (const f of files) {
-		if (!isJsTs(f)) continue;
+		if (!isJsTs(f) && !isPython(f)) continue;
 		const text = readText(f);
 		if (text === null) continue;
-		const out = new Set();
-		for (const spec of collectSpecifiers(text)) {
-			const target = resolveImportSpecifier(f, spec, sourceSet);
-			if (target && target !== f) out.add(target);
-		}
+		const out = isPython(f) ? resolvePythonImports(f, text, pyIndex) : jsImportTargets(f, text, sourceSet);
 		if (out.size) edges.set(f, out);
 	}
 	return edges;
@@ -511,12 +521,28 @@ const isBarrel = (text) => {
 	return topLevelSymbols(text).every((s) => !s.behavioral);
 };
 
+// Approximate branch-point count (cyclomatic-ish; strings included by design — same
+// lossy tier as the other regex signals). Context anchor only.
+const jsDecisions = (text) =>
+	(text.match(/\b(if|for|while|case|catch)\b/g)?.length ?? 0) + (text.match(/&&|\|\|/g)?.length ?? 0);
+// Python (D41): the same tier over its keywords, with full-line `#` comments left out.
+const pythonDecisions = (text) =>
+	text.replace(/^[ \t]*#.*$/gm, "").match(/\b(if|elif|for|while|except|case|and|or)\b/g)?.length ?? 0;
+const addComplexity = (f, text, decisions) => {
+	const flines = text.split("\n").length;
+	if (decisions > 0) {
+		result.complexity.push({ f, decisions, per100: (decisions / Math.max(flines, 1)) * 100, loc: flines });
+	}
+};
+
 const catByFile = new Map();
 const cohByFile = new Map(); // f -> { cohesion, symbols, components } | null
 for (const f of sourceFiles) {
 	if (!isJsTs(f)) {
 		catByFile.set(f, 0);
 		cohByFile.set(f, null);
+		const pyText = isPython(f) ? readText(f) : null;
+		if (pyText !== null) addComplexity(f, pyText, pythonDecisions(pyText));
 		continue;
 	}
 	const text = readText(f);
@@ -532,14 +558,7 @@ for (const f of sourceFiles) {
 	if (envy) result.featureEnvy.push({ f, ...envy });
 	const swallows = countSwallows(text);
 	if (swallows > 0) result.catchSwallows.push({ f, swallows });
-	// Approximate branch-point count (cyclomatic-ish; strings/comments included by
-	// design — same lossy tier as the other regex signals). Context anchor only.
-	const decisions =
-		(text.match(/\b(if|for|while|case|catch)\b/g)?.length ?? 0) + (text.match(/&&|\|\|/g)?.length ?? 0);
-	const flines = text.split("\n").length;
-	if (decisions > 0) {
-		result.complexity.push({ f, decisions, per100: (decisions / Math.max(flines, 1)) * 100, loc: flines });
-	}
+	addComplexity(f, text, jsDecisions(text));
 }
 result.complexity.sort((a, b) => b.decisions - a.decisions || a.f.localeCompare(b.f));
 result.complexity = result.complexity.slice(0, 15);
@@ -637,13 +656,17 @@ result.busFactor.sort((a, b) => b.topShare - a.topShare || b.commits - a.commits
 // Count `export`-shaped declarations per file; for files with many exports,
 // approximate inbound usage by counting other files that reference the stem.
 const exportRe = /^\s*export\s+(?:default\s+|async\s+)?(?:const|let|var|function|class|interface|type|enum|abstract\s+class)\b|^\s*export\s*\{/gm;
+// Python (D43): a module's public surface is its top-level def/class/UPPER_CASE names
+// that do not start with `_`.
+const pyExportRe = /^(?:async[ \t]+)?(?:def|class)[ \t]+[A-Za-z]\w*|^[A-Z][A-Z0-9_]*[ \t]*=(?!=)/gm;
 const exportCounts = new Map();
 for (const f of sourceFiles) {
 	const text = readText(f);
 	if (text === null) continue;
-	const m = text.match(exportRe);
+	const m = text.match(isPython(f) ? pyExportRe : exportRe);
 	exportCounts.set(f, m ? m.length : 0);
 }
+const JS_GREP = ["*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.mts", "*.cts"];
 const exportCandidates = [...exportCounts.entries()]
 	.filter(([, n]) => n >= 5)
 	.sort((a, b) => b[1] - a[1])
@@ -655,8 +678,9 @@ for (const [f, n] of exportCandidates) {
 	let inbound = null;
 	if (stem && !DUP_STOPWORDS.has(stem.toLowerCase())) {
 		// Scan the whole JS/TS family (mirror SOURCE_EXT) — omitting *.mjs/*.cjs made
-		// every ESM-script importer invisible, so `.mjs` modules read as inbound=0.
-		const hits = safe(["grep", "-l", "--fixed-strings", stem, "--", "*.ts", "*.tsx", "*.js", "*.jsx", "*.mjs", "*.cjs", "*.mts", "*.cts"]);
+		// every ESM-script importer invisible, so `.mjs` modules read as inbound=0. A
+		// Python module is imported from `.py` files (D43).
+		const hits = safe(["grep", "-l", "--fixed-strings", stem, "--", ...(isPython(f) ? ["*.py"] : JS_GREP)]);
 		const files = new Set((hits ? hits.split("\n") : []).map(toPosix).filter(Boolean));
 		files.delete(f);
 		inbound = files.size;
@@ -678,11 +702,16 @@ const caseRe = /\b(?:it|test)\s*\(/g;
 // `assert\s*\(` missed every `assert.equal`/`assert.ok` and reported asserts=0.
 // Lenient by design: the assert/case ratio is a rough theater signal, not a count.
 const assertRe = /\bexpect\s*\(|\bassert\b\s*(?:\.\s*\w+\s*)?\(|\.(?:toBe|toEqual|toStrictEqual|toMatch|toContain|toThrow|toHaveBeenCalled|toHaveLength|toBeNull|toBeDefined|toBeTruthy|toBeFalsy|toBeGreaterThan|toBeLessThan)\b/g;
+// Python (D44): `def test_…(` cases at any indent; bare `assert` statements,
+// `pytest.raises(`/`pytest.warns(` and unittest `self.assert…(` calls.
+const pyCaseRe = /^[ \t]*(?:async[ \t]+)?def[ \t]+test_?\w*[ \t]*\(/gm;
+const pyAssertRe = /^[ \t]*assert\b|\bpytest\.(?:raises|warns)[ \t]*\(|\bself\.assert\w+[ \t]*\(/gm;
 for (const f of testFiles) {
 	const text = readText(f);
 	if (text === null) continue;
-	const cases = (text.match(caseRe) ?? []).length;
-	const asserts = (text.match(assertRe) ?? []).length;
+	const py = isPython(f);
+	const cases = (text.match(py ? pyCaseRe : caseRe) ?? []).length;
+	const asserts = (text.match(py ? pyAssertRe : assertRe) ?? []).length;
 	if (cases === 0) continue;
 	const ratio = asserts / cases;
 	if (ratio < 1) {

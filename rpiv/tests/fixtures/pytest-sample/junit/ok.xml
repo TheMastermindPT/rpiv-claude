@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="5" skipped="2" tests="9" time="0.138" timestamp="2026-11-22T18:22:27.766557+00:00" hostname="&lt;host&gt;"><testcase classname="tests.test_ok" name="test_b1_add" time="0.001"><failure message="assert 2 == 3&#10; +  where 2 = add(1, 1)">def test_b1_add():
+&gt;       assert add(1, 1) == 3
+E       assert 2 == 3
+E        +  where 2 = add(1, 1)
+
+tests\test_ok.py:9: AssertionError</failure></testcase><testcase classname="tests.test_ok.TestBar" name="test_b3_method" time="0.000" /><testcase classname="tests.test_ok.TestBar.TestInner" name="test_b3_inner" time="0.000" /><testcase classname="tests.test_ok" name="test_b2_param[1]" time="0.001"><failure message="assert 1 is None">value = 1
+
+    @pytest.mark.parametrize("value", [1, "a/b", "c::d", "[e]"])
+    def test_b2_param(value):
+&gt;       assert value is None
+E       assert 1 is None
+
+tests\test_ok.py:23: AssertionError</failure></testcase><testcase classname="tests.test_ok" name="test_b2_param[a/b]" time="0.000"><failure message="AssertionError: assert 'a/b' is None">value = 'a/b'
+
+    @pytest.mark.parametrize("value", [1, "a/b", "c::d", "[e]"])
+    def test_b2_param(value):
+&gt;       assert value is None
+E       AssertionError: assert 'a/b' is None
+
+tests\test_ok.py:23: AssertionError</failure></testcase><testcase classname="tests.test_ok" name="test_b2_param[c::d]" time="0.000"><failure message="AssertionError: assert 'c::d' is None">value = 'c::d'
+
+    @pytest.mark.parametrize("value", [1, "a/b", "c::d", "[e]"])
+    def test_b2_param(value):
+&gt;       assert value is None
+E       AssertionError: assert 'c::d' is None
+
+tests\test_ok.py:23: AssertionError</failure></testcase><testcase classname="tests.test_ok" name="test_b2_param[[e]]" time="0.000"><failure message="AssertionError: assert '[e]' is None">value = '[e]'
+
+    @pytest.mark.parametrize("value", [1, "a/b", "c::d", "[e]"])
+    def test_b2_param(value):
+&gt;       assert value is None
+E       AssertionError: assert '[e]' is None
+
+tests\test_ok.py:23: AssertionError</failure></testcase><testcase classname="tests.test_ok" name="test_b6_xf" time="0.000"><skipped type="pytest.xfail" message="" /></testcase><testcase classname="tests.test_ok" name="test_b6_skip" time="0.000"><skipped type="pytest.skip" message="sample skip">&lt;root&gt;\tests\test_ok.py:31: sample skip</skipped></testcase></testsuite></testsuites>

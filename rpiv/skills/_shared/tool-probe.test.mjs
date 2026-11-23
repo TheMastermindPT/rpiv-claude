@@ -157,11 +157,17 @@ try {
 	git(repo6, ["init", "-q"]);
 	git(repo6, ["add", "-A"]);
 	const out6 = execFileSync("node", [PROBE, "pkgA", "pkgB"], { cwd: repo6, encoding: "utf-8" });
+	// S4-probe-roots (D34): every root is probed; a further root gets an also_root: line
+	// and its rows carry root=<path>, so it is never silently dropped.
 	assert.ok(
-		out6.includes("roots_note: targets span 2 project roots — probing the first"),
-		`multi-project targets must announce the probe anchor, got:\n${out6}`,
+		/^also_root: \S*\/pkgB\tecosystem=js-ts$/m.test(out6),
+		`multi-project targets must print every root, got:\n${out6}`,
 	);
-	console.log("OK (tool-probe span note) — multi-project anchor announced, never silent.");
+	assert.ok(
+		/^knip\t[^\n]*\troot=\S*\/pkgB$/m.test(out6),
+		`the further root's rows must carry root=, got:\n${out6}`,
+	);
+	console.log("OK (tool-probe span) — every project root printed, never silent.");
 } finally {
 	rmSync(repo6, { recursive: true, force: true });
 }
