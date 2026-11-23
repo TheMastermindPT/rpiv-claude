@@ -605,7 +605,8 @@ describe("Python scratch-copy vocabulary (S2-scratch-copy)", () => {
 			join(ROOT, "skills/_shared/source-vocab.mjs"),
 			"utf-8",
 		);
-		const importable = vocab.match(/\/\/ Importable:([\s\S]*?)\n\n/)?.[1] ?? "";
+		// \r?\n: a checkout with core.autocrlf writes this file with CRLF line endings.
+		const importable = vocab.match(/\/\/ Importable:([\s\S]*?)\r?\n\r?\n/)?.[1] ?? "";
 		expect.soft(importable).toMatch(/\bisPythonTestSupport\b/);
 	});
 });
