@@ -60,3 +60,26 @@ describe("Python prose (S3-preflight-python)", () => {
 		}
 	});
 });
+
+// B50 of S9-reviewer-pitfalls: both reviewer agents carry the generic Python pitfalls
+// (FR20, D58). Agents are not mirrored into opencode/generated/.
+const PITFALLS = [
+	/mutable default argument/i,
+	/bare or silent `except`/i,
+	/`conftest\.py` fixture scope/i,
+	/`@pytest\.mark\.parametrize`/,
+	/Hypothesis strateg/i,
+	/`-m "not slow"`/,
+];
+const PITFALL_ROWS = rows(
+	["agents/artifact-code-reviewer.md", "agents/artifact-coverage-reviewer.md"],
+	PITFALLS,
+);
+
+describe("reviewer Python pitfalls (S9-reviewer-pitfalls)", () => {
+	it("B50: both reviewer agents name the six generic Python pitfalls", () => {
+		for (const [path, phrase] of PITFALL_ROWS) {
+			expect.soft(joined(path), path).toMatch(phrase);
+		}
+	});
+});
