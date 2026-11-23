@@ -534,8 +534,10 @@ describe("Python scratch copy and import guard (S2-scratch-copy)", () => {
 			expect.soft(lastLine(fromLink.lines)).toBe("result: red");
 
 			// Outside a Python run the run folder is computed as before S2. On Windows a
-			// junction caller is still the broken call it was, never a run with misplaced
-			// {tests}; on POSIX the caller's folder is already a real path, so it runs.
+			// junction caller is a broken call naming its folder, never a run with misplaced
+			// {tests} or a run outside the scratch copy (rpiv issue draft
+			// 20261123-151137-84f5c6f8 moved the scratch copy out of the git dir); on POSIX
+			// the caller's folder is already a real path, so it runs.
 			const js = sliceOf(["tests/a.test.mjs"]);
 			const jsVia = join(tempDir(), "via");
 			symlinkSync(js.repo, jsVia, "junction");
@@ -548,7 +550,8 @@ describe("Python scratch copy and import guard (S2-scratch-copy)", () => {
 					? {
 							status: 2,
 							last: undefined,
-							stderr: /^reprove-red: broken: cannot start: /,
+							stderr:
+								/^reprove-red: broken: caller's folder outside the top folder: /,
 						}
 					: { status: 0, last: "result: red", stderr: /^$/ };
 			expect.soft(plain.status).toBe(BEFORE_S2.status);
@@ -1143,12 +1146,11 @@ describe("Python scratch copy and import guard (S2-scratch-copy)", () => {
 			expect.soft(inCheckout.stdout).not.toContain("\r");
 
 			put(repo, ".venv/x.py", "");
-			const scratch = gitPath(repo, `rpiv/reprove-red/${slice}`);
 			const exempt = guardedRun(repo, slice, {
 				records: {
 					a: recordText({
 						modules: [
-							swapCase(join(scratch, "src/demo/__init__.py")),
+							`{cwd}${swapCase("/src/demo/__init__.py")}`,
 							swapCase(join(top, ".venv/x.py")),
 						],
 						...CRLF,

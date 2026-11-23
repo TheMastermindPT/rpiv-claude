@@ -137,7 +137,9 @@ Otherwise record `mechanism options: not run (no load-bearing mechanism)`. A cho
    citation`. In design, the Approach Check verifies these rejections; elsewhere they go
    to the next intent or candidate review as open questions, never as verified facts.
 6. **Keep the states distinct, and show them.** No dispatch possible: `mechanism options:
-   unavailable`. No parseable `options:` line, a count that differs from the `OPTION`
+   unavailable`. When the agent type is not found, the session most likely started before
+   the agent was added (agents load at session start): write `mechanism options:
+   unavailable: restart the session to load new agents` and tell the developer so. No parseable `options:` line, a count that differs from the `OPTION`
    rows, or a row without its failure case, `fails at:`, switch cost or grounding:
    `mechanism options: broken: <what is missing>` — never read as "no alternatives". An
    `anchored:` line: `mechanism options: anchored: <what it saw>`; its rows are shown

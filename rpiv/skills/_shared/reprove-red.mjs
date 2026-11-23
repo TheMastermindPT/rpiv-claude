@@ -1,8 +1,14 @@
 // reprove-red.mjs — re-proves a slice's red (D23 of the risk-lanes design, S14, FR13).
-// Rebuilds the slice commit's parent in a scratch copy under the git dir, writes the
-// slice's changed test and fixture files over it (in a Python run, its whole changed test
-// tree; see below), runs the given command there and reports the outcome. The real
-// index, HEAD, branch and working tree are never touched.
+// Rebuilds the slice commit's parent in a scratch copy, writes the slice's changed test
+// and fixture files over it (in a Python run, its whole changed test tree; see below),
+// runs the given command there and reports the outcome. The real index, HEAD, branch and
+// working tree are never touched. The scratch copy is a fresh, short folder in the
+// system's temporary folder (never under the git dir: Windows' 260-character limit) and
+// a git work tree checked out at the base, its objects borrowed from the repository, so a
+// test that runs git there sees a repository; the runner never gets the caller's GIT_DIR
+// and its kin. The log and the report stay under the git dir (rpiv issue drafts
+// 20261123-151137-84f5c6f8, 20261123-151137-3491b4f7). A caller's folder outside the top
+// folder (a junction to it, outside a Python run) is a broken call.
 //
 // CLI, run only as the entry point:
 //   node reprove-red.mjs --commit <rev> [--base <rev>] [--test <path>::<name>]...
@@ -40,8 +46,7 @@
 // (`diagnostic: symlink not copied:`), a changed test-tree path inside a `src` folder that
 // the copy does not take is named (`diagnostic: production test folder not copied:`), a
 // folder replaced by a file is written as the file, and `--link` targets are placed by
-// real paths. Outside a Python run the copy, the header, `{tests}` and the environment
-// stay as they were.
+// real paths. Outside a Python run the copy, the header and `{tests}` stay as they were.
 //
 // Importable: exitCodeOf.
 
@@ -51,6 +56,7 @@ import {
 	existsSync,
 	lstatSync,
 	mkdirSync,
+	mkdtempSync,
 	openSync,
 	readFileSync,
 	rmSync,
@@ -58,6 +64,7 @@ import {
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import {
 	checkoutFolders,
@@ -80,13 +87,14 @@ import {
 	isTestTree,
 } from "./source-vocab.mjs";
 
-/** git's stdout as text, run in `cwd`; a failure throws one line naming git. */
-const gitIn = (cwd, args, { env } = {}) => {
+/** git's stdout as text, run in `cwd` with `env` (default: the caller's); a failure
+    throws one line naming git. */
+const gitIn = (cwd, args, { env = process.env } = {}) => {
 	try {
 		return execFileSync("git", args, {
 			cwd,
 			encoding: "utf-8",
-			env: env ? { ...process.env, ...env } : process.env,
+			env,
 			stdio: ["ignore", "pipe", "pipe"],
 			maxBuffer: 64 * 1024 * 1024,
 		});
@@ -318,15 +326,47 @@ const copyPlan = (changes, { tests, fixtures, manifests }, python) => {
 	};
 };
 
-/** Checks the parent's tree out into `scratch` through a temporary index, removes the
-    slice's deleted paths, then writes the slice's files over it from the commit. */
-const buildScratch = (top, scratch, { parent, commit, paths, removed }) => {
-	rmSync(scratch, { recursive: true, force: true });
-	mkdirSync(scratch, { recursive: true });
-	const env = { GIT_INDEX_FILE: `${scratch}.index` };
+/** Makes the empty folder `scratch` a git repository checked out at `parent`: its own
+    `.git` (no hooks; the repository's objects borrowed, nothing copied), HEAD detached at
+    `parent` and an index matching the files, so a test that runs git there (`git
+    check-ignore`) sees a work tree like the real one. The files are written with the
+    repository's own settings, long paths allowed. */
+const checkoutBase = (top, scratch, parent) => {
+	const objects = resolve(
+		top,
+		gitIn(top, ["rev-parse", "--git-path", "objects"]).trim(),
+	);
+	// Never the caller's GIT_DIR: init and update-ref would act on the real repository.
+	const own = { env: runnerEnv(process.env) };
+	gitIn(scratch, ["init", "--quiet", "--template="], own);
+	writeFileSync(
+		join(scratch, ".git", "objects", "info", "alternates"),
+		`${objects.replace(/\\/g, "/")}\n`,
+	);
+	gitIn(scratch, ["update-ref", "--no-deref", "HEAD", parent], own);
+	const env = {
+		...process.env,
+		GIT_INDEX_FILE: join(scratch, ".git", "index"),
+	};
 	gitIn(top, ["read-tree", parent], { env });
-	gitIn(top, [`--work-tree=${scratch}`, "checkout-index", "-a", "-f"], { env });
-	rmSync(env.GIT_INDEX_FILE, { force: true });
+	gitIn(
+		top,
+		[
+			"-c",
+			"core.longpaths=true",
+			`--work-tree=${scratch}`,
+			"checkout-index",
+			"-a",
+			"-f",
+		],
+		{ env },
+	);
+};
+
+/** Checks the parent's tree out into the empty folder `scratch` (checkoutBase), removes
+    the slice's deleted paths, then writes the slice's files over it from the commit. */
+const buildScratch = (top, scratch, { parent, commit, paths, removed }) => {
+	checkoutBase(top, scratch, parent);
 	for (const path of removed) {
 		rmSync(join(scratch, path), { recursive: true, force: true });
 	}
@@ -360,7 +400,7 @@ const gitFolders = (top) => [
 
 /** One link, checked alone: its target exists, lies inside the repository (not the
     repository folder itself), stays out of the git folders, and holds no tracked file. */
-const checkLink = (link, { cwd, top, scratch, gitDirs }) => {
+const checkLink = (link, { cwd, top, gitDirs }) => {
 	const target = resolve(cwd, link);
 	if (!existsSync(target)) throw new Error(`link target missing: ${link}`);
 	const inside = relative(top, target);
@@ -377,7 +417,7 @@ const checkLink = (link, { cwd, top, scratch, gitDirs }) => {
 		inside.replace(/\\/g, "/"),
 	]);
 	if (tracked) throw new Error(`link target holds tracked files: ${link}`);
-	return { link, target, at: join(scratch, inside) };
+	return { link, target, inside };
 };
 
 /** Two links where one target is or holds the other would let one link's placement
@@ -394,18 +434,17 @@ const refuseOverlaps = (links) => {
 
 /** The links to place, checked before anything is removed or created, so a link never
     maps outside the scratch copy, reaches the checkout, or hides predecessor code. */
-const checkLinks = (linkArgs, { cwd, top, scratch }) => {
+const checkLinks = (linkArgs, { cwd, top }) => {
 	const gitDirs = gitFolders(top);
-	const links = linkArgs.map((link) =>
-		checkLink(link, { cwd, top, scratch, gitDirs }),
-	);
+	const links = linkArgs.map((link) => checkLink(link, { cwd, top, gitDirs }));
 	refuseOverlaps(links);
 	return links;
 };
 
 /** Directory links from `scratch` to the checkout's folders (Windows: junctions). */
-const placeLinks = (links) => {
-	for (const { target, at } of links) {
+const placeLinks = (links, scratch) => {
+	for (const { target, inside } of links) {
+		const at = join(scratch, inside);
 		rmSync(at, { recursive: true, force: true });
 		mkdirSync(dirname(at), { recursive: true });
 		symlinkSync(target, at, "junction");
@@ -414,7 +453,8 @@ const placeLinks = (links) => {
 
 /** Removes the scratch copy: links first, so a removal never reaches a link target. */
 const removeScratch = (scratch, links) => {
-	for (const { at } of links) {
+	for (const { inside } of links) {
+		const at = join(scratch, inside);
 		if (isLink(at)) unlinkSync(at);
 	}
 	rmSync(scratch, { recursive: true, force: true });
@@ -447,8 +487,28 @@ export const exitCodeOf = (result, command, timeout) => {
 	return result.status;
 };
 
-/** Runs the command (`args`) without a shell in `runDir` with `env` (undefined: the
-    caller's), its output in `log`; returns the exit code (see exitCodeOf). */
+// The variables that point git at a repository. The runner runs in the scratch copy, so a
+// test that runs git there must find the scratch repository, never the caller's (a git
+// hook sets GIT_INDEX_FILE and GIT_DIR).
+const GIT_LOCATION = new Set([
+	"GIT_DIR",
+	"GIT_WORK_TREE",
+	"GIT_INDEX_FILE",
+	"GIT_COMMON_DIR",
+	"GIT_OBJECT_DIRECTORY",
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+	"GIT_PREFIX",
+	"GIT_NAMESPACE",
+]);
+
+/** `env` without the GIT_LOCATION variables (any case). */
+const runnerEnv = (env) =>
+	Object.fromEntries(
+		Object.entries(env).filter(([key]) => !GIT_LOCATION.has(key.toUpperCase())),
+	);
+
+/** Runs the command (`args`) without a shell in `runDir` with `env`, its output in
+    `log`; returns the exit code (see exitCodeOf). */
 const runCommand = ({ args, log, timeout }, runDir, env) => {
 	const fd = openSync(log, "w");
 	try {
@@ -732,22 +792,28 @@ const runLineOf = (code, { python, promisesReport, report }) =>
 const placesOf = (top, cwd, python) =>
 	python ? { top: realOf(top), cwd: realOf(cwd) } : { top, cwd };
 
-/** Builds the scratch copy, places the links and runs the command in the caller's folder
-    of it (`place`, see placesOf); returns `{ code, verdict }`. A Python run gets a fresh
-    guard folder outside every checkout folder and the guarded environment (D11, D18); its
+/** Builds the scratch copy in a fresh folder of the system's temporary folder (short,
+    outside the git dir), places the links and runs the command in the caller's folder of
+    it (`place`, see placesOf); returns `{ code, verdict }`. A Python run gets a fresh guard folder and the guarded environment (D11, D18), and a
+    temporary folder inside a checkout folder is broken before anything is made (D23); its
     records are judged before cleanup (`verdict`: the guard's run line, or undefined). The
     scratch copy and the guard folder are removed whatever happens, the guard folder even
     when the scratch removal throws. */
-const rerun = ({ top, place, scratch, build, links, python, run }) => {
+const rerun = ({ top, place, build, links, python, run }) => {
 	const checkouts = python ? checkoutFolders(top) : [];
-	const guard = python ? createGuard(checkouts) : undefined;
+	const keep = links.map(({ target }) => target);
+	const guard = python ? createGuard(checkouts, keep) : undefined;
+	let scratch;
 	try {
+		scratch = realOf(mkdtempSync(join(tmpdir(), "rpiv-rr-")));
 		buildScratch(top, scratch, build);
-		placeLinks(links);
+		placeLinks(links, scratch);
 		const runDir = join(scratch, relative(place.top, place.cwd));
-		const env =
-			guard &&
-			guardEnv(guard, { runDir, hasSrc: existsSync(join(runDir, "src")) });
+		const env = runnerEnv(
+			guard
+				? guardEnv(guard, { runDir, hasSrc: existsSync(join(runDir, "src")) })
+				: process.env,
+		);
 		const code = runCommand(run, runDir, env);
 		const verdict =
 			guard &&
@@ -760,11 +826,24 @@ const rerun = ({ top, place, scratch, build, links, python, run }) => {
 		return { code, verdict };
 	} finally {
 		try {
-			removeScratch(scratch, links);
+			if (scratch) removeScratch(scratch, links);
 		} finally {
 			if (guard) rmSync(guard, { recursive: true, force: true });
 		}
 	}
+};
+
+/** The places (placesOf) and the checked links of a run. A Python run checks and places
+    links by real paths, like its run folder (D29). The run folder is the caller's folder
+    inside the scratch copy, so a caller outside the top folder (a junction to it, outside
+    a Python run) is broken: it would run somewhere else. */
+const checkedPlaces = ({ top, cwd, python, linkArgs }) => {
+	const place = placesOf(top, cwd, python);
+	const links = checkLinks(linkArgs, place);
+	if (!within(place.top, place.cwd)) {
+		throw new Error(`caller's folder outside the top folder: ${place.cwd}`);
+	}
+	return { place, links };
 };
 
 const runCli = (argv, cwd) => {
@@ -795,22 +874,21 @@ const runCli = (argv, cwd) => {
 	}
 	const plan = copyPlan(changes, sliced, language === "python");
 	const header = [`reprove-red: ${commit}`, `base: ${base}`, ...plan.lines];
-	const scratch = resolve(
+	// The log and the report stay under the git dir; a run on another base keeps its own.
+	const output = resolve(
 		cwd,
 		gitIn(cwd, [
 			"rev-parse",
 			"--git-path",
-			// A run on another base keeps its own scratch copy, log and report.
 			`rpiv/reprove-red/${baseRev === undefined ? commit : `${commit}-${base}`}`,
 		]).trim(),
 	);
 	const python = language === "python";
-	const place = placesOf(top, cwd, python);
-	// A Python run checks and places links by real paths, like its run folder (D29).
-	const links = checkLinks(linkArgs, { ...place, scratch });
+	const { place, links } = checkedPlaces({ top, cwd, python, linkArgs });
 	if (tests.length === 0) return lines([...header, "result: no-tests"]);
-	const log = `${scratch}.log`;
-	const junit = `${scratch}.junit.xml`;
+	mkdirSync(dirname(output), { recursive: true });
+	const log = `${output}.log`;
+	const junit = `${output}.junit.xml`;
 	const testsFromCwd = plan.tests.map((path) =>
 		relative(place.cwd, join(place.top, path)).replace(/\\/g, "/"),
 	);
@@ -821,7 +899,6 @@ const runCli = (argv, cwd) => {
 	const { code, verdict } = rerun({
 		top,
 		place,
-		scratch,
 		build: { parent: base, commit, paths: plan.paths, removed: plan.removed },
 		links,
 		python,

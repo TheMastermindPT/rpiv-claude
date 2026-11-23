@@ -10,7 +10,11 @@
 // the Python-support design, S3-preflight-python). Contract paths resolve against
 // the repository root, never the run folder. The base must be an ancestor of the
 // candidate; the slice may span several commits. It also prints the re-proof plan for
-// reprove-red.mjs, always with a `--base` (pins are never re-proved).
+// reprove-red.mjs, always with a `--base` (pins are never re-proved), each line ending
+// in the runner (`--link <folder> -- <runner> ... {junit} {tests}`) found at the
+// repository root: pytest from `.venv`, or vitest from `node_modules`. When none is
+// found, the lines stop before `--` and one `diagnostic: reprove lines need a runner`
+// line says why, so a line is never mistaken for a complete call.
 //
 // CLI, run only as the entry point, inside the repository:
 //   node slice-preflight.mjs --artifact <brief.md> --slice <slice-id>
@@ -26,7 +30,8 @@
 // Importable: parseTestContract (pure).
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { isMain } from "./is-main.mjs";
 import { isTest } from "./source-vocab.mjs";
 import { parseTestContract } from "./test-contract.mjs";
@@ -322,30 +327,80 @@ const evidenceFinding = (path, shas) => {
 const evidenceFindings = (paths, shas) =>
 	paths.map((path) => evidenceFinding(path, shas)).filter(Boolean);
 
+// The runners a re-proof line can name, by the language of its tests: the executable
+// (the first that exists at the repository root), the folder to link and the arguments.
+const RUNNERS = {
+	python: {
+		exes: [".venv/Scripts/python.exe", ".venv/bin/python"],
+		link: ".venv",
+		args: "-m pytest --junitxml={junit} {tests}",
+		missing: "no .venv/Scripts/python.exe or .venv/bin/python",
+	},
+	js: {
+		exes: ["node_modules/vitest/vitest.mjs"],
+		link: "node_modules",
+		args: "run --reporter=junit --outputFile={junit} {tests}",
+		missing: "no node_modules/vitest/vitest.mjs",
+		node: true,
+	},
+};
+
+/** The runner tail of a re-proof line for tests at `paths`, found at `root`: `{ tail }`,
+    or `{ why }` when none can be named. */
+const runnerFor = (root, paths) => {
+	const python = paths.filter(isPython).length;
+	if (python > 0 && python < paths.length)
+		return { why: "tests in Python and another language" };
+	const runner = python > 0 ? RUNNERS.python : RUNNERS.js;
+	const exe = runner.exes.find((path) => existsSync(join(root, path)));
+	if (exe === undefined)
+		return { why: `${runner.missing} at the repository root` };
+	const command = runner.node ? `node ${exe}` : exe;
+	return { tail: ` --link ${runner.link} -- ${command} ${runner.args}` };
+};
+
 /** One behavior's reprove-red.mjs calls on one revision: a `--test` per titled test,
-    and one call without `--test` (every test the slice changed) for whole-file tests. */
+    and one call without `--test` (every test the slice changed) for whole-file tests,
+    each `{ line, paths }` (the test files it runs). */
 const reproveAt = (candidate, b, sha) => {
 	const call = `reprove: --commit ${candidate} --base ${sha}`;
 	const titled = b.tests.filter((t) => t.title !== undefined);
+	const whole = b.tests.filter((t) => t.title === undefined);
 	return [
-		...titled.map(({ title, path }) => `${call} --test ${path}::${title}`),
-		...(titled.length < b.tests.length ? [call] : []),
+		...titled.map(({ title, path }) => ({
+			line: `${call} --test ${path}::${title}`,
+			paths: [path],
+		})),
+		...(whole.length ? [{ line: call, paths: whole.map((t) => t.path) }] : []),
 	];
 };
 
 /** reprove-red.mjs calls for the contract's non-pin tests, on each named red revision
-    or else on the slice's base, so a slice of several commits re-proves all of them. */
-const reprovePlan = (candidate, base, behaviors) => [
-	...new Set(
-		behaviors
-			.filter((b) => !b.pin)
-			.flatMap((b) =>
-				(b.redAt.length ? b.redAt : [base]).flatMap((sha) =>
-					reproveAt(candidate, b, sha),
-				),
+    or else on the slice's base, so a slice of several commits re-proves all of them;
+    each ends in its runner (runnerFor), else one diagnostic per reason follows them. */
+const reprovePlan = (root, candidate, base, behaviors) => {
+	const calls = behaviors
+		.filter((b) => !b.pin)
+		.flatMap((b) =>
+			(b.redAt.length ? b.redAt : [base]).flatMap((sha) =>
+				reproveAt(candidate, b, sha),
 			),
-	),
-];
+		);
+	const lines = new Set();
+	const whys = new Set();
+	for (const { line, paths } of calls) {
+		const { tail, why } = runnerFor(root, paths);
+		lines.add(tail ? line + tail : line);
+		if (why) whys.add(why);
+	}
+	return [
+		...lines,
+		...[...whys].map(
+			(why) =>
+				`diagnostic: reprove lines need a runner: append -- <runner> with {junit} and {tests} (${why})`,
+		),
+	];
+};
 
 /** Throws unless the base is an ancestor of the candidate: a slice of several commits
     is fine, a base from another line of history is a broken call. */
@@ -425,7 +480,7 @@ const runCli = (argv, cwd) => {
 		...unchecked,
 		...diagnostics,
 		...tests.diagnostics,
-		...reprovePlan(candidate, base, tests.behaviors),
+		...reprovePlan(root, candidate, base, tests.behaviors),
 	];
 	return {
 		text: lines.map((l) => `${l}\n`).join(""),

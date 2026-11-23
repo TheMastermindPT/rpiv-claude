@@ -154,8 +154,6 @@ if (got !== 5) throw new Error(\`got \${got} readme \${readme}\`);
 			);
 			put(repo, "tests/fixtures/n.json", '{"v":1}\n');
 			const slice = commitAll(repo, "slice");
-			const scratch = scratchOf(repo, slice);
-			put(scratch, "junk.txt", "left from an earlier run\n");
 			const before = snapshot(repo);
 
 			const run = runHelper(
@@ -177,8 +175,6 @@ if (got !== 5) throw new Error(\`got \${got} readme \${readme}\`);
 			expect(readFileSync(log, "utf-8")).toContain(
 				"FAIL tests/sum.test.mjs: got 0 readme old",
 			);
-			expect(existsSync(scratch)).toBe(false);
-			expect(existsSync(`${scratch}.index`)).toBe(false);
 			expect(snapshot(repo)).toEqual(before);
 
 			for (const rev of ["HEAD", slice.slice(0, 8)]) {

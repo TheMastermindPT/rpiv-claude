@@ -694,6 +694,7 @@ describe("slice-preflight on whole-file tests and a slice of several commits", (
 				"diagnostic: test path skills/s.test.mjs resolved to rpiv/skills/s.test.mjs (also matched rpiv/gen/skills/s.test.mjs)",
 				`reprove: --commit ${l.candidate} --base ${l.base}`,
 				`reprove: --commit ${l.candidate} --base ${l.base} --test twin.test.ts::twin case`,
+				"diagnostic: reprove lines need a runner: append -- <runner> with {junit} and {tests} (no node_modules/vitest/vitest.mjs at the repository root)",
 			]);
 			for (const folder of ["apps/h", "rpiv/gen"])
 				expect(preflight(l, join(l.repo, folder)).stdout).toBe(res.stdout);
@@ -937,6 +938,93 @@ describe("slice-preflight on pytest tests (S3-preflight-python)", () => {
 		},
 		TEST_TIMEOUT,
 	);
+
+	// rpiv issue draft 20261123-151137-3491b4f7: a reprove line printed without `--` and
+	// a runner was run as printed and broke. Each line now ends in the runner found at
+	// the repository root, or a diagnostic says the runner is still missing.
+	describe("reprove lines name their runner", () => {
+		const PY_TAIL = "-m pytest --junitxml={junit} {tests}";
+		const plan = (r, contract) =>
+			preflightOn(r, contract).lines.filter(
+				(l) => l.startsWith("reprove:") || l.includes("need a runner"),
+			);
+
+		it(
+			"a py test runs with the root's .venv python and pytest, Scripts first, linking .venv",
+			() => {
+				const r = pyRepo(
+					{},
+					{ "tests/test_a.py": "def test_b1_x():\n    pass\n" },
+				);
+				const contract = [
+					"- **Behavior B1**: x",
+					"  - Test: `test_b1_x` in `tests/test_a.py`",
+				];
+				const call = `reprove: --commit ${r.candidate} --base ${r.base} --test tests/test_a.py::test_b1_x`;
+
+				put(r.repo, ".venv/bin/python", "");
+				expect(plan(r, contract)).toEqual([
+					`${call} --link .venv -- .venv/bin/python ${PY_TAIL}`,
+				]);
+				put(r.repo, ".venv/Scripts/python.exe", "");
+				expect(plan(r, contract)).toEqual([
+					`${call} --link .venv -- .venv/Scripts/python.exe ${PY_TAIL}`,
+				]);
+			},
+			TEST_TIMEOUT,
+		);
+
+		it(
+			"a js test runs with the root's vitest, linking node_modules; with none, the line stops before -- and a diagnostic says why",
+			() => {
+				const r = pyRepo(
+					{},
+					{ "tests/a.test.mjs": 'it("B1: x", () => {});\n' },
+				);
+				const contract = [
+					"- **Behavior B1**: x",
+					"  - Test: `B1: x` in `tests/a.test.mjs`",
+				];
+				const call = `reprove: --commit ${r.candidate} --base ${r.base} --test tests/a.test.mjs::B1: x`;
+
+				put(r.repo, ".venv/bin/python", "");
+				expect(plan(r, contract)).toEqual([
+					call,
+					"diagnostic: reprove lines need a runner: append -- <runner> with {junit} and {tests} (no node_modules/vitest/vitest.mjs at the repository root)",
+				]);
+				put(r.repo, "node_modules/vitest/vitest.mjs", "");
+				expect(plan(r, contract)).toEqual([
+					`${call} --link node_modules -- node node_modules/vitest/vitest.mjs run --reporter=junit --outputFile={junit} {tests}`,
+				]);
+			},
+			TEST_TIMEOUT,
+		);
+
+		it(
+			"a whole-file call over py and js tests names no runner and says so",
+			() => {
+				const r = pyRepo(
+					{},
+					{
+						"tests/test_a.py": "def test_x():\n    pass\n",
+						"tests/a.test.mjs": "\n",
+					},
+				);
+				put(r.repo, ".venv/bin/python", "");
+				put(r.repo, "node_modules/vitest/vitest.mjs", "");
+				expect(
+					plan(r, [
+						"- **Behavior B1**: x",
+						"  - Test: `tests/test_a.py`; `tests/a.test.mjs`",
+					]),
+				).toEqual([
+					`reprove: --commit ${r.candidate} --base ${r.base}`,
+					"diagnostic: reprove lines need a runner: append -- <runner> with {junit} and {tests} (tests in Python and another language)",
+				]);
+			},
+			TEST_TIMEOUT,
+		);
+	});
 });
 
 describe("slice-preflight on titles holding another quote style (draft 20261122-185409-54f3bade)", () => {
@@ -958,7 +1046,7 @@ describe("slice-preflight on titles holding another quote style (draft 20261122-
 				[
 					`it("B1: the run's line is red", () => {});`,
 					`it('B2: say "hi" twice', () => {});`,
-					"it(`B3: it's \"both\"`, () => {});",
+					'it(`B3: it\'s "both"`, () => {});',
 					`it("B4: an escaped \\"quote\\" stays", () => {});`,
 					"",
 				].join("\n"),
@@ -972,7 +1060,17 @@ describe("slice-preflight on titles holding another quote style (draft 20261122-
 				"b.md",
 				"### Test Contract: s\n\n- **Behavior B1**: one\n- **Behavior B2**: two\n- **Behavior B3**: three\n- **Behavior B4**: four\n",
 			);
-			const res = run(repo, "--artifact", join(outside, "b.md"), "--slice", "s", "--base", base, "--candidate", candidate);
+			const res = run(
+				repo,
+				"--artifact",
+				join(outside, "b.md"),
+				"--slice",
+				"s",
+				"--base",
+				base,
+				"--candidate",
+				candidate,
+			);
 			expect(res.stderr).toBe("");
 			expect(res.lines.filter((l) => l.startsWith("finding:"))).toEqual([]);
 			const call = `reprove: --commit ${candidate} --base ${base} --test tests/q.test.mjs::`;

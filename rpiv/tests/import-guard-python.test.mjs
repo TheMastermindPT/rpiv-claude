@@ -197,3 +197,99 @@ describe("import guard with real Python (S2b-guard-proof)", () => {
 			.toContain("café");
 	});
 });
+
+// rpiv issue draft 20261123-151137-3491b4f7: uv installs the project editable, and its
+// `.pth` puts `<checkout>/src` on sys.path, so a re-run whose base lacks a module reached
+// the checkout's copy. The guard sets that entry (and editable finders) aside.
+describe("import guard and editable installs (issue 20261123-151137-3491b4f7)", () => {
+	/** A venv in a fresh folder whose site-packages holds `pth` (`{ name: text }`). */
+	const venvWith = (pth) => {
+		const at = join(G.realOf(tempDir()), "venv");
+		const made = python(["-m", "venv", "--without-pip", at]);
+		expect(made.status, made.stderr).toBe(0);
+		const exe =
+			process.platform === "win32"
+				? join(at, "Scripts", "python.exe")
+				: join(at, "bin", "python");
+		const site = spawnSync(
+			exe,
+			["-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+			{ encoding: "utf-8", timeout: TIMEOUT },
+		).stdout.trim();
+		for (const [name, text] of Object.entries(pth)) put(site, name, text);
+		return exe;
+	};
+
+	/** Runs `code` in the venv `exe`, guarded by `guard` when given. */
+	const inVenv = (exe, code, guard) =>
+		spawnSync(exe, ["-c", code], {
+			encoding: "utf-8",
+			timeout: TIMEOUT,
+			env: {
+				...process.env,
+				PYTHONPATH: guard ?? "",
+				PYTHONDONTWRITEBYTECODE: "1",
+			},
+		});
+
+	const FIND =
+		"import importlib.util as u\nprint(u.find_spec('demo') is not None, u.find_spec('kept') is not None)";
+
+	it("a uv-style editable .pth naming a checkout's src is set aside, a kept folder stays, and the record shows no checkout module", (ctx) => {
+		needPython(ctx);
+		const co = G.realOf(tempDir());
+		put(co, "src/demo/__init__.py", "X = 1\n");
+		put(co, "keep/kept.py", "Y = 2\n");
+		const exe = venvWith({
+			"_editable_impl_demo.pth": `${join(co, "src")}\n${join(co, "keep")}\n`,
+		});
+
+		const open = inVenv(exe, FIND);
+		expect.soft(open.status, open.stderr).toBe(0);
+		expect.soft(open.stdout.trim()).toBe("True True");
+
+		const guard = G.createGuard([co], [join(co, "keep")]);
+		const guarded = inVenv(exe, `${FIND}\nimport kept`, guard);
+		expect.soft(guarded.status, guarded.stderr).toBe(0);
+		expect.soft(guarded.stdout.trim()).toBe("False True");
+		const verdict = G.importVerdict({
+			recordsDir: join(guard, "records"),
+			checkouts: [co],
+			exempt: [guard, join(co, "keep")],
+			top: co,
+		});
+		expect.soft(verdict).toBeUndefined();
+	});
+
+	it("an editable install's meta-path finder is set aside", (ctx) => {
+		needPython(ctx);
+		const co = G.realOf(tempDir());
+		put(co, "src/demo/__init__.py", "X = 1\n");
+		const finder = join(G.realOf(tempDir()), "finders");
+		put(
+			finder,
+			"__editable___demo_0_1_finder.py",
+			[
+				"import importlib.util, sys",
+				"class _EditableFinder:",
+				"    @classmethod",
+				"    def find_spec(cls, name, path=None, target=None):",
+				"        if name == 'demo':",
+				`            return importlib.util.spec_from_file_location(name, ${JSON.stringify(join(co, "src", "demo", "__init__.py").replaceAll("\\", "/"))})`,
+				"        return None",
+				"def install():",
+				"    sys.meta_path.append(_EditableFinder)",
+				"",
+			].join("\n"),
+		);
+		const exe = venvWith({
+			"__editable__.demo-0.1.pth": `import sys; sys.path.insert(0, ${JSON.stringify(finder.replaceAll("\\", "/"))}); import __editable___demo_0_1_finder; __editable___demo_0_1_finder.install()\n`,
+		});
+
+		expect.soft(inVenv(exe, FIND).stdout.trim()).toBe("True False");
+		const guard = G.createGuard([co]);
+		const guarded = inVenv(exe, FIND, guard);
+		expect.soft(guarded.status, guarded.stderr).toBe(0);
+		expect.soft(guarded.stdout.trim()).toBe("False False");
+	});
+});
