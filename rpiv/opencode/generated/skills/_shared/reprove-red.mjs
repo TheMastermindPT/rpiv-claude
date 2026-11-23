@@ -32,9 +32,12 @@
 // PYTHONDONTWRITEBYTECODE=1. Every guarded Python process records the modules it loaded,
 // and the run line becomes `result: broken: imported from the checkout: <path>` when one
 // came from a checkout folder of the repository, `result: broken: import guard did not
-// run` when no record exists, and `result: broken: import record incomplete` when a
-// record is unfinished, whatever pytest's exit code. Outside a Python run the copy, the
-// header, `{tests}` and the environment stay as they were.
+// run` when no record exists, and `result: broken: import record incomplete: pid <n>`
+// when a record is unfinished, whatever pytest's exit code. A guarded process records a
+// module when it opens its file for import as well as at exit (S2b-guard-proof), and a
+// temporary folder inside the checkout is refused before the guard folder is made.
+// Outside a Python run the copy, the header, `{tests}` and the environment stay as they
+// were.
 //
 // Importable: exitCodeOf.
 

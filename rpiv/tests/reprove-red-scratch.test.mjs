@@ -7,18 +7,15 @@
 import {
 	existsSync,
 	mkdirSync,
+	readdirSync,
 	readFileSync,
+	rmSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { delimiter, isAbsolute, join, relative } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { realOf } from "../skills/_shared/import-guard.mjs";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-	NODE,
-	RECORDER,
-	ROOT,
-	TEST_TIMEOUT,
 	cleanup,
 	commitAll,
 	drop,
@@ -26,13 +23,24 @@ import {
 	gitPath,
 	headerBody,
 	lastLine,
+	NODE,
 	newRepo,
 	put,
+	RECORDER,
+	ROOT,
 	runHelper,
+	TEST_TIMEOUT,
 	tempDir,
 } from "./fixtures/reprove-red-harness.mjs";
 
 afterEach(cleanup);
+
+// import-guard.mjs is loaded inside the tests, so a re-proof at a base without it reads
+// per-test failures, not a file that fails to load (D26, S2b-guard-proof).
+let realOf;
+beforeEach(async () => {
+	({ realOf } = await import("../skills/_shared/import-guard.mjs"));
+});
 
 /** A repository whose base commit holds the recorder and `files` (`{ path: content }`). */
 const baseRepo = (files = {}) => {
@@ -734,7 +742,7 @@ describe("Python scratch copy and import guard (S2-scratch-copy)", () => {
 				.toEqual([`test-result: unavailable ${ADD}`]);
 			expect
 				.soft(lastLine(partial.lines))
-				.toBe("result: broken: import record incomplete");
+				.toBe("result: broken: import record incomplete: pid 10");
 
 			// A run that is not a Python run needs no record.
 			const js = sliceOf(["tests/a.test.mjs"]);
@@ -779,6 +787,146 @@ describe("Python scratch copy and import guard (S2-scratch-copy)", () => {
 				.toBe(true);
 		}
 	});
+
+	const tmpEnv = (dir) => ({ TMP: dir, TEMP: dir, TMPDIR: dir });
+
+	it(
+		"B24: a temporary folder whose real path lies in any checkout folder is a broken call before anything is made",
+		() => {
+			const { repo, slice } = pythonSlice();
+			const refused = (dir, label, real = dir) => {
+				const run = recRun(repo, slice, {
+					runner: ["--code", "0"],
+					env: tmpEnv(dir),
+				});
+				expect.soft(run.status, label).toBe(2);
+				expect.soft(run.stdout, label).toBe("");
+				expect
+					.soft(run.stderr.split(/\r?\n/)[0], label)
+					.toBe(
+						`reprove-red: broken: temporary folder inside the checkout: ${realOf(real)}`,
+					);
+				expect.soft(run.seen, label).toBeUndefined();
+				expect.soft(readdirSync(real), label).toEqual([]);
+			};
+			const inTop = join(repo, "tmp");
+			mkdirSync(inTop);
+			refused(inTop, "in the top folder");
+
+			const other = join(tempDir(), "other");
+			git(repo, "worktree", "add", "-q", other);
+			mkdirSync(join(other, "tmp"));
+			refused(join(other, "tmp"), "in another worktree");
+
+			const link = join(tempDir(), "tmp-link");
+			symlinkSync(inTop, link, "junction");
+			refused(link, "through a link", inTop);
+
+			const sibling = `${repo}2`;
+			mkdirSync(join(sibling, "tmp"), { recursive: true });
+			try {
+				const run = recRun(repo, slice, {
+					runner: ["--code", "1"],
+					env: tmpEnv(join(sibling, "tmp")),
+				});
+				expect
+					.soft(lastLine(run.lines), "a sibling folder")
+					.toBe("result: red");
+			} finally {
+				rmSync(sibling, { recursive: true, force: true });
+			}
+
+			const js = sliceOf(["tests/a.test.mjs"]);
+			mkdirSync(join(js.repo, "tmp"));
+			const plain = recRun(js.repo, js.slice, {
+				runner: ["--code", "1"],
+				env: tmpEnv(join(js.repo, "tmp")),
+			});
+			expect
+				.soft(lastLine(plain.lines), "not a Python run")
+				.toBe("result: red");
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"B25: through the CLI the guard line wins at every exit code, a missing named test reads unavailable, and the incomplete line names the pid",
+		() => {
+			const { repo, slice } = sliceOf(["tests/test_ok.py"]);
+			const top = realOf(repo);
+			const inTop = recordText({
+				modules: [join(top, "src/demo/__init__.py")],
+			});
+			const clean = recordText({ modules: ["{cwd}/x.py"] });
+			const DID_NOT_RUN = "result: broken: import guard did not run";
+			const INCOMPLETE = "result: broken: import record incomplete: pid ";
+			const ROWS = [
+				[{ a: inTop }, 1, "unavailable", `${CHECKOUT}src/demo/__init__.py`],
+				[{ a: inTop }, 5, "unavailable", `${CHECKOUT}src/demo/__init__.py`],
+				[{}, 1, "unavailable", DID_NOT_RUN],
+				[{}, 2, "unavailable", DID_NOT_RUN],
+				[{ a: "start: 10\n" }, 5, "unavailable", `${INCOMPLETE}10`],
+				[{ a: "" }, 0, "unavailable", `${INCOMPLETE}unknown`],
+				[{ a: clean, b: "start: 11\n" }, 1, "unavailable", `${INCOMPLETE}11`],
+				[
+					{ a: "start: 12\n", b: "start: 11\n" },
+					0,
+					"unavailable",
+					`${INCOMPLETE}12`,
+				],
+				[
+					{ a: "start: 10\nmodule: {cwd}/x.py\nend: 11\n" },
+					0,
+					"unavailable",
+					`${INCOMPLETE}10`,
+				],
+				[
+					{ a: "start: x\nend: 10\n" },
+					0,
+					"unavailable",
+					`${INCOMPLETE}unknown`,
+				],
+				[{ a: clean }, 1, "not-found", "result: red"],
+			];
+			for (const [records, code, bucket, want] of ROWS) {
+				const label = `${JSON.stringify(Object.keys(records))} exit ${code}`;
+				const run = guardedRun(repo, slice, { records, code });
+				expect.soft(run.status, label).toBe(0);
+				expect.soft(run.lines, label).toContain(`exit: ${code}`);
+				expect
+					.soft(resultOf(run), label)
+					.toEqual([`test-result: ${bucket} ${ADD}`]);
+				expect.soft(lastLine(run.lines), label).toBe(want);
+			}
+			for (const path of [
+				"skills/_shared/reprove-red.mjs",
+				"opencode/generated/skills/_shared/reprove-red.mjs",
+			]) {
+				const lines = readFileSync(join(ROOT, path), "utf-8").split(/\r?\n/);
+				const end = lines.findIndex((line) => !line.startsWith("//"));
+				const header = lines
+					.slice(0, end)
+					.map((line) => line.replace(/^\/\/\s?/, ""))
+					.join(" ");
+				expect.soft(header, path).toContain("import record incomplete: pid");
+			}
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"B26: a Python run in a repository whose linked worktree folder was deleted keeps its run line",
+		() => {
+			const { repo, slice } = pythonSlice();
+			const gone = join(tempDir(), "gone");
+			git(repo, "worktree", "add", "-q", gone);
+			rmSync(gone, { recursive: true, force: true });
+			const run = recRun(repo, slice, { runner: ["--code", "1"] });
+			expect.soft(run.stderr).toBe("");
+			expect.soft(lastLine(run.lines)).toBe("result: red");
+		},
+		TEST_TIMEOUT,
+	);
 
 	it.runIf(process.platform === "win32")(
 		"B18: on Windows, a checkout path in another letter case, with backslashes, a space and CRLF lines, still counts",
