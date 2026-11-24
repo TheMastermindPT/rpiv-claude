@@ -272,7 +272,7 @@ try {
 		);
 	}
 
-	// ── explicit range + single hash: BASE = OLDEST^ so OLDEST stays included ──
+	// ── explicit range: A..B excludes A, as in git; single hash: BASE = hash^ ──
 	{
 		for (const scope of [`${c2}..${c4}`, `${c4}..${c2}`]) {
 			const r = run(repo, scope);
@@ -282,13 +282,21 @@ try {
 				`"${scope}" is explicit-range`,
 			);
 			assert.equal(
+				r.base,
+				c2,
+				`"${scope}" base = OLDEST, as git reads A..B`,
+			);
+			assert.equal(
 				r.range,
-				`${c1}..${c4}`,
-				`"${scope}" range = OLDEST^..newest (reversed input swapped)`,
+				`${c2}..${c4}`,
+				`"${scope}" range = oldest..newest (reversed input swapped)`,
 			);
 			assert.equal(r.fp_flag, "(empty)", "explicit range carries no fp flag");
-			for (const f of ["b.txt", "c.txt", "d.txt"])
-				assert.ok(r.files.includes(f), `"${scope}" includes ${f}`);
+			assert.deepEqual(
+				[...r.files].sort(),
+				["c.txt", "d.txt"],
+				`"${scope}" reviews the commits after OLDEST, never OLDEST itself`,
+			);
 		}
 		const single = run(repo, c3);
 		assert.equal(
@@ -320,17 +328,12 @@ try {
 		const rootRange = run(repo, `${c1}..${c4}`);
 		assert.equal(
 			rootRange.range,
-			c4,
-			"a range starting at root resolves to the inclusive tip history",
+			`${c1}..${c4}`,
+			"a range starting at root excludes the root, as git does",
 		);
-		assert.deepEqual(rootRange.files.sort(), [
-			"a.txt",
-			"b.txt",
-			"c.txt",
-			"d.txt",
-		]);
+		assert.deepEqual(rootRange.files.sort(), ["b.txt", "c.txt", "d.txt"]);
 		console.log(
-			"OK — explicit range and single hash include OLDEST's own changes.",
+			"OK — A..B excludes A; a single hash includes its own changes.",
 		);
 	}
 
@@ -418,10 +421,14 @@ try {
 			/1 merge commit/,
 			"a range holding a back-merge warns that other branches' changes are in scope",
 		);
-		assert.match(
+		assert.doesNotMatch(
 			widened.warnings,
-			/starts at the default branch/,
-			"a range starting at the default branch warns that its tip commit is included",
+			/default branch/,
+			"a range starting at the default branch no longer includes its tip, so it needs no warning",
+		);
+		assert.ok(
+			!run(repo, "main..feat").files.includes("package.json"),
+			"main..feat leaves out main's own tip commit",
 		);
 		assert.match(
 			run(repo, `${c1}..${c2}`).warnings,

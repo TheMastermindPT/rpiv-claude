@@ -55,7 +55,7 @@ Every Wave-2 agent prompt contains EXACTLY `Known Context:` + the Discovery Map 
    node "$RPIV_PLUGIN_ROOT/skills/deep-review/_helpers/review-range.mjs" "<scope-spec>"
    ```
 
-   The helper emits labeled scope fields plus `changed_files_manifest`, reviewable/excluded counts, shard metadata, and `prior_review`, followed by the changed/in-scope/peer/companion blocks. Read these as authoritative; never re-derive them by hand. The JSON manifest is the complete, uncapped file contract and includes path categories and shards. If `strategy: unrecognised` appears, clarify using its `note:` and re-invoke. When it also prints `worktree: <path>`, the branch is checked out in another worktree: tell the user to run the review from a session opened in that path, and STOP — never fall back to an `A..B` range from this checkout, which widens the scope and makes every agent read this checkout's files. When it prints `warnings:`, show each warning to the user before continuing, record them under `## Reconciliation Notes`, and offer `auto` from the branch's own checkout when a warning names merge commits or the default branch.
+   The helper emits labeled scope fields plus `changed_files_manifest`, reviewable/excluded counts, shard metadata, and `prior_review`, followed by the changed/in-scope/peer/companion blocks. Read these as authoritative; never re-derive them by hand. The JSON manifest is the complete, uncapped file contract and includes path categories and shards. If `strategy: unrecognised` appears, clarify using its `note:` and re-invoke. When it also prints `worktree: <path>`, the branch is checked out in another worktree: tell the user to run the review from a session opened in that path, and STOP — never fall back to an `A..B` range from this checkout, which widens the scope and makes every agent read this checkout's files. When it prints `warnings:`, show each warning to the user before continuing, record them under `## Reconciliation Notes`, and offer `auto` from the branch's own checkout when a warning names merge commits.
 
    `<scope-spec>` translation table — map the user's substituted argument to one of these forms:
 
@@ -71,7 +71,7 @@ Every Wave-2 agent prompt contains EXACTLY `Known Context:` + the Discovery Map 
 
 2. **Confirm strategy** from the helper output. The mapping into the rest of the skill:
    - `strategy: first-parent` (`auto` / checked-out PR branch / commit list) — normal branches use `<range>` + `<fp_flag>`. Commit-list manifests also carry `commits`; those exact commits, including non-contiguous lists, are authoritative over the display range.
-   - `strategy: explicit-range` (single hash / `A..B`) — use `<range>` without `<fp_flag>`. `<base>` is OLDEST^; when OLDEST is a root commit, the helper emits a root-inclusive revision instead.
+   - `strategy: explicit-range` (single hash / `A..B`) — use `<range>` without `<fp_flag>`. For `A..B`, `<base>` is A and A's own changes are not reviewed, as in git. For a single hash, `<base>` is the hash's parent so the commit itself is reviewed; when it is a root commit, the helper emits a root-inclusive revision instead.
    - `strategy: working-tree` (`commit` / `staged` / `working`) — no `<range>`; use the working-tree commands listed in the next bullet.
 
    `--first-parent` is orthogonal to `--no-merges`: the former prunes second-parent subtrees from reachability, the latter drops merge commits themselves from the log. Both flags are independently controllable below.

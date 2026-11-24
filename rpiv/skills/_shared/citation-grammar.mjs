@@ -103,11 +103,32 @@ export function fileIndex(root) {
 	return files;
 }
 
+const normCite = (path) => path.replace(/\\/g, "/").replace(/^\.\//, "");
+
 /** Resolve a cited path against the index: exact match, else unique suffix match,
  * else null (missing or ambiguous). Mirrors the grader's resolveRel semantics. */
 export function resolveInIndex(path, files) {
-	const norm = path.replace(/\\/g, "/").replace(/^\.\//, "");
+	const norm = normCite(path);
 	if (files.includes(norm)) return norm;
 	const suffix = files.filter((f) => f.endsWith(`/${norm}`));
 	return suffix.length === 1 ? suffix[0] : null;
+}
+
+/** A full repo-relative path to a file the index walk prunes because it sits in a
+ * dot-directory (`.rpiv/decisions/x.md`, `.claude/settings.json`, `.husky/pre-commit`):
+ * the path itself if it names a regular file under root, else null. Exact paths only,
+ * no suffix match; never `.git` internals, a SKIP dir, an absolute path or one that
+ * leaves root. */
+export function resolveExactFile(path, root) {
+	const norm = normCite(path);
+	if (/^([a-z]:|\/)/i.test(norm)) return null;
+	const parts = norm.split("/");
+	const refused = (part) =>
+		part === "" || part === "." || part === ".." || part === ".git" || SKIP.has(part);
+	if (parts.some(refused)) return null;
+	try {
+		return statSync(join(root, norm)).isFile() ? norm : null;
+	} catch {
+		return null;
+	}
 }

@@ -2173,6 +2173,31 @@ it("MC2. checkEvidenceGrounding exact per-branch arrays (in-process)", () => {
 	rmSync(fx.tmp, { recursive: true, force: true });
 });
 
+// MC2b. Evidence in a dot-directory (rpiv issue: a finding about the decision ledger
+// could not cite `.rpiv/decisions/*.md`): a full repo-relative path to a real file
+// grounds; .git internals, SKIP dirs, paths leaving root and bare suffixes do not.
+it("MC2b. checkEvidenceGrounding accepts exact paths in dot-directories", () => {
+	const fx = mkFixture({
+		seed: {
+			".rpiv/decisions/conventions.md": "# Conventions\nRULE ONE\n",
+			".claude/settings.json": "{\n  \"x\": 1\n}\n",
+			"node_modules/dep/index.js": "SKIPPED\n",
+			".git/HEAD-COPY": "GITFILE\n",
+		},
+	});
+	const ground = (path, quoted) => checkEvidenceGrounding({ evidence: [{ path, startLine: 1, quoted: [quoted] }] }, fx.root);
+	const unresolved = (path) => [`evidence[0].path does not resolve to a repo file: ${path} (cite it repo-relative from the root)`];
+	assert.deepEqual(ground(".rpiv/decisions/conventions.md", "RULE ONE"), [], "a .rpiv/ file grounds");
+	assert.deepEqual(ground(".\\.rpiv\\decisions\\conventions.md", "RULE ONE"), [], "backslash and ./ forms ground too");
+	assert.deepEqual(ground(".claude/settings.json", "\"x\": 1"), [], "any dot-directory, not only .rpiv");
+	assert.deepEqual(ground("decisions/conventions.md", "RULE ONE"), unresolved("decisions/conventions.md"), "a dot-directory file needs its full path, never a suffix");
+	assert.deepEqual(ground(".git/HEAD-COPY", "GITFILE"), unresolved(".git/HEAD-COPY"), ".git internals are never evidence");
+	assert.deepEqual(ground("node_modules/dep/index.js", "SKIPPED"), unresolved("node_modules/dep/index.js"), "SKIP dirs stay out");
+	assert.deepEqual(ground("../outside.md", "x"), unresolved("../outside.md"), "a path leaving root is refused");
+	assert.deepEqual(ground(".rpiv/decisions", "x"), unresolved(".rpiv/decisions"), "a directory is not a file");
+	rmSync(fx.tmp, { recursive: true, force: true });
+});
+
 // MC3. spliceRegion — missing-sentinel throw + exact idempotent splice.
 it("MC3. spliceRegion missing-sentinel throw + exact splice", () => {
 	assert.equal(throwMsg(() => spliceRegion("no markers", sentinelsFor("findings", 0), "X")), "sentinel pair not found in artifact: <!-- BEGIN store:findings layer=0 -->", "missing pair throws exact message");

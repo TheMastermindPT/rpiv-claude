@@ -33,7 +33,7 @@
 //   manifest_files: <comma list>      (only when manifest_changed: yes)
 //   lockstep_self_review: yes|no      (sync-versions.js + uniform packages/*/package.json version + diff touches one)
 //   warnings:       <w1> | <w2>       (explicit A..B only: merge commits in range,
-//                                      range starts at the default branch, tip != HEAD)
+//                                      tip != HEAD)
 //   worktree:       <path>            (only when a branch scope is checked out in another worktree)
 //   note:           <reason>          (only when strategy=unrecognised)
 //   ---changed-files---
@@ -65,8 +65,8 @@
 //   - For first-parent strategies (empty/PR-branch), OLDEST is ALREADY the
 //     parent-of-first-feature-commit (computed via git merge-base), so BASE=OLDEST.
 //     Do NOT compute BASE=OLDEST^ — that would skip a commit.
-//   - For explicit-range strategies (single hash, A..B), BASE=OLDEST^ to include
-//     OLDEST's own changes (standard `A..B` excludes A).
+//   - For a single hash, BASE=HASH^ so the commit's own changes are reviewed.
+//     For `A..B`, BASE=A, as in git: `A..B` excludes A.
 //   - For commit-list input, BASE = parent of the OLDEST NAMED commit — the named
 //     commits ARE the review set, and `A..B` excludes A, so passing the oldest
 //     named commit itself as BASE silently drops its changes.
@@ -373,14 +373,16 @@ const setFirstParent = (oldest, newest) => {
 	result.fp_flag = "--first-parent";
 };
 
-const setExplicitRange = (oldest, newest) => {
+// A single hash reviews that commit itself (base = hash^, or a root-inclusive
+// revision for a root commit); `A..B` keeps git's meaning and excludes A.
+const setExplicitRange = (oldest, newest, { includeOldest = false } = {}) => {
 	result.strategy = "explicit-range";
 	result.oldest = oldest;
 	result.newest = newest;
-	const parent = safe(["rev-parse", `${oldest}^`]);
-	result.base = parent || "(root)";
+	const base = includeOldest ? safe(["rev-parse", `${oldest}^`]) : oldest;
+	result.base = base || "(root)";
 	result.tip = newest;
-	result.range = parent ? `${parent}..${newest}` : newest;
+	result.range = base ? `${base}..${newest}` : newest;
 	result.fp_flag = "(empty)";
 };
 
@@ -413,9 +415,9 @@ const worktreeOf = (branch) => {
 	return other?.path ?? "";
 };
 
-// Explicit ranges keep OLDEST^ as base by design; these warnings make the
-// ways that widens or misreads a review visible instead of silent.
-const explicitRangeWarnings = (startRef) => {
+// These warnings make the ways an explicit range widens or misreads a review
+// visible instead of silent.
+const explicitRangeWarnings = () => {
 	const warnings = [];
 	const merges = safe(["rev-list", "--merges", result.range])
 		.split("\n")
@@ -423,14 +425,6 @@ const explicitRangeWarnings = (startRef) => {
 	if (merges.length > 0) {
 		warnings.push(
 			`range holds ${merges.length} merge commit(s) — changes merged in from other branches are in scope; for a feature branch run scope auto from its checkout`,
-		);
-	}
-	if (
-		startRef &&
-		safe(["rev-parse", startRef]) === safe(["rev-parse", defaultBranch])
-	) {
-		warnings.push(
-			`range starts at the default branch — explicit ranges include their start commit (base = ${defaultBranch}^), so ${defaultBranch}'s tip commit is in scope`,
 		);
 	}
 	if (result.tip !== safe(["rev-parse", "HEAD"])) {
@@ -462,7 +456,7 @@ if (defaultBranch === "(unresolved)" && (lower === "" || lower === "auto")) {
 		else if (isAncestor(bHash, aHash)) setExplicitRange(bHash, aHash);
 		else result.note = `neither ${a} nor ${b} is an ancestor of the other`;
 		if (result.strategy === "explicit-range") {
-			result.warnings = explicitRangeWarnings(isAncestor(aHash, bHash) ? a : b);
+			result.warnings = explicitRangeWarnings();
 		}
 	} else {
 		result.note = `range endpoint(s) do not resolve: ${a}..${b}`;
@@ -505,7 +499,7 @@ if (defaultBranch === "(unresolved)" && (lower === "" || lower === "auto")) {
 	}
 } else if (isHexHash(scope) && refExists(scope)) {
 	const hash = safe(["rev-parse", scope]);
-	setExplicitRange(hash, hash);
+	setExplicitRange(hash, hash, { includeOldest: true });
 } else if (refExists(scope)) {
 	const scopeHash = safe(["rev-parse", scope]);
 	const headHash = safe(["rev-parse", "HEAD"]);

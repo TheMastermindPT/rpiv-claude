@@ -19,7 +19,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { basenameCounts, citesIn, fileIndex, isAmbiguous, resolveInIndex } from "./citation-grammar.mjs";
+import { basenameCounts, citesIn, fileIndex, isAmbiguous, resolveExactFile, resolveInIndex } from "./citation-grammar.mjs";
 import { splitFrontmatter } from "./frontmatter.mjs";
 import { isMain } from "./is-main.mjs";
 import { withReviewSections } from "./review-sections.mjs";
@@ -310,7 +310,7 @@ export function checkEvidenceGrounding(finding, root) {
 	const errors = [];
 	const files = fileIndex(root);
 	finding.evidence.forEach((ev, i) => {
-		const rel = resolveInIndex(ev.path, files);
+		const rel = resolveInIndex(ev.path, files) ?? resolveExactFile(ev.path, root);
 		if (!rel) {
 			errors.push(`evidence[${i}].path does not resolve to a repo file: ${ev.path} (cite it repo-relative from the root)`);
 			return;
