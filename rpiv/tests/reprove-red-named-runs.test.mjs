@@ -81,12 +81,16 @@ describe("reprove-red calls that name tests", () => {
 	);
 
 	it(
-		"outside a Python run {tests} stays every changed test",
+		"outside a Python run a call that names tests expands {tests} to their files only",
 		() => {
 			const s = sliceOf(["tests/a.test.mjs", "tests/b.test.mjs"]);
-			const run = namedRun(s, ["tests/a.test.mjs::x"]);
+			const run = namedRun(s, ["tests/a.test.mjs::x", "tests/a.test.mjs::y"]);
 			expect.soft(run.stderr).toBe("");
-			expect.soft(run.tests).toEqual(["tests/a.test.mjs", "tests/b.test.mjs"]);
+			expect.soft(run.tests).toEqual(["tests/a.test.mjs"]);
+			const whole = namedRun(s, []);
+			expect
+				.soft(whole.tests)
+				.toEqual(["tests/a.test.mjs", "tests/b.test.mjs"]);
 		},
 		TEST_TIMEOUT,
 	);

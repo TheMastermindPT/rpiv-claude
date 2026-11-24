@@ -11,8 +11,12 @@
 // the repository root, never the run folder. The base must be an ancestor of the
 // candidate; the slice may span several commits. It also prints the re-proof plan for
 // reprove-red.mjs, always with a `--base` (pins are never re-proved), each line ending
-// in the runner (`--link <folder> -- <runner> ... {junit} {tests}`) found at the
-// repository root: pytest from `.venv`, or vitest from `node_modules`. When none is
+// in the runner (`--link <folder> -- <runner> ... {junit} {tests}`): pytest from `.venv`,
+// or vitest from `node_modules`. The runner runs from the nearest folder above the tests
+// holding a project manifest (`package.json`; `pyproject.toml`, `setup.cfg`, `setup.py`,
+// `pytest.ini`, `tox.ini`), else the repository root, and is found there or in the
+// nearest folder above it; a folder other than the root adds `--in <folder>`, and the
+// links and the runner are then written from it. When none is
 // found, the lines stop before `--` and one `diagnostic: reprove lines need a runner`
 // line says why, so a line is never mistaken for a complete call.
 //
@@ -31,7 +35,7 @@
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { isMain } from "./is-main.mjs";
 import { isTest } from "./source-vocab.mjs";
 import { parseTestContract } from "./test-contract.mjs";
@@ -345,18 +349,86 @@ const RUNNERS = {
 	},
 };
 
-/** The runner tail of a re-proof line for tests at `paths`, found at `root`: `{ tail }`,
-    or `{ why }` when none can be named. */
+// The files that mark a project folder, by language: the folder a runner runs from.
+const MANIFESTS = {
+	python: ["pyproject.toml", "setup.cfg", "setup.py", "pytest.ini", "tox.ini"],
+	js: ["package.json"],
+};
+
+/** The folders from the common folder of `paths` up to the repository root, nearest
+    first, as `/` paths from the root (`""` is the root). */
+const foldersUp = (paths) => {
+	const dirs = paths.map((path) => path.split("/").slice(0, -1));
+	const common = dirs.reduce((a, b) => {
+		let i = 0;
+		while (i < a.length && a[i] === b[i]) i++;
+		return a.slice(0, i);
+	});
+	return common
+		.map((_, i) => common.slice(0, common.length - i).join("/"))
+		.concat("");
+};
+
+const under = (folder, path) => (folder ? `${folder}/${path}` : path);
+
+/** `path` (from the root) as written from `folder`, with `/`. */
+const fromFolder = (folder, path) => posix.relative(`/${folder}`, `/${path}`);
+
+/** Where a runner for tests at `paths` runs and what it links: the nearest folder holding
+    a project manifest (else the root) runs it, with the runner found there or in the
+    nearest folder above it; `{ folder, exe, links }` (paths from the root), or undefined. */
+const runnerPlace = (root, paths, runner, manifests) => {
+	const up = foldersUp(paths);
+	const at = up.findIndex((dir) =>
+		manifests.some((name) => existsSync(join(root, under(dir, name)))),
+	);
+	const chain = at < 0 ? [""] : up.slice(at);
+	for (const dir of chain) {
+		const exe = runner.exes.find((path) =>
+			existsSync(join(root, under(dir, path))),
+		);
+		if (exe === undefined) continue;
+		const own = under(chain[0], runner.link);
+		const links = new Set([under(dir, runner.link)]);
+		if (dir !== chain[0] && existsSync(join(root, own))) links.add(own);
+		return {
+			folder: chain[0],
+			exe: under(dir, exe),
+			links: [...links].reverse(),
+		};
+	}
+	return { folder: chain[0] };
+};
+
+/** The runner tail of a re-proof line for tests at `paths`: `{ tail }`, or `{ why }`
+    when none can be named. A project in a subfolder runs from it (`--in <folder>`), so its
+    report paths match (rpiv issue draft 20261124-123428-d6faf9de). */
 const runnerFor = (root, paths) => {
 	const python = paths.filter(isPython).length;
 	if (python > 0 && python < paths.length)
 		return { why: "tests in Python and another language" };
-	const runner = python > 0 ? RUNNERS.python : RUNNERS.js;
-	const exe = runner.exes.find((path) => existsSync(join(root, path)));
-	if (exe === undefined)
-		return { why: `${runner.missing} at the repository root` };
-	const command = runner.node ? `node ${exe}` : exe;
-	return { tail: ` --link ${runner.link} -- ${command} ${runner.args}` };
+	const language = python > 0 ? "python" : "js";
+	const runner = RUNNERS[language];
+	const { folder, exe, links } = runnerPlace(
+		root,
+		paths,
+		runner,
+		MANIFESTS[language],
+	);
+	if (exe === undefined) {
+		const where = folder
+			? `in ${folder} or a folder above it`
+			: "at the repository root";
+		return { why: `${runner.missing} ${where}` };
+	}
+	const command = fromFolder(folder, exe);
+	const inFolder = folder ? ` --in ${folder}` : "";
+	const linkArgs = links
+		.map((link) => ` --link ${fromFolder(folder, link)}`)
+		.join("");
+	return {
+		tail: `${inFolder}${linkArgs} -- ${runner.node ? `node ${command}` : command} ${runner.args}`,
+	};
 };
 
 /** One behavior's reprove-red.mjs calls on one revision: a `--test` per titled test,

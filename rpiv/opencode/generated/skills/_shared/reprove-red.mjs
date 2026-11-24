@@ -12,7 +12,13 @@
 //
 // CLI, run only as the entry point:
 //   node reprove-red.mjs --commit <rev> [--base <rev>] [--test <path>::<name>]...
-//                        [--link <path>]... [--timeout <seconds>] -- <executable> [args...]
+//                        [--link <path>]... [--timeout <seconds>] [--in <folder>]
+//                        -- <executable> [args...]
+// --in runs the command from that folder (from the repository's top folder: a package in
+// a subfolder) instead of the caller's folder; `--link` paths are from the run folder.
+// A `--test` path is from the run folder, or from the top folder when it starts with the
+// run folder (as Test Contracts write it); outside a Python run a call that names tests
+// gives `{tests}` only the named tests' files (rpiv issue draft 20261124-123428-d6faf9de).
 // --base rebuilds that revision instead of the commit's parent: a red observed at an
 // amended-away candidate (S19/D39), or the base of a slice of several commits. The
 // applied tests are the diff from the merge base of that revision and the commit to the
@@ -159,6 +165,9 @@ const OPTIONS = {
 	},
 	"--timeout": (parsed, value) => {
 		parsed.timeout = parseTimeout(value);
+	},
+	"--in": (parsed, value) => {
+		parsed.in = value;
 	},
 };
 
@@ -703,9 +712,19 @@ const PATH_DIALECT = { matcher: pathRecordMatcher, loadReason: pathLoadReason };
 const dialectOf = (test) =>
 	extOf(test.path) === "py" ? PYTEST_DIALECT : PATH_DIALECT;
 
-/** The bucket of one named test: its matching records agree, disagree (`mixed`), or
-    none exists — then the file's load failure, if any, is `failed-to-load`. */
+/** The bucket of one named test, found by its path from the run folder, else by its path
+    from the top folder (`topPath`, when they differ): a runner may write report paths
+    from either (vitest from its root, pytest from its rootdir). */
 const bucketOf = (records, test) => {
+	const found = bucketAt(records, test);
+	if (found.bucket !== "not-found" || test.topPath === undefined) return found;
+	return bucketAt(records, { ...test, path: test.topPath });
+};
+
+/** The bucket of one named test at its `path`: its matching records agree, disagree
+    (`mixed`), or none exists — then the file's load failure, if any, is
+    `failed-to-load`. */
+const bucketAt = (records, test) => {
 	const dialect = dialectOf(test);
 	const matches = records.filter(dialect.matcher(test));
 	if (matches.length === 0) {
@@ -961,16 +980,51 @@ const outputOf = (cwd, { commit, base, baseRev, named }) => {
 	return resolve(cwd, gitIn(cwd, ["rev-parse", "--git-path", stem]).trim());
 };
 
-/** What `{tests}` expands to, relative to the caller's folder: the plan's tests; in a
-    Python run that names tests, only those tests as pytest node ids (`<path>::<name>`), so
-    the run, its report and its run line cover what was named. */
+/** What `{tests}` expands to, relative to the run folder: the plan's tests; in a call
+    that names tests, only those: pytest node ids (`<path>::<name>`) in a Python run, the
+    named tests' files in any other, so the run, its report and its run line cover what
+    was named (rpiv issue drafts 20261123-174308-8fd52ed1, 20261124-123428-d6faf9de).
+    `named` paths are already from the run folder (fromRunFolder). */
 const selectionOf = (planTests, named, { place, python }) => {
-	const fromCwd = (path) =>
-		relative(place.cwd, join(place.top, path)).replace(/\\/g, "/");
-	if (!python || named.length === 0) return planTests.map(fromCwd);
-	return [
-		...new Set(named.map(({ path, name }) => `${fromCwd(path)}::${name}`)),
-	];
+	if (named.length === 0) {
+		return planTests.map((path) =>
+			relative(place.cwd, join(place.top, path)).replace(/\\/g, "/"),
+		);
+	}
+	const ids = python
+		? named.map(({ path, name }) => `${path}::${name}`)
+		: named.map(({ path }) => path);
+	return [...new Set(ids)];
+};
+
+/** The named tests with their paths from the run folder, as the runner's report writes
+    them: a path written from the repository's top folder (as Test Contracts write it)
+    that starts with the run folder loses that prefix (kept as `topPath`, see bucketOf);
+    any other path is taken as written from the run folder already (rpiv issue draft
+    20261124-123428-d6faf9de). */
+const fromRunFolder = (named, place) => {
+	const prefix = relative(place.top, place.cwd).replace(/\\/g, "/");
+	if (!prefix) return named;
+	return named.map((test) =>
+		test.path.startsWith(`${prefix}/`)
+			? {
+					...test,
+					path: test.path.slice(prefix.length + 1),
+					topPath: test.path,
+				}
+			: test,
+	);
+};
+
+/** The run folder: `--in <folder>` (from the repository's top folder), else the caller's
+    folder; an `--in` folder that is not a folder is a broken call. */
+const runFolderOf = (top, cwd, folder) => {
+	if (folder === undefined) return cwd;
+	const at = resolve(top, folder);
+	if (!lstatSafe(at)?.isDirectory()) {
+		throw new Error(`--in folder missing: ${folder}`);
+	}
+	return at;
 };
 
 const PASSED_OR_SKIPPED = /^test-result: (?:passed|skipped) (.*)$/;
@@ -1003,17 +1057,22 @@ const checkedPlaces = ({ top, cwd, python, linkArgs }) => {
 	return { place, links };
 };
 
-const runCli = (argv, cwd) => {
+const runCli = (argv, callerCwd) => {
 	const {
 		commit: rev,
 		base: baseRev,
-		tests: named,
+		tests: asNamed,
 		links: linkArgs,
 		timeout,
 		command,
 		promisesReport,
+		in: folder,
 	} = parseArgs(argv);
-	const top = resolve(cwd, gitIn(cwd, ["rev-parse", "--show-toplevel"]).trim());
+	const top = resolve(
+		callerCwd,
+		gitIn(callerCwd, ["rev-parse", "--show-toplevel"]).trim(),
+	);
+	const cwd = runFolderOf(top, callerCwd, folder);
 	const { commit, parent } = resolveCommit(cwd, rev);
 	const base = baseRev === undefined ? parent : resolveRevision(cwd, baseRev);
 	const from =
@@ -1031,9 +1090,10 @@ const runCli = (argv, cwd) => {
 	}
 	const plan = copyPlan(changes, sliced, language === "python");
 	const header = [`reprove-red: ${commit}`, `base: ${base}`, ...plan.lines];
-	const output = outputOf(cwd, { commit, base, baseRev, named });
+	const output = outputOf(cwd, { commit, base, baseRev, named: asNamed });
 	const python = language === "python";
 	const { place, links } = checkedPlaces({ top, cwd, python, linkArgs });
+	const named = fromRunFolder(asNamed, place);
 	if (tests.length === 0) return lines([...header, "result: no-tests"]);
 	mkdirSync(dirname(output), { recursive: true });
 	const log = `${output}.log`;

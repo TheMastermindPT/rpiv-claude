@@ -1024,6 +1024,84 @@ describe("slice-preflight on pytest tests (S3-preflight-python)", () => {
 			},
 			TEST_TIMEOUT,
 		);
+
+		// rpiv issue draft 20261124-123428-d6faf9de: a package in a subfolder runs from
+		// it, with the runner found there or in a folder above it.
+		const JS_TAIL = "run --reporter=junit --outputFile={junit} {tests}";
+		const jsPackage = () => {
+			const r = pyRepo(
+				{},
+				{ "web/tests/unit/a.test.mjs": 'it("B1: x", () => {});\n' },
+			);
+			put(r.repo, "web/package.json", "{}\n");
+			return {
+				r,
+				contract: [
+					"- **Behavior B1**: x",
+					"  - Test: `B1: x` in `web/tests/unit/a.test.mjs`",
+				],
+				call: `reprove: --commit ${r.candidate} --base ${r.base} --test web/tests/unit/a.test.mjs::B1: x`,
+			};
+		};
+
+		it(
+			"a js test in a package with its own vitest runs from the package",
+			() => {
+				const { r, contract, call } = jsPackage();
+				put(r.repo, "node_modules/vitest/vitest.mjs", "");
+				put(r.repo, "web/node_modules/vitest/vitest.mjs", "");
+				expect(plan(r, contract)).toEqual([
+					`${call} --in web --link node_modules -- node node_modules/vitest/vitest.mjs ${JS_TAIL}`,
+				]);
+			},
+			TEST_TIMEOUT,
+		);
+
+		it(
+			"a js test in a package whose vitest is hoisted runs from the package, linking both node_modules",
+			() => {
+				const { r, contract, call } = jsPackage();
+				put(r.repo, "node_modules/vitest/vitest.mjs", "");
+				put(r.repo, "web/node_modules/.modules.yaml", "");
+				expect(plan(r, contract)).toEqual([
+					`${call} --in web --link node_modules --link ../node_modules -- node ../node_modules/vitest/vitest.mjs ${JS_TAIL}`,
+				]);
+			},
+			TEST_TIMEOUT,
+		);
+
+		it(
+			"a js test in a package with no vitest anywhere says where it looked",
+			() => {
+				const { r, contract, call } = jsPackage();
+				expect(plan(r, contract)).toEqual([
+					call,
+					"diagnostic: reprove lines need a runner: append -- <runner> with {junit} and {tests} (no node_modules/vitest/vitest.mjs in web or a folder above it)",
+				]);
+			},
+			TEST_TIMEOUT,
+		);
+
+		it(
+			"a py test in a project in a subfolder runs from it with the root's .venv",
+			() => {
+				const r = pyRepo(
+					{},
+					{ "svc/tests/test_a.py": "def test_b1_x():\n    pass\n" },
+				);
+				put(r.repo, "svc/pyproject.toml", "[project]\nname = 'svc'\n");
+				put(r.repo, ".venv/bin/python", "");
+				expect(
+					plan(r, [
+						"- **Behavior B1**: x",
+						"  - Test: `test_b1_x` in `svc/tests/test_a.py`",
+					]),
+				).toEqual([
+					`reprove: --commit ${r.candidate} --base ${r.base} --test svc/tests/test_a.py::test_b1_x --in svc --link ../.venv -- ../.venv/bin/python ${PY_TAIL}`,
+				]);
+			},
+			TEST_TIMEOUT,
+		);
 	});
 });
 
