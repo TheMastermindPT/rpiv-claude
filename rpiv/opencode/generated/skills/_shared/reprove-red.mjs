@@ -51,6 +51,12 @@
 // own log and report, named with a short hash of the named tests; in a Python run its
 // `{tests}` is only the named tests' pytest node ids. When the run is red while a named
 // test passed or was skipped, a `diagnostic:` line says the red came from the whole run.
+// When pytest stops loading in a Python run (exit 2: a test module; exit 4: a conftest;
+// rpiv issue draft 20261123-231126-941be8d9), each load failure prints a `load-error:`
+// line, and the run line is `result: red (import)` when every one is an import of a
+// module or a name the slice adds (import-red.mjs); a named test that failed to load then
+// reads `failed-import` (every named test, when a conftest stopped the run). Otherwise the
+// run line stays `result: broken: exit <n> (...)`.
 //
 // Importable: exitCodeOf.
 
@@ -79,6 +85,7 @@ import {
 	realOf,
 	within,
 } from "./import-guard.mjs";
+import { judgeLoadErrors } from "./import-red.mjs";
 import { isMain } from "./is-main.mjs";
 import {
 	extOf,
@@ -728,18 +735,40 @@ const readReport = (junit) => {
 	}
 };
 
+/** A named test that could not load because it imports what the slice adds. */
+const failedImport = (id, reason) => [
+	`test-result: failed-import ${id}`,
+	`reason: ${id}: ${reason}`,
+];
+
+/** The bucket shown for a found one: under a `broken` or an import red run line, a named
+    test the report lacks is `unavailable`, not `not-found`; under an import red one, a
+    test that failed to load is `failed-import` (every load failure is the slice's). */
+const shownBucket = (found, { broken, importRed }) => {
+	if (importRed && found === "failed-to-load") return "failed-import";
+	return (broken || importRed) && found === "not-found" ? "unavailable" : found;
+};
+
 /** The `report:` line and one `test-result:` (plus `reason:`) per named test. A missing
-    or unparsable report makes every named test `unavailable`, never a pass. Under a
-    `broken` run line, a named test the report lacks is `unavailable`, not `not-found`. */
-const reportLines = (junit, report, named, broken) => {
-	const unavailable = named.map(({ id }) => `test-result: unavailable ${id}`);
-	if (!report.records) return [report.line, ...unavailable];
+    or unparsable report makes every named test `unavailable`, never a pass, except under
+    an import red from a conftest, which every named test fails to load (`failed-import`). */
+const reportLines = (junit, report, named, { broken, importRed }) => {
+	if (!report.records) {
+		return [
+			report.line,
+			...named.flatMap(({ id }) =>
+				importRed?.conftest
+					? failedImport(id, importRed.conftest)
+					: [`test-result: unavailable ${id}`],
+			),
+		];
+	}
 	const { records } = report;
 	return [
 		`report: ${junit}`,
 		...named.flatMap((test) => {
 			const { bucket: found, reason } = bucketOf(records, test);
-			const bucket = broken && found === "not-found" ? "unavailable" : found;
+			const bucket = shownBucket(found, { broken, importRed });
 			const result = `test-result: ${bucket} ${test.id}`;
 			return reason === undefined
 				? [result]
@@ -790,6 +819,86 @@ const runLineOf = (code, { python, promisesReport, report }) =>
 	python
 		? pytestRunLine(code, !promisesReport || report.records !== undefined)
 		: `result: ${code === 0 ? "green" : "red"}`;
+
+const CONFTEST_LOAD = "ImportError while loading conftest ";
+
+/** The one-line reasons of the load failures that stopped a Python run before any test
+    ran: exit 2's error records in the report (D9), or exit 4's conftest failure in the
+    log (`conftest`, as no report is written); undefined for any other run. */
+const loadReasons = (code, report, log) => {
+	if (code === 2 && report.records) {
+		const reasons = report.records
+			.filter((r) => r.fault && r.classname === "")
+			.map((r) => pytestFaultReason(r.fault));
+		return reasons.length > 0 ? { reasons } : undefined;
+	}
+	if (code !== 4 || !existsSync(log)) return undefined;
+	const text = readFileSync(log, "utf-8");
+	const at = text.indexOf(CONFTEST_LOAD);
+	if (at < 0) return undefined;
+	const conftest = pytestFaultReason({ message: "", body: text.slice(at) });
+	return { reasons: [conftest], conftest };
+};
+
+/** The paths at the base and at the slice commit, and a reader of a file's text. */
+const treesOf = (cwd, base, commit) => {
+	const filesAt = (rev) =>
+		gitIn(cwd, ["ls-tree", "-r", "-z", "--name-only", rev])
+			.split(" ")
+			.filter(Boolean);
+	return {
+		base,
+		commit,
+		baseFiles: filesAt(base),
+		commitFiles: filesAt(commit),
+		textAt: (rev, path) => gitIn(cwd, ["show", `${rev}:${path}`]),
+	};
+};
+
+/** The judged load failures of a Python run that pytest stopped while loading, when the
+    guard found nothing (import-red.mjs, rpiv issue draft 20261123-231126-941be8d9):
+    `{ red, lines, conftest? }`, or undefined. */
+const importRedOf = ({
+	python,
+	verdict,
+	code,
+	report,
+	log,
+	cwd,
+	base,
+	commit,
+}) => {
+	if (!python || verdict !== undefined) return undefined;
+	const load = loadReasons(code, report, log);
+	if (!load) return undefined;
+	const judged = judgeLoadErrors(load.reasons, treesOf(cwd, base, commit));
+	return { ...judged, conftest: load.conftest };
+};
+
+/** The lines after `log:`: the named tests' results, the load failures, a whole-run
+    diagnostic and the run line. The guard's line wins over pytest's in a Python run
+    (S2-scratch-copy); an import red wins over pytest's exit 2 or 4. */
+const outcomeLines = (run) => {
+	const report = readReport(run.junit);
+	const loaded = importRedOf({ ...run, report });
+	const importRed = loaded?.red ? loaded : undefined;
+	const runLine =
+		run.verdict ??
+		(importRed
+			? "result: red (import)"
+			: runLineOf(run.code, { ...run, report }));
+	const broken = runLine.startsWith("result: broken:");
+	const results =
+		run.named.length > 0
+			? reportLines(run.junit, report, run.named, { broken, importRed })
+			: [];
+	return [
+		...results,
+		...(loaded?.lines ?? []),
+		...redElsewhere(results, runLine),
+		runLine,
+	];
+};
 
 /** The top folder and the caller's folder that the run folder and `{tests}` are placed
     by: real paths in a Python run, so a caller in a junction to the top folder runs inside
@@ -942,21 +1051,22 @@ const runCli = (argv, cwd) => {
 		python,
 		run: { args, log, timeout },
 	});
-	const report = readReport(junit);
-	// The guard's line wins over pytest's in a Python run (S2-scratch-copy).
-	const runLine =
-		verdict ?? runLineOf(code, { python, promisesReport, report });
-	const results =
-		named.length > 0
-			? reportLines(junit, report, named, runLine.startsWith("result: broken:"))
-			: [];
 	return lines([
 		...header,
 		`exit: ${code}`,
 		`log: ${log}`,
-		...results,
-		...redElsewhere(results, runLine),
-		runLine,
+		...outcomeLines({
+			code,
+			verdict,
+			junit,
+			log,
+			named,
+			python,
+			promisesReport,
+			cwd,
+			base,
+			commit,
+		}),
 	]);
 };
 

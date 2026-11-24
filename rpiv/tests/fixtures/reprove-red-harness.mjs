@@ -106,7 +106,7 @@ export const headerBody = (lines) => {
 // in a Python run it writes record files into `records/` of the guard folder named first
 // on its PYTHONPATH: `--records <json>` (`[{ name, text }]`, `{cwd}` and `{guard}`
 // filled in), else one clean record. `--copy <src>` copies a report to the
-// `--junitxml=` path, `--linger <s>` leaves a detached child working in the run folder
+// `--junitxml=` path, `--print <file>` writes a file to stdout (the log), `--linger <s>` leaves a detached child working in the run folder
 // for that long, `--sleep <s>` waits, `--code <n>` is the exit code.
 export const RECORDER = `import { copyFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { delimiter, join, relative } from "node:path";
@@ -120,6 +120,7 @@ const records = guard ? join(guard, "records") : "";
 const fill = (text) => text.replaceAll("{cwd}", process.cwd()).replaceAll("{guard}", guard);
 const report = args.find((arg) => arg.startsWith("--junitxml="))?.slice(11);
 if (opt("--copy") && report) copyFileSync(opt("--copy"), report);
+if (opt("--print")) process.stdout.write(readFileSync(opt("--print"), "utf-8"));
 const walk = (dir) =>
 	readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
 		const path = join(dir, entry.name);
