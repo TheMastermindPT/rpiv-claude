@@ -167,6 +167,9 @@ folder of the repository (it resolves the contract's paths from the root), with
 `--base` the commit the slice started from, even when the slice spans several
 commits:
 `node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/slice-preflight.mjs" --artifact <brief> --slice <slice-id> --base <base> --candidate <candidate> [--evidence <log>]...`.
+A deep-review fix round is checked the same way: its slice ID is `fix<N>` and its
+contract is the `#### Test Contract: fix<N>` that implement writes into the owning
+design's `## Developer Context` before the build, so `--artifact` is that design.
 Exit 1 lists findings to fix before any reviewer runs (no fix round is spent),
 and exit 2 is a broken gate that blocks. A frozen snapshot has no slice commit,
 so record `preflight: not run (no slice commit)`, never a pass. Save its output
