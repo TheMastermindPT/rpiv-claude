@@ -844,7 +844,7 @@ const loadReasons = (code, report, log) => {
 const treesOf = (cwd, base, commit) => {
 	const filesAt = (rev) =>
 		gitIn(cwd, ["ls-tree", "-r", "-z", "--name-only", rev])
-			.split(" ")
+			.split("\0")
 			.filter(Boolean);
 	return {
 		base,
