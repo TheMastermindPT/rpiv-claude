@@ -331,7 +331,9 @@ export function stampArtifact(artifactPath) {
 		.slice(0, fmEnd)
 		.split("\n")
 		.filter((l) => !/^content_hash:\s*/.test(l));
-	writeFileSync(artifactPath, `${fmLines.join("\n")}\ncontent_hash: ${hash}${text.slice(fmEnd)}`);
+	// A CRLF file keeps CRLF on the stamped line too.
+	const cr = text.slice(0, fmEnd).endsWith("\r") ? "\r" : "";
+	writeFileSync(artifactPath, `${fmLines.join("\n")}\ncontent_hash: ${hash}${cr}${text.slice(fmEnd)}`);
 	return hash;
 }
 

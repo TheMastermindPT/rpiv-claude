@@ -8,20 +8,19 @@
 //
 // Importable: parseFrontmatter, splitFrontmatter.
 
+/** `v` without one pair of wrapping double or single quotes (a lone quote reads as ""). */
+const unquote = (v) => (/^(["'])(?:.*\1)?$/s.test(v) ? v.slice(1, -1) : v);
+
 /** Minimal single-line-value frontmatter parser (deterministic; no multi-line values). */
 export function parseFrontmatter(text) {
 	if (!text.startsWith("---")) return {};
 	const end = text.indexOf("\n---", 3);
 	if (end === -1) return {};
 	const fm = {};
+	// CRLF reads as LF: a Windows checkout (core.autocrlf) has the same fields.
 	for (const line of text.slice(3, end).split("\n")) {
-		const m = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
-		if (!m) continue;
-		let v = m[2].trim();
-		if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
-			v = v.slice(1, -1);
-		}
-		fm[m[1]] = v;
+		const m = line.replace(/\r$/, "").match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+		if (m) fm[m[1]] = unquote(m[2].trim());
 	}
 	return fm;
 }
