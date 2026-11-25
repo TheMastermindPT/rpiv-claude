@@ -4,12 +4,13 @@
 //
 //   branch: <name>|no-branch
 //   commit: <short-sha>|no-commit
-//   repo:   <basename of toplevel>|unknown
+//   repo:   <repository name>|unknown — the main checkout's folder, the same in every
+//           linked worktree (Odin issue #9)
 //   root:   <absolute toplevel path>|(empty)
 //   in_repo: yes|no
 //   author: <git config user.name>|unknown
 import { execFileSync } from "node:child_process";
-import { basename } from "node:path";
+import { basename, dirname } from "node:path";
 
 const safe = (args, fb) => {
 	try {
@@ -29,11 +30,27 @@ const safe = (args, fb) => {
 const clean = (s) => Array.from(String(s), (ch) => (ch.codePointAt(0) < 0x20 || ch.codePointAt(0) === 0x7f ? " " : ch)).join("").trim();
 
 const root = safe(["rev-parse", "--show-toplevel"], "");
+
+/** The repository's name: the folder of the main checkout, read from the common git
+    dir that every linked worktree shares (`<main>/.git`), or a bare repository's
+    folder without `.git`. Any other layout (a submodule under `.git/modules/`) keeps
+    the toplevel's folder name. */
+const repoName = (top) => {
+	if (!top) return "unknown";
+	const common = safe(
+		["rev-parse", "--path-format=absolute", "--git-common-dir"],
+		"",
+	).replaceAll("\\", "/");
+	const last = basename(common);
+	if (last === ".git") return basename(dirname(common));
+	if (last.endsWith(".git") && !common.includes("/.git/")) return last.slice(0, -4);
+	return basename(top);
+};
 process.stdout.write(
 	[
 		`branch: ${clean(safe(["branch", "--show-current"], "no-branch"))}`,
 		`commit: ${safe(["rev-parse", "--short", "HEAD"], "no-commit")}`,
-		`repo: ${root ? basename(root) : "unknown"}`,
+		`repo: ${clean(repoName(root))}`,
 		`root: ${root}`,
 		`in_repo: ${root ? "yes" : "no"}`,
 		`author: ${safe(["config", "user.name"], "unknown")}`,
