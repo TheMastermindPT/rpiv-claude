@@ -49,6 +49,15 @@ changed. A Python test is a function titled `test_<id>_<what>`
 (`test_b1_rejects_empty_item`), which the preflight finds by its `def`; its
 Expected red is a pytest outcome: an `AssertionError`, or an
 `ImportError`/`AttributeError` that names the new symbol the slice adds, never xfail.
+A raises behavior may also red as `Failed: DID NOT RAISE <X>`, only when `<X>`
+is the exception the test expects (`with pytest.raises(FixtureError)` first
+fails as `Failed: DID NOT RAISE FixtureError`). A behavior that maps one
+exception to another may red with the input exception escaping unmapped, only
+when the expected red reason named that type before the first run and it
+differs from the target exception ("a missing file becomes `FixtureError`"
+first fails with the named `FileNotFoundError` escaping). An escaping exception
+the reason did not name, a `DID NOT RAISE` for another exception, or a generic
+setup crash (a `TypeError` from a typo, a `NameError`) never qualifies.
 The implementer writes the expected red reason into the TDD evidence
 before the first run.
 

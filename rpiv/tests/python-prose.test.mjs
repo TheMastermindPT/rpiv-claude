@@ -61,6 +61,29 @@ describe("Python prose (S3-preflight-python)", () => {
 	});
 });
 
+// odin#12: a raises behavior and an exception-mapping behavior have their own honest
+// first red, accepted only in a narrow form, so an accidental crash still never counts.
+// One wording everywhere the rule is stated (shared-vocab-union).
+const RAISES_RED = [
+	/`Failed: DID NOT RAISE <X>`, only when `<X>` is the exception the test expects/,
+	/`Failed: DID NOT RAISE FixtureError`/,
+	/the input exception escaping unmapped, only when the expected red reason named that type before the first run and it differs from the target exception/i,
+	/the named `FileNotFoundError` escaping/,
+	/An escaping exception the reason did not name, a `DID NOT RAISE` for another exception, or a generic setup crash \(a `TypeError` from a typo, a `NameError`\) never qualifies/,
+];
+const RAISES_ROWS = rows(
+	[...IMPLEMENT, ...AUTHORING, "agents/artifact-coverage-reviewer.md"],
+	RAISES_RED,
+);
+
+describe("Python raises and exception-mapping reds (odin#12)", () => {
+	it("implement, authoring and the coverage reviewer accept DID NOT RAISE for the expected exception and a named escaping input exception, and nothing looser", () => {
+		for (const [path, phrase] of RAISES_ROWS) {
+			expect.soft(joined(path), path).toMatch(phrase);
+		}
+	});
+});
+
 // B50 of S9-reviewer-pitfalls: both reviewer agents carry the generic Python pitfalls
 // (FR20, D58). Agents are not mirrored into opencode/generated/.
 const PITFALLS = [
