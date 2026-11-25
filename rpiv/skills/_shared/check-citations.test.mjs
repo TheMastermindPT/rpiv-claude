@@ -63,5 +63,14 @@ writeFileSync(okMention, "## Notes\n- the `loadcap.ts` helper owns the cap\n- qu
 const r5 = run(okMention);
 assert.equal(r5.status, 0, "unique / qualified line-less mentions must pass");
 
+// 6. a Windows checkout (core.autocrlf) gives the artifact CRLF lines: its frontmatter is
+// still frontmatter, never scanned as body (an ambiguous cite there must not fail)
+for (const [name, eol] of [["fm-lf.md", "\n"], ["fm-crlf.md", "\r\n"]]) {
+  const path = join(tmp, name);
+  writeFileSync(path, ["---", "source: `service.ts:3`", "---", "## Findings", "- none", ""].join(eol));
+  const r = run(path);
+  assert.equal(r.status, 0, `${name}: frontmatter is not scanned (${r.stderr})`);
+}
+
 rmSync(tmp, { recursive: true, force: true });
 console.log("OK");

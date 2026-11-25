@@ -26,6 +26,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { basenameCounts, CITE_RE, EXEMPT_RE } from "./citation-grammar.mjs";
+import { splitFrontmatter } from "./frontmatter.mjs";
 
 const args = process.argv.slice(2);
 const rootIdx = args.indexOf("--root");
@@ -43,7 +44,7 @@ let failed = 0;
 for (const artifactPath of paths) {
 	if (!existsSync(artifactPath)) { console.error(`no such artifact: ${artifactPath}`); failed++; continue; }
 	const text = readFileSync(artifactPath, "utf-8");
-	const body = text.replace(/^---\n[\s\S]*?\n---\n?/, "");
+	const { body } = splitFrontmatter(text);
 	const ambiguous = new Map(); // "service.ts:329" -> count
 	for (const m of body.matchAll(CITE_RE)) {
 		const tok = m[1];
