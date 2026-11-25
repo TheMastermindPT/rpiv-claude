@@ -841,16 +841,23 @@ const runLineOf = (code, { python, promisesReport, report }) =>
 
 const CONFTEST_LOAD = "ImportError while loading conftest ";
 
+/** The reasons of the report's collection error records (no class name), or undefined
+    when it has none, so an exit 4 without them still reads the conftest log. */
+const collectionReasons = (report) => {
+	const reasons = (report.records ?? [])
+		.filter((r) => r.fault && r.classname === "")
+		.map((r) => pytestFaultReason(r.fault));
+	return reasons.length > 0 ? reasons : undefined;
+};
+
 /** The one-line reasons of the load failures that stopped a Python run before any test
-    ran: exit 2's error records in the report (D9), or exit 4's conftest failure in the
-    log (`conftest`, as no report is written); undefined for any other run. */
+    ran: the collection error records in the report (D9) on exit 2, or on exit 4 when a
+    test named by node id could not be collected ("found no collectors"; rpiv issue draft
+    20261124-234001-c7a6b062), else exit 4's conftest failure in the log (`conftest`, as
+    no report is written); undefined for any other run. */
 const loadReasons = (code, report, log) => {
-	if (code === 2 && report.records) {
-		const reasons = report.records
-			.filter((r) => r.fault && r.classname === "")
-			.map((r) => pytestFaultReason(r.fault));
-		return reasons.length > 0 ? { reasons } : undefined;
-	}
+	const collected = (code === 2 || code === 4) && collectionReasons(report);
+	if (collected) return { reasons: collected };
 	if (code !== 4 || !existsSync(log)) return undefined;
 	const text = readFileSync(log, "utf-8");
 	const at = text.indexOf(CONFTEST_LOAD);

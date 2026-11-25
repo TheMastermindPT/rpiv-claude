@@ -247,3 +247,55 @@ describe("reprove-red when pytest stops loading", () => {
 		TEST_TIMEOUT,
 	);
 });
+
+// rpiv issue draft 20261124-234001-c7a6b062: a test named by node id whose module fails to
+// import makes pytest exit 4 ("found no collectors"), yet it still writes the collection
+// error to the report, as for exit 2. A module the slice adds (here in a src layout) is
+// the slice's import red, not broken.
+describe("reprove-red when a named test's module fails to collect (exit 4)", () => {
+	const noCollectors = `ERROR: found no collectors for C:\\scratch\\${TEST_ID}\r\n`;
+
+	it(
+		"reads the report's collection error: a src-layout package the slice adds is red (import)",
+		() => {
+			const s = sliceOf({ slice: { "src/pkg/sub.py": "x = 1\n" } });
+			const error = "ModuleNotFoundError: No module named 'pkg'";
+			const result = run(s, {
+				code: 4,
+				log: noCollectors,
+				report: collectionReport([["tests.test_x", error]]),
+			});
+			expect.soft(result.stderr).toBe("");
+			expect
+				.soft(linesOf(result, "load-error: "))
+				.toEqual([`load-error: ${error} (the slice adds src/pkg/sub.py)`]);
+			expect
+				.soft(linesOf(result, "test-result: "))
+				.toEqual([`test-result: failed-import ${TEST_ID}`]);
+			expect.soft(lastLine(result.lines)).toBe("result: red (import)");
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"keeps a missing dependency the slice does not add broken",
+		() => {
+			const s = sliceOf({ slice: { "src/pkg/sub.py": "x = 1\n" } });
+			const error = "ModuleNotFoundError: No module named 'numpy'";
+			const result = run(s, {
+				code: 4,
+				log: noCollectors,
+				report: collectionReport([["tests.test_x", error]]),
+			});
+			expect
+				.soft(linesOf(result, "load-error: "))
+				.toEqual([
+					`load-error: ${error} (not an import of something the slice adds)`,
+				]);
+			expect
+				.soft(lastLine(result.lines))
+				.toBe("result: broken: exit 4 (pytest: usage error)");
+		},
+		TEST_TIMEOUT,
+	);
+});
