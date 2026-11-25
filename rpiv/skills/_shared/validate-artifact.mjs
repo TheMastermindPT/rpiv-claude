@@ -16,7 +16,9 @@
 //   - a `lane` that is not fast or normal (an older `rigorous` reads as normal), a lane without non-empty `lane_reasons`,
 //     or `lane_reasons` without a lane (no lane fields at all is valid)
 //   - `status: ready` but body still holds unfilled `{template tokens}` in prose
-//   - TODO / TBD / FIXME left in prose
+//   - TODO / TBD / FIXME left in prose where a placeholder stands (a line or bullet that starts
+//     with it, `TODO:`, a label's whole value, a whole table cell, alone in brackets) — not the
+//     same word inside a sentence, a code span or fence, or quotes
 //   - an empty code fence
 //   - with --finalizing, in designs and plans only (D26): a code fence over 10 inner lines, and
 //     an unterminated code fence
@@ -90,6 +92,44 @@ function stripCode(body, fences) {
 		.filter((_, i) => !fenced.has(i + 1))
 		.join("\n")
 		.replace(CODE_SPAN, "");
+}
+
+// Leftover placeholders (check 3). TODO / TBD / FIXME count only where a placeholder stands,
+// never as a word inside a sentence ("rg found no TODO markers" — odin#18). Code is already
+// stripped; a quoted word ("TODO", 'TBD', “FIXME”) is a search term too. Every rule below
+// captures the word as group 1.
+const WORD = "(TODO|TBD|FIXME)";
+const QUOTED_WORD = /"(?:TODO|TBD|FIXME)"|'(?:TODO|TBD|FIXME)'|“(?:TODO|TBD|FIXME)”|‘(?:TODO|TBD|FIXME)’/g;
+const PLACEHOLDER_RULES = [
+	// the first word of a line, after any quote, heading, list, checkbox or emphasis marker
+	new RegExp(String.raw`^\s*(?:>\s*)*(?:#{1,6}\s+)?(?:(?:[-*+]|\d+[.)])\s+)?(?:\[[ xX]\]\s+)?[*_]*${WORD}\b`, "g"),
+	// a marker anywhere: TODO: / TBD — / FIXME(owner):
+	new RegExp(String.raw`\b${WORD}(?:\([^)]*\))?[*_]*\s*[:—]`, "g"),
+	// the whole value of a label: "Owner: TBD", "**Rollback plan:** TBD."
+	new RegExp(String.raw`[:—][*_]*\s*[*_]*${WORD}[*_]*\s*(?=[.,;(]|$)`, "g"),
+	// alone in brackets: (TBD), [TODO]
+	new RegExp(String.raw`[([]\s*[*_]*${WORD}[*_]*\s*[)\]]`, "g"),
+];
+const LONE_WORD = /^[*_]*(TODO|TBD|FIXME)[*_]*$/;
+
+/** The placeholder words standing alone as a whole table cell of `line`. */
+function tableCellPlaceholders(line) {
+	if (!line.trimStart().startsWith("|")) return [];
+	const cells = line.trim().replace(/^\||\|$/g, "").split(/(?<!\\)\|/);
+	return cells.map((cell) => LONE_WORD.exec(cell.trim())?.[1]).filter(Boolean);
+}
+
+/** The placeholder words of one prose line that stand in placeholder position. */
+function linePlaceholders(line) {
+	const unquoted = line.replace(QUOTED_WORD, "");
+	const positioned = PLACEHOLDER_RULES.flatMap((rule) => [...unquoted.matchAll(rule)].map((m) => m[1]));
+	return [...positioned, ...tableCellPlaceholders(unquoted)];
+}
+
+/** One error per distinct placeholder word left in `prose` (code already stripped). */
+function placeholderErrors(prose) {
+	const words = new Set(prose.split("\n").flatMap(linePlaceholders));
+	return [...words].map((word) => `placeholder left in prose: ${word}`);
 }
 
 /** Kinds whose fences are size-limited at finalization (D26), and the limit in inner lines. */
@@ -289,9 +329,8 @@ export function validateArtifact(artifactPath, root, { verifyHash = true, finali
 		for (const t of new Set(tokens)) errors.push(`unfilled template token in prose: ${t}`);
 	}
 
-	// 3. Leftover placeholders.
-	const placeholders = prose.match(/\b(TODO|TBD|FIXME)\b/g) ?? [];
-	for (const p of new Set(placeholders)) errors.push(`placeholder left in prose: ${p}`);
+	// 3. Leftover placeholders, in placeholder position only (placeholderErrors).
+	errors.push(...placeholderErrors(prose));
 
 	// 4. Empty code fences.
 	for (const { info, lines } of fences) {
