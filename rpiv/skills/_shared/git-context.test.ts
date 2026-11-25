@@ -52,7 +52,8 @@ describe("git-context.mjs", () => {
 		expect(lines).toContain("branch: main");
 		expect(lines.some((l) => /^commit: [0-9a-f]{7,}$/.test(l))).toBe(true);
 		expect(lines).toContain(`repo: ${basename(realDir)}`);
-		expect(lines).toContain(`root: ${realDir}`);
+		// git prints the root with forward slashes on every OS (`C:/Users/...` on Windows).
+		expect(lines).toContain(`root: ${realDir.replaceAll("\\", "/")}`);
 		expect(lines).toContain("in_repo: yes");
 		expect(lines).toContain("author: Test User");
 	});
