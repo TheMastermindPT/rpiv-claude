@@ -257,3 +257,139 @@ describe("rangeSourceLines paths (review round 2)", () => {
 		TEST_TIMEOUT,
 	);
 });
+
+describe("convergence CLI and the tool's own folder (odin#16)", () => {
+	/** base, a candidate with a 100-line code change, then the same candidate
+	    amended to also commit a 2000-line saved patch under `.rpiv/evidence/`,
+	    with the code grown to `secondLines`. */
+	const evidenceRounds = (secondLines) => {
+		const repo = newRepo();
+		put(repo, "README.md", "base\n");
+		const base = commitAll(repo, "base");
+		put(repo, "src/parse.mjs", lines(100));
+		const first = commitAll(repo, "candidate A");
+		put(repo, "src/parse.mjs", lines(secondLines));
+		put(repo, ".rpiv/evidence/round-1.patch", lines(2000));
+		git(repo, "add", "-A");
+		git(repo, "commit", "-q", "--amend", "-m", "candidate A2");
+		const second = git(repo, "rev-parse", "HEAD");
+		return { repo, base, first, second };
+	};
+
+	// 0 -> 0 is the issue's repro; 2 -> 2 keeps the blockers stuck, so only the
+	// tool-folder exclusion can turn the verdict into keep.
+	it.each([0, 2])(
+		"keeps when only committed evidence grew (%i blockers in both rounds)",
+		(blockers) => {
+			const { repo, base, first, second } = evidenceRounds(100);
+			const res = run(
+				repo,
+				"--round",
+				`${base}..${first}=${blockers}`,
+				"--round",
+				`${base}..${second}=${blockers}`,
+			);
+			expect(res.stderr).toBe("");
+			expect(res.status).toBe(0);
+			expect(res.stdout.split("\n")[0]).toBe("convergence: keep");
+			expect(res.stdout).toContain("reason: lines: 100 -> 100 (+0%)");
+			expect(res.stdout).toContain(
+				"reason: tool-folder lines not counted: 0 -> 2000",
+			);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"still reopens on real code growth beside committed evidence",
+		() => {
+			const { repo, base, first, second } = evidenceRounds(200);
+			const res = run(
+				repo,
+				"--round",
+				`${base}..${first}=2`,
+				"--round",
+				`${base}..${second}=2`,
+			);
+			expect(res.status).toBe(1);
+			expect(res.stdout.split("\n")[0]).toBe("convergence: reopen");
+			expect(res.stdout).toContain("reason: lines: 100 -> 200 (+100%)");
+			expect(res.stdout).toContain(
+				"reason: tool-folder lines not counted: 0 -> 2000",
+			);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"keeps, never divides by zero, when both rounds measure no slice source",
+		() => {
+			const repo = newRepo();
+			put(repo, "README.md", "base\n");
+			const base = commitAll(repo, "base");
+			put(repo, ".rpiv/evidence/a.log", lines(10));
+			const first = commitAll(repo, "evidence only");
+			put(repo, ".rpiv/evidence/b.log", lines(500));
+			const second = commitAll(repo, "more evidence");
+			const res = run(
+				repo,
+				"--round",
+				`${base}..${first}=1`,
+				"--round",
+				`${base}..${second}=1`,
+			);
+			expect(res.stderr).toBe("");
+			expect(res.status).toBe(0);
+			expect(res.stdout.split("\n")[0]).toBe("convergence: keep");
+			expect(res.stdout).toContain(
+				"reason: lines: 0 -> 0 (no counted slice source; growth not measured)",
+			);
+			expect(res.stdout).toContain(
+				"reason: tool-folder lines not counted: 10 -> 510",
+			);
+		},
+		TEST_TIMEOUT,
+	);
+});
+
+describe("convergence rule and zero blockers (odin#16)", () => {
+	const decide = async (blockers) => {
+		const { convergence } = await import("../skills/_shared/convergence.mjs");
+		return convergence([
+			{ lines: 100, blockers: blockers[0] },
+			{ lines: 200, blockers: blockers[1] },
+		]).decision;
+	};
+
+	it("does not read 0 -> 0 blockers as stuck, even when the source doubled", async () => {
+		expect(await decide([0, 0])).toBe("keep");
+	});
+
+	it("still reads 0 -> 1, 2 -> 2 and 2 -> 3 blockers as stuck", async () => {
+		expect(await decide([0, 1])).toBe("reopen");
+		expect(await decide([2, 2])).toBe("reopen");
+		expect(await decide([2, 3])).toBe("reopen");
+		expect(await decide([2, 1])).toBe("keep");
+	});
+});
+
+describe("convergence rule with no slice source in either round (odin#16)", () => {
+	it("keeps 0 -> 0 as not measured, and still refuses 0 -> more", async () => {
+		const { convergence } = await import("../skills/_shared/convergence.mjs");
+		const result = convergence([
+			{ lines: 0, blockers: 2 },
+			{ lines: 0, blockers: 2 },
+		]);
+		expect(result.decision).toBe("keep");
+		expect(result.reasons).toContain(
+			"lines: 0 -> 0 (no counted slice source; growth not measured)",
+		);
+		expect(result.reasons.join(" ")).not.toMatch(/NaN|Infinity/);
+		expect(() =>
+			convergence([
+				{ lines: 0, blockers: 2 },
+				{ lines: 5, blockers: 2 },
+			]),
+		).toThrow(/no slice source/);
+	});
+});

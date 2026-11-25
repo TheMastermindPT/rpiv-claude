@@ -18,7 +18,7 @@
 //
 // Importable: DEFAULT_LANE_THRESHOLDS, LANES, laneOf, classifyLane, loadLaneThresholds, mergeLane,
 // laneInput (the files a CLI call judges, S8), rangeSourceLines (slice-source size of a
-// range, for the convergence trigger).
+// range without the tool's own folder, for the convergence trigger).
 
 import { execFileSync, spawnSync } from "node:child_process";
 import { lstatSync, readFileSync, statSync } from "node:fs";
@@ -36,6 +36,7 @@ import {
 	isMedia,
 	isMigration,
 	isTest,
+	isToolHome,
 } from "./source-vocab.mjs";
 
 export const DEFAULT_LANE_THRESHOLDS = Object.freeze({
@@ -643,15 +644,22 @@ const parseNumstatRenames = (text) => {
 const renamedRangeFiles = (root, range) =>
 	parseNumstatRenames(gitIn(root, ["diff", "--numstat", "-z", "-M", "--end-of-options", range, "--"]));
 
+const sumLines = (files) => files.reduce((sum, f) => sum + f.added + f.deleted, 0);
+
 /** The slice-source size of a revision range: added plus deleted lines over the
     changed files lane counts toward its size limits (generated, media, test and
-    fixture files left out). `lines` is null when a counted file has no line counts
-    (a binary file), never 0. Throws on a broken git call. */
+    fixture files left out), and also without the tool's own folder, whose committed
+    evidence is not slice source (odin#16). `lines` is null when a counted file has
+    no line counts (a binary file), never 0. `toolHomeLines` is the text lines left
+    out as tool-folder files, so a caller can say what was not counted. Throws on a
+    broken git call. */
 export const rangeSourceLines = (root, range) => {
 	const isSupport = (p) => isTest(slashed(p)) || isFixture(slashed(p));
-	const sized = renamedRangeFiles(root, range).filter((f) => !isDropped(f.path) && !isSupport(f.path));
-	if (!sized.every(isCounted)) return { lines: null, files: sized.length };
-	return { lines: sized.reduce((sum, f) => sum + f.added + f.deleted, 0), files: sized.length };
+	const changed = renamedRangeFiles(root, range);
+	const toolHomeLines = sumLines(changed.filter((f) => isToolHome(f.path) && isCounted(f)));
+	const sized = changed.filter((f) => !isToolHome(f.path) && !isDropped(f.path) && !isSupport(f.path));
+	if (!sized.every(isCounted)) return { lines: null, files: sized.length, toolHomeLines };
+	return { lines: sumLines(sized), files: sized.length, toolHomeLines };
 };
 
 /** The CLI's stdout for `argv`, run in `cwd`; throws on a broken call. */
