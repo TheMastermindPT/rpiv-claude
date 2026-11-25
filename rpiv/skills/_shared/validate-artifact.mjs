@@ -29,6 +29,9 @@
 //     text of an append-only brief is never edited. `--slice <id>` (repeatable) names the sections
 //     being approved instead, for a brief whose approved copies are not kept.
 //
+// An unknown flag (there is no `--dry-run`: a run without `--stamp` already never writes) or a
+// `--root` / `--slice` without its value is a usage error: exit 2, nothing validated or written.
+//
 // `--stamp` writes `content_hash:` into an artifact's frontmatter after its checks pass; the
 // finalizing skill calls it at the `ready` flip so later verify runs detect post-finalization
 // edits. This is git-INDEPENDENT — it works even if .rpiv is gitignored. The body hash normalizes
@@ -338,21 +341,48 @@ export function stampArtifact(artifactPath) {
 }
 
 // ---- CLI ---------------------------------------------------------------------------------------
+const USAGE =
+	"usage: validate-artifact.mjs <artifact.md> [more.md ...] [--root <dir>] [--finalizing [--slice <id>]...] [--stamp]\n" +
+	"       only --stamp writes; without it the artifact is checked and never changed\n";
+const VALUE_FLAGS = new Set(["--root", "--slice"]);
+const SWITCH_FLAGS = new Set(["--finalizing", "--stamp"]);
+
+const isFlagValue = (value) => value !== undefined && !value.startsWith("--");
+
+/** Records `--root` / `--slice` and its value; returns how many extra args it used (0 or 1). */
+function takeFlagValue(flag, value, opts) {
+	if (!isFlagValue(value)) {
+		opts.problems.push(`${flag} needs a value`);
+		return 0;
+	}
+	if (flag === "--root") opts.root = resolve(value);
+	else opts.slices.push(value);
+	return 1;
+}
+
+/** Records a switch, an artifact path, or a flag this CLI does not know. */
+function readPlainArg(arg, opts) {
+	if (SWITCH_FLAGS.has(arg)) opts[arg.slice(2)] = true;
+	else if (arg.startsWith("--")) opts.problems.push(`unknown flag ${arg}`);
+	else opts.paths.push(arg);
+}
+
+/** Reads the command line. A flag it does not know, or a value flag without its value, is a
+    usage problem: `problems` names it and the caller must validate and write nothing. */
+function parseCliArgs(args) {
+	const opts = { paths: [], root: process.cwd(), slices: [], stamp: false, finalizing: false, problems: [] };
+	for (let i = 0; i < args.length; i += 1) {
+		if (VALUE_FLAGS.has(args[i])) i += takeFlagValue(args[i], args[i + 1], opts);
+		else readPlainArg(args[i], opts);
+	}
+	if (opts.paths.length === 0) opts.problems.push("no artifact path given");
+	return opts;
+}
+
 if (isMain(import.meta.url)) {
-	const args = process.argv.slice(2);
-	const stamp = args.includes("--stamp");
-	const finalizing = args.includes("--finalizing");
-	const rootIdx = args.indexOf("--root");
-	const rootValIdx = rootIdx === -1 ? -1 : rootIdx + 1;
-	const root = rootIdx !== -1 ? resolve(args[rootValIdx]) : process.cwd();
-	// --slice <id> (repeatable): the slices whose Test Contracts this finalization approves.
-	const sliceValIdx = args.flatMap((a, i) => (a === "--slice" ? [i + 1] : []));
-	const slices = sliceValIdx.map((i) => args[i]).filter((v) => v !== undefined && !v.startsWith("--"));
-	const paths = args.filter((a, i) => !a.startsWith("--") && i !== rootValIdx && !sliceValIdx.includes(i));
-	if (paths.length === 0 || slices.length !== sliceValIdx.length) {
-		process.stderr.write(
-			"usage: validate-artifact.mjs <artifact.md> [more.md ...] [--root <dir>] [--finalizing [--slice <id>]...] [--stamp]\n",
-		);
+	const { paths, root, slices, stamp, finalizing, problems } = parseCliArgs(process.argv.slice(2));
+	if (problems.length > 0) {
+		process.stderr.write(`validate-artifact: ${problems.join("; ")}\n${USAGE}`);
 		process.exit(2);
 	}
 	let totalErrors = 0;
