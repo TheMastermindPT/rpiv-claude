@@ -36,7 +36,7 @@ function main() {
     : age < 3600000 ? `${Math.round(age / 60000)}m ago`
     : `${Math.round(age / 3600000)}h ago`;
 
-  // Values below come from git output and agent-extracted paths persisted to the state
+  // Values below come from git output persisted to the state
   // file; they land in Claude's context via SessionStart stdout, so sanitize each one so a
   // hostile branch name or crafted state file cannot inject newlines/instructions.
   process.stdout.write(`\
@@ -45,13 +45,6 @@ function main() {
   Commit:  ${sanitizeForContext(state.git?.commit || "unknown")}
   Project: ${sanitizeForContext(state.project || PROJECT_DIR)}
 `);
-
-  if (state.agentActivity?.recentFiles?.length > 0) {
-    process.stdout.write(`  Recent files (${state.agentActivity.recentFiles.length}):\n`);
-    for (const f of state.agentActivity.recentFiles.slice(0, 8)) {
-      process.stdout.write(`    - ${sanitizeForContext(f)}\n`);
-    }
-  }
 
   process.stdout.write("\n");
   process.exit(0);

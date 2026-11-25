@@ -52,15 +52,12 @@ const writeState = (projectDir, state) => {
       compactedAt: new Date().toISOString(),
       project: repo,
       git: { branch: "feat/x", commit: "abc1234", root: repo },
-      agentActivity: { lastBatchCount: 2, recentFiles: ["x.ts", "y.ts"] },
     });
     const { stdout, status } = runHook(repo);
     assert.equal(status, 0, "ok: exit 0");
     assert.match(stdout, /\[rpiv\] Session restored \(compacted just now\)/, "ok: banner with age");
     assert.match(stdout, /Branch: {2}feat\/x/, "ok: branch restored");
     assert.match(stdout, /Commit: {2}abc1234/, "ok: commit restored");
-    assert.match(stdout, /Recent files \(2\):/, "ok: recent files header");
-    assert.match(stdout, /- x\.ts/, "ok: recent file listed");
     console.log("OK — valid state: summary printed to stdout for context injection.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
@@ -76,24 +73,5 @@ const writeState = (projectDir, state) => {
     assert.equal(stdout.trim(), "", "corrupt: nothing injected");
     assert.match(stderr, /Corrupt session state/, "corrupt: note on stderr");
     console.log("OK — corrupt state file: quiet no-op.");
-  } finally { rmSync(repo, { recursive: true, force: true }); }
-}
-
-// --- Test 4: missing recentFiles — summary still prints, no file section ------
-
-{
-  const repo = mkdtempSync(join(tmpdir(), "ssr-nofiles-"));
-  try {
-    writeState(repo, {
-      compactedAt: new Date().toISOString(),
-      project: repo,
-      git: { branch: "main", commit: "def5678", root: repo },
-      agentActivity: {},
-    });
-    const { stdout, status } = runHook(repo);
-    assert.equal(status, 0, "nofiles: exit 0");
-    assert.match(stdout, /Session restored/, "nofiles: banner present");
-    assert.doesNotMatch(stdout, /Recent files/, "nofiles: no file section");
-    console.log("OK — no recent files: summary without file section.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }

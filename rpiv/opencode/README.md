@@ -55,7 +55,7 @@ The web researcher prefers `exa-search_web_search_exa` and `exa-search_web_fetch
 | Sonar Secrets `PreToolUse` | `tool.execute.before` forwards reads through the installed `sonar` CLI when present |
 | Sonar Secrets `UserPromptSubmit` | `chat.message` forwards primary-session prompts through the installed `sonar` CLI; child task prompts are skipped because Claude does not re-submit them as user prompts |
 
-OpenCode has no reliable equivalent for Claude's `PostToolBatch`, `SubagentStart`, or `SubagentStop` payloads. Their guarantees are handled by generated configuration, orchestrator instructions, and tests rather than reconstructed from incomplete session events. Impeccable's deep `Stop` pass is also not ported because `session.idle` fires after the answer and cannot add corrective context to it.
+OpenCode has no reliable equivalent for Claude's `SubagentStart` or `SubagentStop` payloads. Their guarantees are handled by generated configuration, orchestrator instructions, and tests rather than reconstructed from incomplete session events. Impeccable's deep `Stop` pass is also not ported because `session.idle` fires after the answer and cannot add corrective context to it.
 
 Local hooks run through absolute, trusted Node and Sonar executable paths. Child processes receive an allowlisted environment without application credentials. Generated subagents deny every tool by default, then enable only their declared read/search tools; the two Git-history agents also deny command chaining, redirection, external diffs, text conversion, and output-file options.
 

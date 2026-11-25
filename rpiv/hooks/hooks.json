@@ -147,18 +147,6 @@
         ]
       }
     ],
-    "PostToolBatch": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT}/.claude/hooks/cross-agent-consistency.mjs\"",
-            "timeout": 15
-          }
-        ]
-      }
-    ],
     "SubagentStart": [
       {
         "matcher": "",
