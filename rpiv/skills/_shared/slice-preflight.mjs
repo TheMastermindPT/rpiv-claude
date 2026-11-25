@@ -31,7 +31,7 @@
 // checked like any other, with a `diagnostic:` line saying so and no `reprove:` lines;
 // a contract with neither behaviors nor exemptions is a broken call.
 //
-// Importable: parseTestContract (pure).
+// Importable: parseTestContract, pythonNodeIds (pure).
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
@@ -41,7 +41,7 @@ import { isTest } from "./source-vocab.mjs";
 import { parseTestContract } from "./test-contract.mjs";
 
 // The parser lives in test-contract.mjs, which owns the Test line grammar.
-export { parseTestContract };
+export { parseTestContract, pythonNodeIds };
 
 const git = (root, args) =>
 	spawnSync("git", args, { cwd: root, encoding: "utf-8" });
@@ -127,6 +127,47 @@ const definesTitle = (source, title) => {
 			),
 		)
 	);
+};
+
+const PY_DEF = /^([ \t]*)(?:async[ \t]+)?def[ \t]+(\w+)[ \t]*\(/;
+const PY_CLASS = /^([ \t]*)class[ \t]+(\w+)[ \t]*[(:]/;
+const indentOf = (line) => /^[ \t]*/.exec(line)[0].replaceAll("\t", "    ").length;
+
+/** The classes enclosing the `def` at line `at` of `lines`, outermost first, or null
+    when it is nested in another function (pytest collects no such test). */
+const enclosingClasses = (lines, at) => {
+	const chain = [];
+	let bound = indentOf(lines[at]);
+	for (let i = at - 1; i >= 0 && bound > 0; i--) {
+		const line = lines[i];
+		if (!line.trim() || line.trim().startsWith("#")) continue;
+		const indent = indentOf(line);
+		if (indent >= bound) continue;
+		if (PY_DEF.test(line)) return null;
+		const cls = PY_CLASS.exec(line);
+		if (cls) chain.unshift(cls[2]);
+		bound = indent;
+	}
+	return chain;
+};
+
+/** The pytest node ids (after `<path>::`) that a Python test `title` names: a title with
+    `::` is already one; a bare function name becomes `Class::…::fn` for each class
+    method of that name and `fn` for a module-level one, since pytest cannot collect
+    `path::fn` for a method (rpiv issue draft 20261124-234000-e2176ac9). A `[…]` case id
+    is kept. The title itself when no definition is found, so the outcome stays its own. */
+const pythonNodeIds = (source, title) => {
+	if (title.includes("::")) return [title];
+	const [fn, ...cases] = title.split("[");
+	const suffix = cases.length ? `[${cases.join("[")}` : "";
+	const lines = source.split(/\r?\n/);
+	const ids = lines.flatMap((line, i) => {
+		const def = PY_DEF.exec(line);
+		if (!def || def[2] !== fn) return [];
+		const chain = enclosingClasses(lines, i);
+		return chain ? [[...chain, fn].join("::") + suffix] : [];
+	});
+	return ids.length ? [...new Set(ids)] : [title];
 };
 
 /** True when `source` holds `title` as a whole string literal in any quote style
@@ -245,9 +286,19 @@ const testsById = (repo, b) =>
 			),
 		);
 
+/** A test with its Python title made a full pytest node id: one test per id. */
+const qualified = (repo, test) =>
+	test.title !== undefined && isPython(test.path)
+		? pythonNodeIds(repo.sourceOf(test.path) ?? "", test.title).map(
+				(title) => ({ ...test, title }),
+			)
+		: [test];
+
 /** The behavior with its tests: the contract's, or else the ones found by ID. */
-const withTests = (repo, b) =>
-	b.hasTest ? b : { ...b, tests: testsById(repo, b) };
+const withTests = (repo, b) => {
+	const tests = b.hasTest ? b.tests : testsById(repo, b);
+	return { ...b, tests: tests.flatMap((test) => qualified(repo, test)) };
+};
 
 /** The finding and diagnostic outcomes for one behavior at the candidate. A behavior
     with neither a Test line nor a changed test titled by its ID has no test. */

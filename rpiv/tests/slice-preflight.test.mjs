@@ -933,7 +933,9 @@ describe("slice-preflight on pytest tests (S3-preflight-python)", () => {
 				`${call} tests/test_cart.py::test_b1_rejects`,
 				`${call} tests/test_cart.py::test_b10_x`,
 				`${call} tests/test_cart.py::test_B2`,
-				`${call} tests/test_cart.py::test_s3_b5_x`,
+				// A method of `class TestS` is collected as path::TestS::fn (rpiv issue draft
+				// 20261124-234000-e2176ac9); path::fn is a pytest usage error.
+				`${call} tests/test_cart.py::TestS::test_s3_b5_x`,
 			]);
 		},
 		TEST_TIMEOUT,
@@ -1161,4 +1163,68 @@ describe("slice-preflight on titles holding another quote style (draft 20261122-
 		},
 		TEST_TIMEOUT,
 	);
+});
+
+// rpiv issue draft 20261124-234000-e2176ac9: a pytest method inside a class is collected
+// as path::Class::method, so a reprove line naming path::method is a usage error.
+describe("pythonNodeIds", () => {
+	const ids = async (source, title) => {
+		const { pythonNodeIds } = await import(
+			new URL("../skills/_shared/slice-preflight.mjs", import.meta.url).href
+		);
+		return pythonNodeIds(source, title);
+	};
+	const SOURCE = [
+		"import pytest",
+		"",
+		"def test_b1_top():",
+		"    pass",
+		"",
+		"class TestA:",
+		"    # a comment",
+		"    def test_b1_x(self):",
+		"        assert False",
+		"",
+		"    class TestInner:",
+		"        async def test_b2_deep(self):",
+		"            pass",
+		"",
+		"class TestB(Base):",
+		"\tdef test_b1_x(self):",
+		"\t\tpass",
+		"",
+		"def helper():",
+		"    def test_b3_nested():",
+		"        pass",
+		"",
+		"def test_b1_x():",
+		"    pass",
+	].join("\n");
+
+	it("names a method by its class chain and keeps a module-level function bare", async () => {
+		expect(await ids(SOURCE, "test_b1_top")).toEqual(["test_b1_top"]);
+		expect(await ids(SOURCE, "test_b2_deep")).toEqual([
+			"TestA::TestInner::test_b2_deep",
+		]);
+	});
+
+	it("gives every definition of a shared name, tabs included", async () => {
+		expect(await ids(SOURCE, "test_b1_x")).toEqual([
+			"TestA::test_b1_x",
+			"TestB::test_b1_x",
+			"test_b1_x",
+		]);
+	});
+
+	it("keeps a parametrize case id and a title that is already a node id", async () => {
+		expect(await ids(SOURCE, "test_b2_deep[a-1]")).toEqual([
+			"TestA::TestInner::test_b2_deep[a-1]",
+		]);
+		expect(await ids(SOURCE, "TestA::test_b1_x")).toEqual(["TestA::test_b1_x"]);
+	});
+
+	it("drops a function nested in another function and keeps an unknown title as written", async () => {
+		expect(await ids(SOURCE, "test_b3_nested")).toEqual(["test_b3_nested"]);
+		expect(await ids(SOURCE, "test_missing")).toEqual(["test_missing"]);
+	});
 });
