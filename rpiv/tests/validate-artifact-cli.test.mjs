@@ -69,6 +69,16 @@ describe("validate-artifact refuses an unknown flag", () => {
 		expect(readFileSync(file).equals(before)).toBe(true);
 	});
 
+	it("refuses a short flag such as -n, even after an artifact and before --stamp", () => {
+		const { root, file } = fixture();
+		const before = readFileSync(file);
+		const r = run(file, "-n", "--stamp", "--root", root);
+		expect(r.status).toBe(2);
+		expect(r.stderr).toContain("unknown flag -n");
+		expect(r.stdout).toBe("");
+		expect(readFileSync(file).equals(before)).toBe(true);
+	});
+
 	it("refuses --root without a value instead of crashing", () => {
 		const { file } = fixture();
 		const r = run(file, "--root");

@@ -347,7 +347,7 @@ const USAGE =
 const VALUE_FLAGS = new Set(["--root", "--slice"]);
 const SWITCH_FLAGS = new Set(["--finalizing", "--stamp"]);
 
-const isFlagValue = (value) => value !== undefined && !value.startsWith("--");
+const isFlagValue = (value) => value !== undefined && !value.startsWith("-");
 
 /** Records `--root` / `--slice` and its value; returns how many extra args it used (0 or 1). */
 function takeFlagValue(flag, value, opts) {
@@ -363,7 +363,8 @@ function takeFlagValue(flag, value, opts) {
 /** Records a switch, an artifact path, or a flag this CLI does not know. */
 function readPlainArg(arg, opts) {
 	if (SWITCH_FLAGS.has(arg)) opts[arg.slice(2)] = true;
-	else if (arg.startsWith("--")) opts.problems.push(`unknown flag ${arg}`);
+	// Any leading dash is a flag, so a short `-n` (dry run in make, rsync, git) is refused too.
+	else if (arg.startsWith("-")) opts.problems.push(`unknown flag ${arg}`);
 	else opts.paths.push(arg);
 }
 
