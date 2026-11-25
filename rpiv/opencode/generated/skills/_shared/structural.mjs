@@ -3,8 +3,8 @@
 //   node "${CLAUDE_PLUGIN_ROOT}/skills/_shared/structural.mjs" --tool <ast-grep|opengrep|rg> [query] <target>
 //
 // A THIN GENERIC per-query runner: the orchestrator (which holds the lens-specific patterns)
-// invokes it once per query. The helper runs ONE tool READ-ONLY, scans from the repo ROOT, filters
-// hits to <target>, and normalizes the tool's JSON into the uniform `---<tool>---` block grammar
+// invokes it once per query. The helper runs ONE tool READ-ONLY from the repo ROOT (opengrep
+// takes <target> as its scan root; ast-grep and rg scan "."), filters hits to <target>, and normalizes the tool's JSON into the uniform `---<tool>---` block grammar
 // (1-based file:line) the Slop Map already parses. Mirrors semantic.mjs's stdout contract:
 //   ---<tool>---            <relpath>:<line> \t <key=val ...> \t <verbatim>
 //   ---structural-status--- unavailable: <reason>   (binary absent / no query / registry offline)
@@ -106,6 +106,7 @@ const resolveTarget = (arg) => {
 	return fromCwd;
 };
 const targetAbs = resolveTarget(targetArg);
+const targetRel = toPosix(relative(root, targetAbs)) || ".";
 const run = (bin, args) => spawn(bin, args, root);
 const present = (names) =>
 	names.find((b) => {
@@ -264,7 +265,11 @@ if (tool === "ast-grep") {
 		["opengrep", "semgrep"],
 		"opengrep not on PATH (install opengrep)",
 	);
-	const res = run(bin, ["scan", "--config", config, "--json", "."]);
+	// The target is the scan root (odin#15): scanning "." and filtering afterwards made
+	// every call pay for the whole repo and carried unrelated files' parse errors and
+	// timeouts into every target's warnings. cwd stays the repo root, so the rule
+	// config and .semgrepignore still resolve as before.
+	const res = run(bin, ["scan", "--config", config, "--json", targetRel]);
 	const raw = res.stdout || "";
 	const i = raw.indexOf("{");
 	let parsed;
@@ -282,7 +287,11 @@ if (tool === "ast-grep") {
 		);
 	}
 	const results = parsed.results ?? [];
-	const errors = parsed.errors ?? [];
+	// An error tied to a file outside the target is not this target's problem; a
+	// pathless one (a bad rule, a crash) still is.
+	const errors = (parsed.errors ?? []).filter(
+		(e) => !e?.path || underTarget(e.path),
+	);
 	const failed = failureOf(res, [0, 1]);
 	if (failed && results.length === 0) {
 		const first = errors.length
@@ -342,7 +351,7 @@ if (tool === "ast-grep") {
 
 // --- emit (bounded) ---------------------------------------------------------
 const head = [
-	`target:  ${toPosix(relative(root, targetAbs)) || "."}`,
+	`target:  ${targetRel}`,
 	`tool:    ${tool}`,
 	`query:   ${pattern || config || "(none)"}`,
 	`matches: ${rows.length}`,

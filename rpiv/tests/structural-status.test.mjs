@@ -10,6 +10,7 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readdirSync,
+	readFileSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
@@ -344,13 +345,19 @@ describe("structural.mjs — review round 1 regressions", () => {
  * Puts a fake `name` tool first on PATH. It answers `--version` and otherwise prints
  * `stdout`, writes `stderr` and exits `code` — to drive helper paths no real tool reaches.
  */
-const stubTool = (name, { stdout = "", stderr = "", code = 0 }) => {
+const stubTool = (name, { stdout = "", stderr = "", code = 0 }) =>
+	stubScript(
+		name,
+		`process.stdout.write(${JSON.stringify(stdout)});\nprocess.stderr.write(${JSON.stringify(stderr)});\nprocess.exit(${code});\n`,
+	);
+/** Like stubTool, but the fake runs `body` (CommonJS) after answering `--version`. */
+const stubScript = (name, body) => {
 	const dir = mkdtempSync(join(tmpdir(), "rpiv-stub-"));
 	dirs.push(dir);
 	const script = join(dir, `${name}-stub.cjs`);
 	writeFileSync(
 		script,
-		`if (process.argv[2] === "--version") { console.log("stub 1.0"); process.exit(0); }\nprocess.stdout.write(${JSON.stringify(stdout)});\nprocess.stderr.write(${JSON.stringify(stderr)});\nprocess.exit(${code});\n`,
+		`if (process.argv[2] === "--version") { console.log("stub 1.0"); process.exit(0); }\n${body}`,
 	);
 	if (process.platform === "win32") {
 		writeFileSync(
@@ -476,6 +483,100 @@ describe("structural.mjs — review round 2 regressions", () => {
 				/^warning: 1 output line\(s\) could not be parsed \(dropped\)$/m,
 			);
 			expect(out).not.toMatch(/broken:/);
+		},
+		TEST_TIMEOUT,
+	);
+});
+
+describe("structural.mjs — opengrep scans only the target (odin#15)", () => {
+	// A fake opengrep that scans like the real one: every positional argument after
+	// `--json` is a scan root, and it reports a parse error for docs/proto.js and a
+	// finding in src/a.ts only when a root covers that file. It records its argv.
+	const FAKE_OPENGREP = `
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.writeFileSync(process.env.FAKE_ARGS_FILE, JSON.stringify(args));
+const roots = args.slice(args.indexOf("--json") + 1).map((r) => r.replace(/\\\\/g, "/").replace(/\\/$/, ""));
+const covers = (file) => roots.some((r) => r === "." || file === r || file.startsWith(r + "/"));
+const results = covers("src/a.ts")
+	? [{ check_id: "no-fetch", path: "src/a.ts", start: { line: 1 }, extra: { severity: "ERROR", message: "no fetch" } }]
+	: [];
+const errors = covers("docs/proto.js")
+	? [{ level: "warn", message: "Syntax error at line docs/proto.js:1: unexpected token", path: "docs/proto.js" }]
+	: [];
+process.stdout.write(JSON.stringify({ results, errors }));
+process.exit(results.length ? 1 : 0);
+`;
+	const repoWithProto = () => {
+		const repo = sampleRepo();
+		mkdirSync(join(repo, "src"), { recursive: true });
+		mkdirSync(join(repo, "docs"), { recursive: true });
+		writeFileSync(join(repo, "src/a.ts"), "fetch(1);\n");
+		writeFileSync(join(repo, "docs/proto.js"), "const = ;\n");
+		return repo;
+	};
+
+	it.for(["src/a.ts", "src"])(
+		"passes %s as the scan root and never reports the unrelated docs/ parse error",
+		(target) => {
+			const repo = repoWithProto();
+			const argsFile = join(repo, "..", `${repo.split(/[\\/]/).pop()}-args.json`);
+			dirs.push(argsFile);
+			const env = { ...stubScript("opengrep", FAKE_OPENGREP), FAKE_ARGS_FILE: argsFile };
+			const out = runWithEnv(
+				repo,
+				["--tool", "opengrep", "--config", "rules.yml", target],
+				env,
+			);
+			const argv = JSON.parse(readFileSync(argsFile, "utf-8"));
+			expect(argv.slice(argv.indexOf("--json") + 1)).toEqual([target]);
+			expect(out).toMatch(/^matches: 1$/m);
+			expect(out).toMatch(/^src\/a\.ts:1\tcheck=no-fetch\t/m);
+			expect(out).not.toMatch(/proto\.js|scan error/);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"drops an error tied to a file outside the target but keeps a pathless one",
+		() => {
+			const env = stubTool("opengrep", {
+				stdout: JSON.stringify({
+					results: [],
+					errors: [
+						{ message: "Timeout on docs/proto.js", path: "docs/proto.js" },
+						{ message: "Invalid rule schema" },
+					],
+				}),
+				code: 0,
+			});
+			const out = runWithEnv(
+				repoWithProto(),
+				["--tool", "opengrep", "--config", "rules.yml", "src"],
+				env,
+			);
+			expect(out).toMatch(
+				/^warning: 1 opengrep scan error\(s\); first: Invalid rule schema$/m,
+			);
+			expect(out).not.toMatch(/proto\.js/);
+		},
+		TEST_TIMEOUT,
+	);
+
+	it(
+		"still reports a parse error inside the target, once",
+		() => {
+			const repo = repoWithProto();
+			const argsFile = join(repo, "..", `${repo.split(/[\\/]/).pop()}-args.json`);
+			dirs.push(argsFile);
+			const env = { ...stubScript("opengrep", FAKE_OPENGREP), FAKE_ARGS_FILE: argsFile };
+			const out = runWithEnv(
+				repo,
+				["--tool", "opengrep", "--config", "rules.yml", "docs"],
+				env,
+			);
+			expect(out).toMatch(/^matches: 0$/m);
+			expect(out.match(/^warning: 1 opengrep scan error\(s\); first: Syntax error at line docs\/proto\.js:1/gm)).toHaveLength(1);
 		},
 		TEST_TIMEOUT,
 	);
