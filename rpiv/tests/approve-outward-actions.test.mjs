@@ -1276,7 +1276,7 @@ describe("approve-outward-actions hook", () => {
 		expect(unmatched.filter((t) => matcher.test(t))).toEqual([]);
 
 		expect(pre).toContainEqual({
-			matcher: "Edit|Write|Bash",
+			matcher: "Edit|Write|MultiEdit|NotebookEdit|Bash|PowerShell",
 			hooks: [
 				{
 					type: "command",

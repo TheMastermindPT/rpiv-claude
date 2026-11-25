@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { readCommonDir, readHeadBranch } from "../skills/_shared/cycles.mjs";
 import { git, initRepo } from "./helpers/git-fixtures.mjs";
+import { withWidenedGuard } from "./helpers/readonly-guard-matcher.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const HOOK = join(ROOT, ".claude", "hooks", "record-cycle-event.mjs");
@@ -532,9 +533,9 @@ describe("S15 hook registration", () => {
 			expect(entries[0].matcher, event).toBe(matcher);
 			expect(entries[0].hooks, event).toEqual([expected]);
 		}
-		const base = JSON.parse(
-			git(ROOT, "show", `${BASE}:./hooks/hooks.json`),
-		).hooks;
+		const base = withWidenedGuard(
+			JSON.parse(git(ROOT, "show", `${BASE}:./hooks/hooks.json`)).hooks,
+		);
 		expect(withoutCycleEntries(now)).toEqual(base);
 		// The registered matcher read as a full-match regex over the tool name.
 		const [post] = now.PostToolUse.filter(isCycleEntry);

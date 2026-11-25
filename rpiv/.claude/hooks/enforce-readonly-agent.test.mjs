@@ -373,3 +373,49 @@ const mkAgent = (repo, name, tools) => {
     console.log("OK — round-2 bypasses denied; quoted searches and the structural helper still allowed.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
+
+// --- Test 20: every file-writing tool is governed, not only Edit and Write -------
+
+{
+  const repo = mkdtempSync(join(tmpdir(), "era-multi-"));
+  try {
+    mkAgent(repo, "ro-agent", "Read, Grep, Glob, Bash");
+    mkAgent(repo, "rw-agent", "Read, MultiEdit, NotebookEdit");
+    for (const tool of ["MultiEdit", "NotebookEdit"]) {
+      const denied = runHook(repo, { agent_type: "ro-agent", tool_name: tool, tool_input: { file_path: "src/a.ts" } }).decision;
+      assert.ok(denied, `${tool}: must deny a read-only agent`);
+      assert.equal(denied.hookSpecificOutput.permissionDecision, "deny");
+      assert.match(denied.hookSpecificOutput.permissionDecisionReason, new RegExp(`"${tool}" blocked: agent "ro-agent" is read-only`));
+      assert.equal(runHook(repo, { agent_type: "rw-agent", tool_name: tool }).decision, null, `${tool}: listed, no deny`);
+    }
+    console.log("OK — MultiEdit and NotebookEdit: denied for a read-only agent, allowed when listed.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}
+
+// --- Test 21: PowerShell is a shell like Bash -----------------------------------
+
+{
+  const repo = mkdtempSync(join(tmpdir(), "era-pwsh-"));
+  try {
+    mkAgent(repo, "bash-only", "Read, Bash");
+    mkAgent(repo, "pwsh-agent", "Read, PowerShell");
+    mkAgent(repo, "claim-verifier", "Read, Grep, Glob, PowerShell");
+    const verdict = (agent, command) => runHook(repo, { agent_type: agent, tool_name: "PowerShell", tool_input: { command } });
+
+    const unlisted = verdict("bash-only", "Get-ChildItem").decision;
+    assert.ok(unlisted, "PowerShell not listed: must deny");
+    assert.equal(unlisted.hookSpecificOutput.permissionDecision, "deny");
+    assert.match(unlisted.hookSpecificOutput.permissionDecisionReason, /PowerShell blocked: agent "bash-only" does not allow PowerShell/);
+
+    const outOfContract = verdict("claim-verifier", "Remove-Item -Recurse x").decision;
+    assert.ok(outOfContract, "allowlisted agent: out-of-contract denied");
+    assert.match(outOfContract.hookSpecificOutput.permissionDecisionReason, /PowerShell command blocked: agent "claim-verifier"'s contract allows/);
+    assert.equal(verdict("claim-verifier", "git show abc123 > out.txt").decision?.hookSpecificOutput.permissionDecision, "deny", "allowlisted agent: redirection denied");
+    assert.equal(verdict("claim-verifier", "git show abc123 -- src/a.ts").decision, null, "allowlisted agent: in-contract command allowed");
+
+    const destructive = verdict("pwsh-agent", "git push origin main");
+    assert.equal(destructive.decision, null, "listed, no allowlist: no deny");
+    assert.match(destructive.stderr, /WARNING: agent "pwsh-agent" running potentially destructive PowerShell/);
+    console.log("OK — PowerShell: denied unless listed; when listed the allowlist and destructive scan apply.");
+  } finally { rmSync(repo, { recursive: true, force: true }); }
+}

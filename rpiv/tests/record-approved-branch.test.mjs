@@ -24,6 +24,7 @@ import {
 	initRepo,
 	makeFixtures,
 } from "./helpers/git-fixtures.mjs";
+import { withWidenedGuard } from "./helpers/readonly-guard-matcher.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const HOOKS = join(ROOT, ".claude", "hooks");
@@ -422,9 +423,10 @@ describe("record-approved-branch hook", () => {
 		expect(entry.hooks[0].type).toBe("command");
 		expect(entry.hooks[0].timeout).toBeLessThanOrEqual(10);
 		// S2 revision 1: every other entry is as it was at 8b045e4.
-		const base = JSON.parse(
-			git(ROOT, "show", `${S1_ACCEPTED}:./hooks/hooks.json`),
-		).hooks;
+		// The read-only guard's matcher was widened since (readonly-guard-matcher.mjs).
+		const base = withWidenedGuard(
+			JSON.parse(git(ROOT, "show", `${S1_ACCEPTED}:./hooks/hooks.json`)).hooks,
+		);
 		// S15 (D24) adds the cycle-event entries; they are pinned by
 		// tests/cycle-log.test.mjs, so they are left out here.
 		// Later slices' entries are pinned by their own tests too (S17:
