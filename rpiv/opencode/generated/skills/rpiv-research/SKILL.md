@@ -57,7 +57,7 @@ The final artifact feeds design.
 
 2a. **Lane (`$RPIV_PLUGIN_ROOT/skills/_shared/candidate-workflow.md` **Lanes**).** Read the FRD's `lane:`; without an FRD the lane is `normal`. An FRD `lane:` that is not `fast` or `normal` (an older `rigorous` reads as `normal`) is broken: read it as `normal` and write `broken FRD lane: <value>` into `lane_reasons:` (Step 4), never silently. In the fast lane, dispatch one `codebase-analyzer` with 2–4 questions you write from the FRD's requirements and Recommended Approach, with no `scope-tracer` and no `precedent-locator`; skip 2b, 3 and the rest of Step 1, wait for it, then continue at Step 3 (the checkpoint still applies). The normal lane runs every step below.
 
-2b. **Pre-index the codebase area (context-mode_ctx_index).** Before scope-tracer dispatch, index the codebase area relevant to the research topic into the FTS5 knowledge base. This makes the indexed content available to all downstream agents via `context-mode_ctx_search` — scope-tracer, codebase-analyzer, integration-scanner, and codebase-locator can all query the same index instead of re-reading files from disk. The content hash auto-flags staleness if files change during the session.
+2b. **Pre-index the codebase area (context-mode_ctx_index).** Before scope-tracer dispatch, index the codebase area relevant to the research topic into the FTS5 knowledge base. This makes the indexed content available to all downstream agents via `context-mode_ctx_search` — scope-tracer, codebase-analyzer, integration-scanner, and codebase-locator can all query the same index instead of re-reading files from disk. The content hash auto-flags staleness if files change during the session. It indexes this codebase only, never external docs: facts about outside tools are checked by you before dispatch (Step 2, **External tool facts are checked before dispatch**).
    - Derive the target directory from the topic: if the topic mentions a specific module/area (e.g., "auth system", "plugin loader"), index that directory. If the topic is broad, index the top-level `src/` (or equivalent) with a depth cap of 3.
    - Exclude `node_modules`, `.git`, `dist`, `build`, `coverage`, `.next` — they carry no research signal.
    - Use the topic slug as the source label for easy retrieval:
@@ -111,6 +111,8 @@ Spawn analysis agents using the task tool. All agents run in parallel.
 **Default agent**: `codebase-analyzer` for all codebase questions. This agent has Read, Grep, Glob, LS — it can trace code paths, find patterns, and analyze integration points.
 
 **Exception**: Questions that explicitly reference external documentation, web APIs, or third-party libraries → `web-search-researcher`.
+
+**External tool facts are checked before dispatch.** `codebase-analyzer` has no shell and no web access: it cannot run `<tool> --help`, `ctx7` or any lookup. When a question depends on how an outside tool or library behaves (a CLI's flags, a library call's options), check that fact yourself before dispatching, with what the project's instructions name for docs (a docs tool, `<tool> --help`, the installed version), and put the result in the agent's prompt under `Verified external facts:` with where it came from. Tell the agent to mark any other claim about an outside tool or library `unverified`. The research document lists such claims under Open Questions as `unverified: <claim>`, never as findings.
 
 **task prompt — question-as-prompt:**
 
@@ -206,6 +208,8 @@ Findings go into Precedents & Lessons. Otherwise skip and note "git history unav
    **Batching**: When you have 2-4 independent questions (answers don't depend on each other), you MAY batch them in a single `question` call. Keep dependent questions sequential.
 
    **CRITICAL**: Ask ONE question at a time. Wait for the answer before asking the next. Lead with your most significant finding.
+
+   **Questions the project routes elsewhere.** When the project's instructions (AGENTS.md, AGENTS.md) send a kind of question to another authority than the developer (for example spec or decision conflicts to a coordinating tech lead), ask that authority through the channel the instructions name, not the developer. Record each routed question under `## Developer Context` as `routed to <authority>: <question> — pending`. A routed question counts as asked for this checkpoint: when every checkpoint question is routed, write the document with them under Open Questions marked `pending (<authority>)`, then stop before the Step 5 handoff and say which answers it waits for. When an answer arrives, record it as a Step 6 Follow-up, which resolves its Open Question, and continue at Step 5. A routed answer is the authority's input, never the developer's approval of anything.
 
 3. **Present compiled scan** (under 30 lines):
    ```
@@ -390,7 +394,7 @@ Use `/rpiv:plan` only when existing contracts need a separate dependency/schedul
   - ALWAYS dispatch scope-tracer first (Step 1), except in the fast lane (Step 1.2a)
   - ALWAYS analyze question overlap for grouping (Step 1)
   - ALWAYS wait for all agents to complete (Step 2)
-  - ALWAYS run developer checkpoint before writing (Step 3)
+  - ALWAYS run developer checkpoint before writing (Step 3); a question the project routes to another authority is asked there and counts as asked
   - ALWAYS gather metadata before writing (Step 4)
   - ALWAYS run the finalization lint + stamp after writing the document (Step 4) — the `content_hash:` stamp must be the last body-affecting action so downstream design can detect post-finalization edits
   - NEVER write the document with placeholder values
