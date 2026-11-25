@@ -18,7 +18,9 @@ function runHook(filePath, projectDir, cacheRoot) {
     env: { ...process.env, CLAUDE_PROJECT_DIR: projectDir, RPIV_CACHE_ROOT: cacheRoot ?? "" },
   });
   assert.equal(res.status, 0, `hook always exits 0: ${res.stderr}`);
-  return res.stderr;
+  // What the hook told Claude: the additionalContext of the one JSON object on stdout
+  // ("" when it said nothing). Claude never reads an exit-0 hook's stderr.
+  return res.stdout.trim() === "" ? "" : JSON.parse(res.stdout).hookSpecificOutput.additionalContext;
 }
 
 const tmp = mkdtempSync(join(tmpdir(), "cache-sync-"));

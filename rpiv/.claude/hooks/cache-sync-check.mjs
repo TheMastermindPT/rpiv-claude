@@ -9,13 +9,16 @@
 //
 // Fires after Edit / Write / MultiEdit. If the touched file is plugin source (skills/, agents/,
 // hooks/, .claude/hooks/ under a repo carrying .claude-plugin/plugin.json) and its cache
-// counterpart is missing or differs, prints a warning to stderr. Always exits 0 — advisory only.
+// counterpart is missing or differs, tells Claude (additionalContext; Claude never reads an
+// exit-0 hook's stderr). Always exits 0 — advisory only.
 //
 // RPIV_CACHE_ROOT overrides cache discovery (tests point it at a fake versioned root).
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
+
+import { tellClaude } from "./_shared.mjs";
 
 let filePath = "";
 try {
@@ -67,8 +70,9 @@ try {
 }
 
 if (!inSync) {
-  process.stderr.write(
-    `[rpiv-hook] Plugin cache OUT OF SYNC for ${rel} — headless/eval sessions and other projects load the cache, not this repo. Sync before any run: copy the file to ${cachePath.replaceAll(sep, "/")}\n`,
+  tellClaude(
+    "PostToolUse",
+    `[rpiv-hook] Plugin cache OUT OF SYNC for ${rel} — headless/eval sessions and other projects load the cache, not this repo. Sync before any run: copy the file to ${cachePath.replaceAll(sep, "/")}`,
   );
 }
 process.exit(0);

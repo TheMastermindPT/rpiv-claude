@@ -62,16 +62,16 @@ const writeState = (projectDir, state) => {
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
 
-// --- Test 3: corrupt state file — quiet no-op ----------------------------------
+// --- Test 3: corrupt state file — said on stdout, nothing restored --------------
 
 {
   const repo = mkdtempSync(join(tmpdir(), "ssr-corrupt-"));
   try {
     writeState(repo, "{broken json");
-    const { stdout, stderr, status } = runHook(repo);
+    const { stdout, status } = runHook(repo);
     assert.equal(status, 0, "corrupt: exit 0");
-    assert.equal(stdout.trim(), "", "corrupt: nothing injected");
-    assert.match(stderr, /Corrupt session state/, "corrupt: note on stderr");
-    console.log("OK — corrupt state file: quiet no-op.");
+    assert.match(stdout, /session state file is corrupt; nothing was restored/, "corrupt: told to Claude on stdout");
+    assert.doesNotMatch(stdout, /Session restored/, "corrupt: no restore banner");
+    console.log("OK — corrupt state file: reported on stdout, nothing restored.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }

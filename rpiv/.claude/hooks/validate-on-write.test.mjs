@@ -21,6 +21,11 @@ const mkValidator = (repo, body) => {
   return p;
 };
 
+/** What the hook told Claude: the additionalContext of the one JSON object on stdout
+    ("" when it said nothing). Claude never reads an exit-0 hook's stderr. */
+const saidIn = (stdout) =>
+  stdout.trim() === "" ? "" : JSON.parse(stdout).hookSpecificOutput.additionalContext;
+
 const runHook = (repo, stdin, validator) => {
   // Pin the project root to this test's temp repo so the containment check is
   // deterministic regardless of any ambient CLAUDE_PROJECT_DIR.
@@ -31,7 +36,7 @@ const runHook = (repo, stdin, validator) => {
     input: typeof stdin === "string" ? stdin : JSON.stringify(stdin),
     encoding: "utf-8", stdio: "pipe", env,
   });
-  return { stdout, stderr, status };
+  return { stdout, stderr, status, said: saidIn(stdout) };
 };
 
 const artifactPath = (repo) => join(repo, ".rpiv", "artifacts", "reviews", "t.md");
@@ -42,12 +47,12 @@ const artifactPath = (repo) => join(repo, ".rpiv", "artifacts", "reviews", "t.md
   const repo = mkdtempSync(join(tmpdir(), "vow-scope-"));
   try {
     const explode = mkValidator(repo, `process.stderr.write("must not run\\n"); process.exit(1);\n`);
-    const { stderr, status } = runHook(repo, {
+    const { said, status } = runHook(repo, {
       tool_name: "Write",
       tool_input: { file_path: join(repo, "src", "notes.md") },
     }, explode);
     assert.equal(status, 0, "non-artifact: exit 0");
-    assert.equal(stderr.trim(), "", "non-artifact: validator must not run");
+    assert.equal(said.trim(), "", "non-artifact: validator must not run");
     console.log("OK — non-artifact path: silent, validator not invoked.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
@@ -60,12 +65,12 @@ const artifactPath = (repo) => join(repo, ".rpiv", "artifacts", "reviews", "t.md
     mkdirSync(dirname(artifactPath(repo)), { recursive: true });
     writeFileSync(artifactPath(repo), "---\nstatus: ready\n---\n");
     const ok = mkValidator(repo, `process.exit(0);\n`);
-    const { stderr, status } = runHook(repo, {
+    const { said, status } = runHook(repo, {
       tool_name: "Write",
       tool_input: { file_path: artifactPath(repo) },
     }, ok);
     assert.equal(status, 0, "pass: exit 0");
-    assert.equal(stderr.trim(), "", "pass: no warnings");
+    assert.equal(said.trim(), "", "pass: no warnings");
     console.log("OK — artifact validated clean: silent.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
@@ -80,17 +85,17 @@ const artifactPath = (repo) => join(repo, ".rpiv", "artifacts", "reviews", "t.md
     const bad = mkValidator(repo, `process.stderr.write("lint: bad\\n"); process.exit(1);\n`);
     // An Edit tool call carries tool_input.file_path just like Write; the hook must
     // validate it (the finalization status flip is an Edit, not a Write).
-    const { stderr, status } = runHook(repo, {
+    const { said, status } = runHook(repo, {
       tool_name: "Edit",
       tool_input: { file_path: artifactPath(repo), old_string: "x", new_string: "y" },
     }, bad);
     assert.equal(status, 0, "edit: exit 0");
-    assert.match(stderr, /\[rpiv-hook\] Artifact validation warnings/, "edit: hook validated the artifact");
+    assert.match(said, /\[rpiv-hook\] Artifact validation warnings/, "edit: hook validated the artifact");
     console.log("OK — artifact Edit is validated (matcher covers Edit, not just Write).");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
 
-// --- Test 3: artifact Write, validation fails — warns to stderr, exit 0 ------
+// --- Test 3: artifact Write, validation fails — tells Claude, exit 0 ------
 
 {
   const repo = mkdtempSync(join(tmpdir(), "vow-warn-"));
@@ -98,14 +103,14 @@ const artifactPath = (repo) => join(repo, ".rpiv", "artifacts", "reviews", "t.md
     mkdirSync(dirname(artifactPath(repo)), { recursive: true });
     writeFileSync(artifactPath(repo), "no frontmatter\n");
     const bad = mkValidator(repo, `process.stderr.write("lint: missing frontmatter\\n"); process.exit(1);\n`);
-    const { stderr, status } = runHook(repo, {
+    const { said, status } = runHook(repo, {
       tool_name: "Write",
       tool_input: { file_path: artifactPath(repo) },
     }, bad);
     assert.equal(status, 0, "warn: still exit 0 (advisory)");
-    assert.match(stderr, /\[rpiv-hook\] Artifact validation warnings/, "warn: hook banner");
-    assert.match(stderr, /lint: missing frontmatter/, "warn: validator stderr passed through");
-    console.log("OK — artifact validation warnings surface on stderr, non-blocking.");
+    assert.match(said, /\[rpiv-hook\] Artifact validation warnings/, "warn: hook banner");
+    assert.match(said, /lint: missing frontmatter/, "warn: validator stderr passed through");
+    console.log("OK — artifact validation warnings reach Claude as additionalContext, non-blocking.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
 
@@ -115,12 +120,12 @@ const artifactPath = (repo) => join(repo, ".rpiv", "artifacts", "reviews", "t.md
   const repo = mkdtempSync(join(tmpdir(), "vow-ext-"));
   try {
     const explode = mkValidator(repo, `process.stderr.write("must not run\\n"); process.exit(1);\n`);
-    const { stderr, status } = runHook(repo, {
+    const { said, status } = runHook(repo, {
       tool_name: "Write",
       tool_input: { file_path: join(repo, ".rpiv", "artifacts", "data.json") },
     }, explode);
     assert.equal(status, 0, "non-md: exit 0");
-    assert.equal(stderr.trim(), "", "non-md: validator must not run");
+    assert.equal(said.trim(), "", "non-md: validator must not run");
     console.log("OK — non-.md artifact: silent.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
@@ -130,9 +135,9 @@ const artifactPath = (repo) => join(repo, ".rpiv", "artifacts", "reviews", "t.md
 {
   const repo = mkdtempSync(join(tmpdir(), "vow-nopath-"));
   try {
-    const { stderr, status } = runHook(repo, { tool_name: "Write", tool_input: {} });
+    const { said, status } = runHook(repo, { tool_name: "Write", tool_input: {} });
     assert.equal(status, 0, "no path: exit 0");
-    assert.equal(stderr.trim(), "", "no path: silent");
+    assert.equal(said.trim(), "", "no path: silent");
     console.log("OK — missing tool_input.file_path: silent exit.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
@@ -149,12 +154,13 @@ const artifactPath = (repo) => join(repo, ".rpiv", "artifacts", "reviews", "t.md
     mkdirSync(dirname(outside), { recursive: true });
     writeFileSync(outside, "---\nstatus: ready\n---\n");
     const env = { ...process.env, RPIV_VALIDATOR: explode, CLAUDE_PROJECT_DIR: repo };
-    const { stderr, status } = spawnSync("node", [HOOK], {
+    const { stdout: out7, status } = spawnSync("node", [HOOK], {
       cwd: repo, input: JSON.stringify({ tool_name: "Write", tool_input: { file_path: outside } }),
       encoding: "utf-8", stdio: "pipe", env,
     });
+    const said = saidIn(out7);
     assert.equal(status, 0, "outside project: exit 0");
-    assert.equal(stderr.trim(), "", "outside project: validator must not run");
+    assert.equal(said.trim(), "", "outside project: validator must not run");
     console.log("OK — path outside project .rpiv/artifacts: rejected (containment check).");
   } finally {
     rmSync(repo, { recursive: true, force: true });
@@ -181,14 +187,14 @@ const artifactPath = (repo) => join(repo, ".rpiv", "artifacts", "reviews", "t.md
   const repo = mkdtempSync(join(tmpdir(), "vow-storejson-"));
   try {
     const explode = mkValidator(repo, `process.stderr.write("must not run\\n"); process.exit(1);\n`);
-    const { stderr, status } = runHook(repo, {
+    const { said, status } = runHook(repo, {
       tool_name: "Edit",
       tool_input: { file_path: join(repo, ".rpiv", "artifacts", "architecture-reviews", "2026-07-19_x.json") },
     }, explode);
     assert.equal(status, 0, "store json: exit 0 (never blocks)");
-    assert.match(stderr, /store-managed/, "store json: warns it is store-managed");
-    assert.match(stderr, /store\.mjs \(add\/render\/finalize\)/, "store json: points at the store CLI");
-    assert.doesNotMatch(stderr, /must not run/, "store json: the .md validator is never spawned");
+    assert.match(said, /store-managed/, "store json: warns it is store-managed");
+    assert.match(said, /store\.mjs \(add\/render\/finalize\)/, "store json: points at the store CLI");
+    assert.doesNotMatch(said, /must not run/, "store json: the .md validator is never spawned");
     console.log("OK — store-managed review.json: warns with the store-CLI pointer, validator not invoked.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
@@ -199,12 +205,12 @@ const artifactPath = (repo) => join(repo, ".rpiv", "artifacts", "reviews", "t.md
   const repo = mkdtempSync(join(tmpdir(), "vow-plansjson-"));
   try {
     const explode = mkValidator(repo, `process.stderr.write("must not run\\n"); process.exit(1);\n`);
-    const { stderr, status } = runHook(repo, {
+    const { said, status } = runHook(repo, {
       tool_name: "Write",
       tool_input: { file_path: join(repo, ".rpiv", "artifacts", "plans", "x.json") },
     }, explode);
     assert.equal(status, 0, "plans json: exit 0");
-    assert.equal(stderr, "", "plans json: byte-empty stderr (guard scoped to architecture-reviews/)");
+    assert.equal(said, "", "plans json: nothing said (guard scoped to architecture-reviews/)");
     console.log("OK — sibling-dir JSON: silent (store guard does not over-match).");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }

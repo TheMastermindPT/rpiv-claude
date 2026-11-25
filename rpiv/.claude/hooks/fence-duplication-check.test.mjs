@@ -20,7 +20,9 @@ function runHook(filePath, projectDir, env = {}) {
     env: { ...process.env, CLAUDE_PROJECT_DIR: projectDir, ...env },
   });
   assert.equal(res.status, 0, `hook always exits 0: ${res.stderr}`);
-  return res.stderr;
+  // What the hook told Claude: the additionalContext of the one JSON object on stdout
+  // ("" when it said nothing). Claude never reads an exit-0 hook's stderr.
+  return res.stdout.trim() === "" ? "" : JSON.parse(res.stdout).hookSpecificOutput.additionalContext;
 }
 
 /**
@@ -28,7 +30,7 @@ function runHook(filePath, projectDir, env = {}) {
  * cannot find a binary, so the presence of that word in a real run is the honest probe —
  * asking the hook to process a bogus path would exit 0 whether cpd exists or not.
  */
-const reachedCpd = (stderr) => !/SKIPPED/.test(stderr);
+const reachedCpd = (said) => !/SKIPPED/.test(said);
 
 // The body both the artifact fence and the existing source file will share. Must clear
 // min-tokens (50) on its own, so it needs real substance rather than a one-liner.

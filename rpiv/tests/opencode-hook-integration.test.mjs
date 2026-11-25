@@ -85,6 +85,39 @@ it.each([
 	},
 );
 
+it("shows a node hook's additionalContext as plain text, not JSON", async () => {
+	const warning =
+		"[rpiv-hook] Artifact validation warnings for a.md:\nbad frontmatter";
+	mocks.runProcess.mockImplementation(async (_command, args) =>
+		args[0].replaceAll("\\", "/").endsWith("validate-on-write.mjs")
+			? {
+					...clean,
+					stdout: JSON.stringify({
+						hookSpecificOutput: {
+							hookEventName: "PostToolUse",
+							additionalContext: warning,
+						},
+					}),
+					stderr: "also on stderr\n",
+				}
+			: clean,
+	);
+	const callbacks = await hooks();
+	const output = { output: "edit completed" };
+	await callbacks["tool.execute.after"](
+		{
+			tool: "edit",
+			args: { filePath: `${root}/package.json` },
+			sessionID: "fixture",
+			callID: "fixture",
+		},
+		output,
+	);
+	expect(output.output).toContain(warning);
+	expect(output.output).toContain("also on stderr");
+	expect(output.output).not.toContain("hookSpecificOutput");
+});
+
 it("surfaces task-lint and citation-check process failures even with empty pipes", async () => {
 	mocks.runProcess.mockResolvedValue({
 		...clean,

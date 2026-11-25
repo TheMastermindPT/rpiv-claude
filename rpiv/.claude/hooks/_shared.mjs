@@ -176,3 +176,14 @@ export function sanitizeForContext(value, maxLen = 200) {
   }).join("").replace(/\s+/g, " ").trim();
   return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen - 1)}…` : cleaned;
 }
+
+/** Tell Claude something from a hook that exits 0. Claude never reads such a hook's
+    stderr; on PreToolUse and PostToolUse it reads `hookSpecificOutput.additionalContext`
+    JSON on stdout. Call at most once per run (stdout must hold one JSON object); empty
+    text prints nothing. */
+export function tellClaude(hookEventName, text) {
+  if (!text) return;
+  process.stdout.write(
+    JSON.stringify({ hookSpecificOutput: { hookEventName, additionalContext: text } }),
+  );
+}

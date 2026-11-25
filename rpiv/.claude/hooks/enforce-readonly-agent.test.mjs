@@ -1,6 +1,6 @@
 // enforce-readonly-agent.test.mjs — golden-fixture test for enforce-readonly-agent.mjs.
 // Builds a throwaway plugin root with agent .md files in various permission states and
-// asserts the hook's deny/allow decisions in stdout JSON and warnings on stderr.
+// asserts the hook's deny/allow decisions and its warnings (additionalContext) in stdout JSON.
 //
 //   node .claude/hooks/enforce-readonly-agent.test.mjs
 //
@@ -20,8 +20,14 @@ const runHook = (repo, stdin) => {
     cwd: repo, input: JSON.stringify(stdin), encoding: "utf-8", stdio: "pipe",
     env: { ...process.env, RPIV_AGENTS_DIR: join(repo, "agents") },
   });
-  const decision = stdout.trim() ? JSON.parse(stdout.trim()) : null;
-  return { decision, stderr };
+  // The hook exits 0 and Claude never reads its stderr, so nothing may go there.
+  assert.equal(stderr.trim(), "", `hook wrote to stderr: ${stderr}`);
+  // stdout holds at most one JSON object: a deny decision, or a warning told to the
+  // agent as additionalContext with no permission decision.
+  const out = stdout.trim() ? JSON.parse(stdout.trim()) : null;
+  const decision = out?.hookSpecificOutput?.permissionDecision ? out : null;
+  const said = out?.hookSpecificOutput?.additionalContext ?? "";
+  return { decision, said };
 };
 
 const mkAgent = (repo, name, tools) => {
@@ -34,9 +40,9 @@ const mkAgent = (repo, name, tools) => {
 {
   const repo = mkdtempSync(join(tmpdir(), "era-main-"));
   try {
-    const { decision, stderr } = runHook(repo, { tool_name: "Write" });
+    const { decision, said } = runHook(repo, { tool_name: "Write" });
     assert.equal(decision, null, "main session: no deny decision");
-    assert.equal(stderr.trim(), "", "main session: no stderr");
+    assert.equal(said.trim(), "", "main session: no stderr");
     console.log("OK — main session: allows everything.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
@@ -101,12 +107,12 @@ const mkAgent = (repo, name, tools) => {
   const repo = mkdtempSync(join(tmpdir(), "era-bash-warn-"));
   try {
     mkAgent(repo, "test-agent", "Read, Bash");
-    const { decision, stderr } = runHook(repo, {
+    const { decision, said } = runHook(repo, {
       agent_type: "test-agent", tool_name: "Bash",
       tool_input: { command: "rm -rf /tmp/scratch" },
     });
     assert.equal(decision, null, "destructive command: no deny — agent has Bash");
-    assert.match(stderr, /WARNING: agent "test-agent" running potentially destructive Bash/);
+    assert.match(said, /WARNING: agent "test-agent" running potentially destructive Bash/);
     console.log("OK — Bash allowed, destructive: warns, no deny.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
@@ -117,12 +123,12 @@ const mkAgent = (repo, name, tools) => {
   const repo = mkdtempSync(join(tmpdir(), "era-bash-ok-"));
   try {
     mkAgent(repo, "test-agent", "Read, Bash");
-    const { decision, stderr } = runHook(repo, {
+    const { decision, said } = runHook(repo, {
       agent_type: "test-agent", tool_name: "Bash",
       tool_input: { command: "ls -la" },
     });
     assert.equal(decision, null, "safe bash: no deny");
-    assert.equal(stderr.trim(), "", `safe bash: no warning, got: ${stderr}`);
+    assert.equal(said.trim(), "", `safe bash: no warning, got: ${said}`);
     console.log("OK — Bash allowed, safe command: silent.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
@@ -132,9 +138,9 @@ const mkAgent = (repo, name, tools) => {
 {
   const repo = mkdtempSync(join(tmpdir(), "era-ext-"));
   try {
-    const { decision, stderr } = runHook(repo, { agent_type: "external-agent", tool_name: "Write" });
+    const { decision, said } = runHook(repo, { agent_type: "external-agent", tool_name: "Write" });
     assert.equal(decision, null, "external agent: no deny");
-    assert.equal(stderr.trim(), "", "external agent: silent");
+    assert.equal(said.trim(), "", "external agent: silent");
     console.log("OK — non-rpiv agent: allows everything.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
@@ -171,12 +177,12 @@ const mkAgent = (repo, name, tools) => {
   const repo = mkdtempSync(join(tmpdir(), "era-al-ok-"));
   try {
     mkAgent(repo, "claim-verifier", "Read, Grep, Glob, Bash");
-    const { decision, stderr } = runHook(repo, {
+    const { decision, said } = runHook(repo, {
       agent_type: "claim-verifier", tool_name: "Bash",
       tool_input: { command: "git show 3a2b1c8 -- src/services/OrderService.ts" },
     });
     assert.equal(decision, null, "allowed git show: no deny");
-    assert.equal(stderr.trim(), "", `allowed git show: silent, got: ${stderr}`);
+    assert.equal(said.trim(), "", `allowed git show: silent, got: ${said}`);
     console.log("OK — allowlisted agent, allowed command: silent.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
@@ -237,12 +243,12 @@ const mkAgent = (repo, name, tools) => {
   const repo = mkdtempSync(join(tmpdir(), "era-gitgap-"));
   try {
     mkAgent(repo, "test-agent", "Read, Bash");
-    const { decision, stderr } = runHook(repo, {
+    const { decision, said } = runHook(repo, {
       agent_type: "test-agent", tool_name: "Bash",
       tool_input: { command: "git reset --hard HEAD~1" },
     });
     assert.equal(decision, null, "non-allowlisted destructive git: no deny");
-    assert.match(stderr, /WARNING: agent "test-agent" running potentially destructive Bash/);
+    assert.match(said, /WARNING: agent "test-agent" running potentially destructive Bash/);
     console.log("OK — git reset now covered by destructive scan: warns.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
@@ -254,11 +260,11 @@ const mkAgent = (repo, name, tools) => {
     mkAgent(repo, "test-agent", "Read"); // read-only agent exists in agents/
     // A permissive sibling one level up that a traversal from agents/ would hit.
     writeFileSync(join(repo, "sibling.md"), `---\ntools: Read, Write, Bash\n---\n`);
-    const { decision, stderr } = runHook(repo, { agent_type: "../sibling", tool_name: "Write" });
+    const { decision, said } = runHook(repo, { agent_type: "../sibling", tool_name: "Write" });
     // Unsafe agent_type is not a recognized rpiv agent → defer to normal permission
     // flow (no deny), and crucially the sibling's permissive tools are never read.
     assert.equal(decision, null, "traversal agent_type: no deny decision");
-    assert.equal(stderr.trim(), "", "traversal agent_type: silent");
+    assert.equal(said.trim(), "", "traversal agent_type: silent");
     console.log("OK — traversal agent_type: no fs probe, defers to normal flow.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }
@@ -415,7 +421,7 @@ const mkAgent = (repo, name, tools) => {
 
     const destructive = verdict("pwsh-agent", "git push origin main");
     assert.equal(destructive.decision, null, "listed, no allowlist: no deny");
-    assert.match(destructive.stderr, /WARNING: agent "pwsh-agent" running potentially destructive PowerShell/);
+    assert.match(destructive.said, /WARNING: agent "pwsh-agent" running potentially destructive PowerShell/);
     console.log("OK — PowerShell: denied unless listed; when listed the allowlist and destructive scan apply.");
   } finally { rmSync(repo, { recursive: true, force: true }); }
 }

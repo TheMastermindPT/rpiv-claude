@@ -174,6 +174,18 @@ export function extractAdditionalContext(stdout) {
 	}
 }
 
+/**
+ * A node hook's stdout as text for OpenCode. A Claude `additionalContext`
+ * envelope is unwrapped to its text, so a hook that tells Claude through JSON
+ * still reads as plain lines here; any other stdout passes through.
+ *
+ * @param {string} stdout Hook standard output.
+ * @returns {string}
+ */
+export function hookOutputText(stdout) {
+	return extractAdditionalContext(stdout) || stdout;
+}
+
 /** Extract an explicit denial from the Sonar Claude-hook response envelope. */
 function sonarDenial(stdout) {
 	try {

@@ -28,7 +28,9 @@
 // can fail to RUN (no cpd binary, cpd crash, unreadable report, unterminated fence) emits
 // its own diagnostic naming the cause: a skipped check must never read as a clean one.
 // When the second (TypeScript-reader) pass alone fails, the first pass's findings are still
-// reported, under a PARTIAL diagnostic that names what went unchecked.
+// reported, under a PARTIAL diagnostic that names what went unchecked. Every line is told
+// to Claude once, at exit, as PostToolUse additionalContext: Claude never reads the stderr
+// of a hook that exits 0.
 //
 // Env:
 //   RPIV_CPD_BIN     path to a cpd executable, or to jscpd's run-jscpd.js shim
@@ -43,6 +45,7 @@ import { basename, dirname, join, resolve, sep } from "node:path";
 
 import { parseFences } from "../../skills/_shared/fences.mjs";
 import { mergeCpdReports } from "../../skills/_shared/jscpd-merge.mjs";
+import { tellClaude } from "./_shared.mjs";
 
 // ---- constants -----------------------------------------------------------------
 
@@ -119,7 +122,9 @@ const TOTAL_BUDGET_MS = 21000;
 const MIN_PASS_MS = 2000;
 const PATH_IN_TEXT = /([\w.@-]+(?:\/[\w.@-]+)+\.\w+)/;
 
-const warn = (msg) => process.stderr.write(`[rpiv-hook] ${msg}\n`);
+// Every line this hook has to say, told to Claude once at exit (see the header).
+const said = [];
+const warn = (msg) => said.push(`[rpiv-hook] ${msg}`);
 
 // ---- input ---------------------------------------------------------------------
 
@@ -297,9 +302,9 @@ function report(artifact, findings, minTokens) {
   );
   for (const f of shown) {
     const label = f.target ? `for ${f.target}` : "[target unknown — could not self-filter]";
-    process.stderr.write(
-      `  ${name}:${f.artifactLine} ${label}\n` +
-        `    duplicates ${f.repo}  (${f.tokens} tokens, ${f.lines} lines)\n`,
+    said.push(
+      `  ${name}:${f.artifactLine} ${label}`,
+      `    duplicates ${f.repo}  (${f.tokens} tokens, ${f.lines} lines)`,
     );
   }
   if (findings.length > shown.length) {
@@ -418,7 +423,7 @@ function sourceRoots(projectDir) {
   return configured.length ? configured : [projectDir];
 }
 
-/** Runs the check. Returns nothing; all output is stderr. Never throws past its caller. */
+/** Runs the check. Returns nothing; all output goes through `warn`. Never throws past its caller. */
 function check(artifact, fences, projectDir) {
   const cpd = findCpd(projectDir);
   if (!cpd) {
@@ -501,4 +506,5 @@ function main() {
 }
 
 main();
+tellClaude("PostToolUse", said.join("\n"));
 process.exit(0);

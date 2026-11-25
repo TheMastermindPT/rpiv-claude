@@ -39,7 +39,10 @@ const runHook = (text) => {
 		},
 	});
 	expect(r.status).toBe(0);
-	return r.stderr;
+	// What the hook told Claude (additionalContext), one line per message, each
+	// newline-terminated; "" when it said nothing.
+	if (r.stdout === "") return "";
+	return `${JSON.parse(r.stdout).hookSpecificOutput.additionalContext}\n`;
 };
 
 const incomplete = (line) =>

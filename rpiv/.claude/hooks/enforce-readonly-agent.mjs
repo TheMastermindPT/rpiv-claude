@@ -9,16 +9,18 @@
 //
 //   2. Shell — if the shell tool is NOT in the agent's tools, denies the call.
 //      If it IS, the agent's Bash allowlist (when it has one) applies to the
-//      command, and destructive patterns (rm -rf, git push, etc.) warn.
+//      command, and destructive patterns (rm -rf, git push, etc.) warn the agent
+//      through additionalContext, without a permission decision.
 //
 // In the main session (no agent_type), exits 0 silently — the user is in
 // control, not a subagent.
 //
-// Reads PreToolUse JSON from stdin. Returns deny decisions as JSON on stdout.
+// Reads PreToolUse JSON from stdin. Writes at most one JSON object on stdout: a deny
+// decision or a warning.
 
 import { readFileSync } from "node:fs";
 
-import { bashAllowlistViolation, readAgentFrontmatter } from "./_shared.mjs";
+import { bashAllowlistViolation, readAgentFrontmatter, tellClaude } from "./_shared.mjs";
 
 // ---- helpers -------------------------------------------------------------------
 
@@ -114,8 +116,11 @@ function handleShell(toolName, allowedTools, agentType, command) {
   }
 
   if (looksDestructive(command)) {
-    process.stderr.write(
-      `[rpiv-hook] WARNING: agent "${agentType}" running potentially destructive ${toolName}: ${command.slice(0, 120)}\n`
+    // Advisory: additionalContext with no permissionDecision reaches the agent next to
+    // the tool result and leaves the call to the normal permission flow.
+    tellClaude(
+      "PreToolUse",
+      `[rpiv-hook] WARNING: agent "${agentType}" running potentially destructive ${toolName}: ${command.slice(0, 120)}`
     );
   }
 }

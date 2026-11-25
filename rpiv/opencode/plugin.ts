@@ -13,6 +13,7 @@ import {
 	createHookFailureReporter,
 	enforceSonarResult,
 	extractAdditionalContext,
+	hookOutputText,
 	isChildSession,
 	sanitizeEnvironment,
 } from "./plugin-support.mjs";
@@ -113,7 +114,10 @@ async function runNodeHook(
 		timeout,
 		env: hookEnvironment(directory),
 	});
-	return formatHookResult(script, result);
+	return formatHookResult(script, {
+		...result,
+		stdout: hookOutputText(result.stdout),
+	});
 }
 
 function readJevHookConfig(path: string) {

@@ -26,7 +26,11 @@ function main() {
   try {
     state = JSON.parse(readFileSync(STATE_FILE, "utf-8"));
   } catch {
-    process.stderr.write("[rpiv-hook] Corrupt session state file.\n");
+    // SessionStart stdout is context. A state file that exists but cannot be read is
+    // told to Claude, not dropped like a missing one (degrade-distinguishes-broken).
+    process.stdout.write(
+      "[rpiv] The preserved session state file is corrupt; nothing was restored.\n",
+    );
     process.exit(0);
     return;
   }
