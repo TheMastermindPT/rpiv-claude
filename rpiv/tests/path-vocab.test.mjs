@@ -26,6 +26,7 @@ import {
 	isManifest,
 	isMedia,
 	isMigration,
+	isPythonSupportCode,
 	isPythonTest,
 	isPythonTestSupport,
 	isTest,
@@ -608,5 +609,39 @@ describe("Python scratch-copy vocabulary (S2-scratch-copy)", () => {
 		// \r?\n: a checkout with core.autocrlf writes this file with CRLF line endings.
 		const importable = vocab.match(/\/\/ Importable:([\s\S]*?)\r?\n\r?\n/)?.[1] ?? "";
 		expect.soft(importable).toMatch(/\bisPythonTestSupport\b/);
+	});
+
+	// odin#17: a re-proof runs the slice's new tests against the base's code, so the
+	// support code that sits under the test tree stays at its base version.
+	it("odin#17: isPythonSupportCode accepts a .py file that is neither a test nor a conftest.py", () => {
+		const SUPPORT_CODE = [
+			"tests/pkg/impl.py",
+			"tests/pkg/__init__.py",
+			"tests/__init__.py",
+			"tests/helpers.py",
+			"tests/fixtures/store.py",
+			"tests/fixtures/__main__.py",
+			"src/demo/fixtures/store.py",
+		];
+		const NOT_SUPPORT_CODE = [
+			"tests/pkg/test_impl.py",
+			"tests/fixtures/test_manifest.py",
+			"tests/x_test.py",
+			"tests/conftest.py",
+			"conftest.py",
+			"tests/fixtures/manifest.toml",
+			"tests/fixtures/x.json",
+			"tests/golden/out.csv",
+			"tests/conftest.pyi",
+			// Production code is outside the test tree: never in the copy set at all.
+			"src/demo/__init__.py",
+			"src/demo/test/utils.py",
+		];
+		expect
+			.soft(mismatches(isPythonSupportCode, SUPPORT_CODE, true))
+			.toEqual([]);
+		expect
+			.soft(mismatches(isPythonSupportCode, NOT_SUPPORT_CODE, false))
+			.toEqual([]);
 	});
 });

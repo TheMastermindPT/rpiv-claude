@@ -37,6 +37,8 @@ const RUNNER = [
 	/`--link \.venv`/,
 	/never with `-I` or `-S`/,
 	/a Python run copies every file the slice changed under the test tree/i,
+	// odin#17: support code under the test tree keeps its base version, named.
+	/except its support code: a `\.py` file there that is neither a test nor a `conftest\.py`[^)]*keeps its base version and is named in a `diagnostic: not overlaid:` line/i,
 	/`result: broken: imported from the checkout: <path>`/,
 ];
 

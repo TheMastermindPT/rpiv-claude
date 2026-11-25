@@ -17,7 +17,7 @@
 //
 // Importable-only: no CLI, no isMain.
 // Importable: SOURCE_EXT, CITE_EXT, extOf, isSource, isTest, isFixture, isTestTree,
-// isPythonTest, isTestData, isPythonTestSupport, TEST_EXCLUDE_RE,
+// isPythonTest, isTestData, isPythonTestSupport, isPythonSupportCode, TEST_EXCLUDE_RE,
 // isManifest, isLockfile, isMigration, isCiConfig, isContainerFile, LANE_CONFIG_FILE,
 // isLaneConfig, isEnvFile, isGenerated, isMedia, isToolHome, COSMIC_SESSIONS.
 
@@ -105,17 +105,34 @@ export const isPythonTest = (p) =>
 export const isTestData = (p) =>
 	/(^|\/)(fixtures?|__fixtures__)(\/|$)/i.test(p);
 
+/** True for a file named exactly `conftest.py`, in any folder. */
+const isConftest = (p) => /(^|\/)conftest\.py$/.test(p);
+
 /**
  * True for a path a Python run's scratch copy takes from the slice (D19 of the
  * Python-support design, S2-scratch-copy): any file named exactly `conftest.py`, any
  * path isTest accepts, and any path isTestTree accepts that has no `src` folder in it.
  * isTestTree's folder rule also matches production packages (`src/demo/test/utils.py`),
- * so inside a `src` folder only tests and `conftest.py` count.
+ * so inside a `src` folder only tests and `conftest.py` count. From odin#17 on the copy
+ * writes only the set's tests, `conftest.py` files and test data: its support code
+ * (isPythonSupportCode) keeps its base version.
  */
 export const isPythonTestSupport = (p) =>
-	/(^|\/)conftest\.py$/.test(p) ||
-	isTest(p) ||
-	(isTestTree(p) && !/(^|\/)src\//.test(p));
+	isConftest(p) || isTest(p) || (isTestTree(p) && !/(^|\/)src\//.test(p));
+
+/**
+ * True for SUPPORT CODE under the test tree: a `.py` file a Python run's scratch copy
+ * would take (isFixture or isPythonTestSupport) that is neither a test (isTest) nor a
+ * `conftest.py` — `tests/pkg/impl.py`, `tests/fixtures/store.py`, a test package's
+ * `__init__.py`. A re-proof runs the slice's new tests against the base's code, and this
+ * is code: it keeps its base version (odin#17). Tests, `conftest.py` files (test wiring)
+ * and non-`.py` test data are not support code.
+ */
+export const isPythonSupportCode = (p) =>
+	extOf(p) === "py" &&
+	!isTest(p) &&
+	!isConftest(p) &&
+	(isFixture(p) || isPythonTestSupport(p));
 
 // Regex-source STRING for the generated .dependency-cruiser.cjs (layer-rules), kept
 // byte-identical to the prior inline literal so the generated CI config is unchanged.

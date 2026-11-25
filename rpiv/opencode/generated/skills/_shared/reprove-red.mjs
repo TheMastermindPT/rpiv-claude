@@ -1,6 +1,7 @@
 // reprove-red.mjs — re-proves a slice's red (D23 of the risk-lanes design, S14, FR13).
 // Rebuilds the slice commit's parent in a scratch copy, writes the slice's changed test
-// and fixture files over it (in a Python run, its whole changed test tree; see below),
+// and fixture files over it (in a Python run, its changed test tree but its support
+// code; see below),
 // runs the given command there and reports the outcome. The real index, HEAD, branch and
 // working tree are never touched. The scratch copy is a fresh, short folder in the
 // system's temporary folder (never under the git dir: Windows' 260-character limit) and
@@ -38,13 +39,21 @@
 // fixtures, `conftest.py` anywhere, and test-tree support outside a `src` folder — is
 // written from the commit and printed as `test:` or `fixture:`, each deleted one is
 // removed (`removed:`), and a submodule entry is left as the base had it
-// (`diagnostic: submodule not copied:`). In a Python run `{tests}` expands to the Python
-// runner tests only. Its runner gets the import guard (import-guard.mjs): a fresh guard
-// folder outside the checkout first on PYTHONPATH, the run folder's `src/` second, and
-// PYTHONDONTWRITEBYTECODE=1. Every guarded Python process records the modules it loaded,
-// and the run line becomes `result: broken: imported from the checkout: <path>` when one
-// came from a checkout folder of the repository, `result: broken: import guard did not
-// run` when no record exists, and `result: broken: import record incomplete: pid <n>`
+// (`diagnostic: submodule not copied:`). Re-proving red runs the NEW tests against the
+// OLD code, so its support code — a `.py` file there that is neither a test nor a
+// `conftest.py` (`tests/pkg/impl.py`, `tests/fixtures/store.py`, a test package's
+// `__init__.py`) — is never written or removed: it keeps its base version and prints
+// `diagnostic: not overlaid: <path> (not a test file: support code runs at its base
+// version)` (odin#17). A support module the slice adds is then missing at the base, and
+// a test importing it reads `red (import)`. Test data (any file there that is not `.py`)
+// is written. In a Python run `{tests}` expands to the Python runner tests only: the
+// changed tests outside a test-data folder, plus any the call names. Its runner gets the
+// import guard (import-guard.mjs): a fresh guard folder outside the checkout first on
+// PYTHONPATH, the run folder's `src/` second, and PYTHONDONTWRITEBYTECODE=1.
+// Every guarded Python process records the modules it loaded, and the run line becomes
+// `result: broken: imported from the checkout: <path>` when one came from a
+// checkout folder of the repository, `result: broken: import guard did not run` when no
+// record exists, and `result: broken: import record incomplete: pid <n>`
 // when a record is unfinished, whatever pytest's exit code. A guarded process records a
 // module when it opens its file for import as well as at exit (S2b-guard-proof), and a
 // temporary folder inside the checkout is refused before the guard folder is made.
@@ -97,6 +106,7 @@ import {
 	extOf,
 	isFixture,
 	isManifest,
+	isPythonSupportCode,
 	isPythonTest,
 	isPythonTestSupport,
 	isSource,
@@ -285,13 +295,16 @@ const slicePaths = (changes) => {
 	};
 };
 
-/** A Python run's copy (FR8, D16, D17, D28): every changed test-tree path, written from
-    the commit or removed when deleted; a submodule entry or a symlink is neither, only
-    named. A test-tree path inside a `src` folder that the copy does not take is named
-    too (B27). */
+/** A Python run's copy (FR8, D16, D17, D28): every changed test-tree path but its support
+    code, written from the commit or removed when deleted; a submodule entry or a symlink
+    is neither, only named. Support code (isPythonSupportCode: a `.py` file that is
+    neither a test nor a `conftest.py`), changed or deleted, keeps its base version and
+    is named (`support`), since a re-proof runs the new tests against the base's code
+    (odin#17). A test-tree path inside a `src` folder that the copy does not take is
+    named too (B27). */
 const pythonCopy = (changes) => {
 	const inSet = ({ path }) => isFixture(path) || isPythonTestSupport(path);
-	const set = changes.filter(inSet);
+	const set = changes.filter((c) => inSet(c) && !isPythonSupportCode(c.path));
 	const sorted = (list) => list.map(({ path }) => path).sort();
 	const plain = set.filter((c) => !c.submodule && !c.symlink);
 	return {
@@ -299,14 +312,37 @@ const pythonCopy = (changes) => {
 		removed: sorted(plain.filter((c) => c.status === "D")),
 		submodules: sorted(set.filter((c) => c.submodule)),
 		symlinks: sorted(set.filter((c) => c.symlink && !c.submodule)),
+		support: sorted(changes.filter((c) => isPythonSupportCode(c.path))),
 		production: sorted(changes.filter((c) => !inSet(c) && isTestTree(c.path))),
 	};
 };
 
+/** The slice's runner tests: its changed tests that are not test data (D7), plus a
+    changed test in a test-data folder that the call names (`namedPaths`, from the top
+    folder), since the caller says it runs: a project's `tests/fixtures/` package can
+    hold real tests (odin#17). */
+const runnerTestsOf = (tests, namedPaths) =>
+	tests.filter((path) => !isTestData(path) || namedPaths.has(path));
+
+/** The named tests' paths from the top folder, by fromRunFolder's rule: a path that
+    starts with the run folder is from the top folder already, any other is from the run
+    folder. Real paths, so a caller in a junction to the top folder places them too. */
+const namedTopPaths = (named, top, cwd) => {
+	const prefix = relative(realOf(top), realOf(cwd)).replace(/\\/g, "/");
+	return new Set(
+		named.map(({ path }) =>
+			!prefix || path.startsWith(`${prefix}/`) ? path : `${prefix}/${path}`,
+		),
+	);
+};
+
+const NOT_OVERLAID = "(not a test file: support code runs at its base version)";
+
 /** What the scratch copy takes, what `{tests}` expands to and what the header lists:
     today's tests and fixtures outside a Python run (D13); in one, the wider Python copy
-    and only the Python runner tests in `{tests}` (D14). Each path is listed once. */
-const copyPlan = (changes, { tests, fixtures, manifests }, python) => {
+    and only the Python runner tests (`runners`, runnerTestsOf) in `{tests}` (D14). Each
+    path is listed once. */
+const copyPlan = (changes, { tests, fixtures, manifests, runners }, python) => {
 	const dependencies = manifests.map(
 		(path) => `diagnostic: dependencies changed: ${path}`,
 	);
@@ -322,23 +358,24 @@ const copyPlan = (changes, { tests, fixtures, manifests }, python) => {
 			],
 		};
 	}
-	const runners = tests.filter(
-		(path) => !isTestData(path) && isPythonTest(path),
-	);
-	const { written, removed, submodules, symlinks, production } =
+	const pythonRunners = runners.filter(isPythonTest);
+	const { written, removed, submodules, symlinks, support, production } =
 		pythonCopy(changes);
 	const named = (what, list) =>
 		list.map((path) => `diagnostic: ${what} not copied: ${path}`);
 	return {
-		tests: runners,
+		tests: pythonRunners,
 		paths: written,
 		removed,
 		lines: [
-			...runners.map((path) => `test: ${path}`),
+			...pythonRunners.map((path) => `test: ${path}`),
 			...written
-				.filter((path) => !runners.includes(path))
+				.filter((path) => !pythonRunners.includes(path))
 				.map((path) => `fixture: ${path}`),
 			...removed.map((path) => `removed: ${path}`),
+			...support.map(
+				(path) => `diagnostic: not overlaid: ${path} ${NOT_OVERLAID}`,
+			),
 			...named("submodule", submodules),
 			...named("symlink", symlinks),
 			...named("production test folder", production),
@@ -800,10 +837,9 @@ const lines = (list) => list.map((line) => `${line}\n`).join("");
 
 // ---- pytest dialect (S1-pytest-report) ----
 
-/** The language of a slice's runner tests (changed tests that are not test data):
-    `python` (Python only), `mixed` (Python and another source language) or `other`. */
-const runnerLanguage = (tests) => {
-	const runners = tests.filter((path) => !isTestData(path));
+/** The language of a slice's runner tests (runnerTestsOf): `python` (Python only),
+    `mixed` (Python and another source language) or `other`. */
+const runnerLanguage = (runners) => {
 	const python = runners.some(isPythonTest);
 	const other = runners.some((path) => extOf(path) !== "py" && isSource(path));
 	if (!python) return "other";
@@ -1089,13 +1125,14 @@ const runCli = (argv, callerCwd) => {
 	const changes = changesOf(top, from, commit);
 	const sliced = slicePaths(changes);
 	const { tests } = sliced;
-	const language = runnerLanguage(tests);
+	const runners = runnerTestsOf(tests, namedTopPaths(asNamed, top, cwd));
+	const language = runnerLanguage(runners);
 	if (language === "mixed") {
 		throw new Error(
 			"tests in Python and another language need one run per runner",
 		);
 	}
-	const plan = copyPlan(changes, sliced, language === "python");
+	const plan = copyPlan(changes, { ...sliced, runners }, language === "python");
 	const header = [`reprove-red: ${commit}`, `base: ${base}`, ...plan.lines];
 	const output = outputOf(cwd, { commit, base, baseRev, named: asNamed });
 	const python = language === "python";

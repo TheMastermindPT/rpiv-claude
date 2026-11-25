@@ -105,7 +105,7 @@ describe("Python scratch copy and import guard (S2-scratch-copy)", () => {
 	const changed = (path) => `c:${path}\n`;
 
 	it(
-		"B13: a Python run writes every changed test-tree file, removes deleted ones, names submodules and keeps production files",
+		"B13: a Python run writes every changed test-tree file but its support code, removes deleted ones, names submodules and keeps production files",
 		() => {
 			const BASE_FILES = [
 				"tests/conftest.py",
@@ -151,13 +151,14 @@ describe("Python scratch copy and import guard (S2-scratch-copy)", () => {
 				"test: tests/test_ok.py",
 				"fixture: conftest.py",
 				"fixture: src/pkg/conftest.py",
-				"fixture: tests/__init__.py",
 				"fixture: tests/conftest.py",
 				"fixture: tests/fixtures/x.json",
 				"fixture: tests/golden/out.json",
-				"fixture: tests/helpers.py",
 				"fixture: tests/requirements.txt",
 				"removed: tests/golden/old.json",
+				// From odin#17 on, support code keeps its base version and is named.
+				"diagnostic: not overlaid: tests/__init__.py (not a test file: support code runs at its base version)",
+				"diagnostic: not overlaid: tests/helpers.py (not a test file: support code runs at its base version)",
 				"diagnostic: submodule not copied: tests/data",
 				// From S2c on (B27), a production test folder is named.
 				"diagnostic: production test folder not copied: src/demo/test/utils.py",
@@ -172,16 +173,16 @@ describe("Python scratch copy and import guard (S2-scratch-copy)", () => {
 				"tests/test_ok.py",
 				"conftest.py",
 				"src/pkg/conftest.py",
-				"tests/__init__.py",
 				"tests/conftest.py",
 				"tests/fixtures/x.json",
 				"tests/golden/out.json",
-				"tests/helpers.py",
 				"tests/requirements.txt",
 			]) {
 				expect.soft(files[path], path).toBe(changed(path));
 			}
+			expect.soft(Object.hasOwn(files, "tests/__init__.py")).toBe(false);
 			for (const path of [
+				"tests/helpers.py",
 				"src/demo/__init__.py",
 				"src/demo/old.py",
 				"src/demo/test/utils.py",
