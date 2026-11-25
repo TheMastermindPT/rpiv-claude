@@ -43,10 +43,12 @@
 //   <file list>                    — first-parent: union of the feature commits' OWN
 //                                    diffs (back-merge sidecars drop out); commit-list
 //                                    input iterates the user-named hashes instead
+//   peer_pairs:     <N>|none — no code peers (<reason>)   (never an unexplained empty block)
 //   ---peer-pairs---
-//   new_file \t peer_file \t heuristic   — files ADDED by the diff paired with an
-//                                    existing peer at HEAD (interface-impl | suffix |
-//                                    stem); empty block when no pair matches
+//   new_file \t peer_file \t heuristic   — CODE files ADDED by the diff paired with an
+//                                    existing code peer at HEAD (interface-impl | suffix |
+//                                    stem); docs, config, migrations and anything under
+//                                    .rpiv/ never pair; empty block when no pair matches
 //   ---companion-candidates---
 //   file \t driver=<changed file> \t support=N \t conf=R — files that historically
 //                                    change together with a changed file (recent-history
@@ -88,6 +90,7 @@ import {
 	isMigration,
 	isSource,
 	isTest,
+	isToolHome,
 } from "../../_shared/source-vocab.mjs";
 
 const CHANGED_FILES_LINE_CAP = 2000;
@@ -121,12 +124,20 @@ const isReviewExcluded = (path) => {
 	return category === "generated-artifact" || category === "media";
 };
 
-const compatiblePeerCategory = (left, right) => {
-	const category = pathCategory(left);
-	return (
-		category === pathCategory(right) &&
-		["source", "docs", "migration", "config"].includes(category)
-	);
+// Only code pairs with code (odin#14): a range full of evidence, docs or config
+// files gave dozens of stem-matched non-code pairs and no code ones. Code means
+// the shared source category, outside the tool's own .rpiv/ folder (its evidence
+// holds .mjs mutant scripts). Tests are filtered separately: they are never peers.
+const isPeerCode = (path) =>
+	pathCategory(path) === "source" && !isToolHome(path);
+
+/** The `peer_pairs:` header value: the pair count, or a plain "no code peers"
+    with the reason — so an empty block never reads as a silent clean result. */
+const peerPairsStatus = (pairCount, codeFileCount) => {
+	if (pairCount > 0) return String(pairCount);
+	return codeFileCount > 0
+		? `none — no code peers (${codeFileCount} added code file(s) matched no code file at HEAD)`
+		: "none — no code peers (no added code files)";
 };
 
 const compatibleCompanionCategory = (left, right) =>
@@ -758,10 +769,12 @@ const interfaceImpl = (a, b) =>
 		(suf) => a === `${b}${suf}` || b === `${a}${suf}`,
 	);
 const peerPairs = [];
+let peerCodeFiles = 0; // added code files the peer search looked at
 if (addedRaw && result.strategy !== "unrecognised") {
 	const added = dedupChangedFiles(addedRaw).filter(
-		(f) => !isTest(f) && !isReviewExcluded(f),
+		(f) => !isTest(f) && isPeerCode(f),
 	);
+	peerCodeFiles = added.length;
 	const headFiles =
 		added.length > 0
 			? safe(["ls-tree", "-r", "HEAD", "--name-only"])
@@ -777,8 +790,7 @@ if (addedRaw && result.strategy !== "unrecognised") {
 				pf === nf ||
 				addedSet.has(pf) ||
 				isTest(pf) ||
-				isReviewExcluded(pf) ||
-				!compatiblePeerCategory(nf, pf)
+				!isPeerCode(pf)
 			)
 				continue;
 			const ps = stemOf(pf);
@@ -924,6 +936,7 @@ const lines = [
 if (manifestFiles.length > 0)
 	lines.push(`manifest_files: ${manifestFiles.join(", ")}`);
 lines.push(`lockstep_self_review: ${lockstep ? "yes" : "no"}`);
+lines.push(`peer_pairs: ${peerPairsStatus(peerPairs.length, peerCodeFiles)}`);
 if (result.warnings?.length) {
 	lines.push(`warnings:       ${result.warnings.join(" | ")}`);
 }

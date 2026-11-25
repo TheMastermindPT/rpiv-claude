@@ -4,7 +4,7 @@
 //
 //   node skills/_shared/source-vocab.test.mjs
 import assert from "node:assert/strict";
-import { CITE_EXT, SOURCE_EXT, TEST_EXCLUDE_RE, extOf, isFixture, isSource, isTest } from "./source-vocab.mjs";
+import { CITE_EXT, SOURCE_EXT, TEST_EXCLUDE_RE, extOf, isFixture, isSource, isTest, isToolHome } from "./source-vocab.mjs";
 
 // ── Union identity: CITE_EXT ⊇ both prior copies ─────────────────────────────
 {
@@ -55,6 +55,17 @@ import { CITE_EXT, SOURCE_EXT, TEST_EXCLUDE_RE, extOf, isFixture, isSource, isTe
 	assert.ok(isSource("x/y.py") && !isSource("x/y.sql"), "source vs citable-only split");
 	assert.ok(isFixture("e2e/run.ts") && isFixture("a/__mocks__/m.ts") && !isFixture("src/mockingbird.ts"));
 	console.log("OK — extOf/isSource/isFixture.");
+}
+
+// ── isToolHome: the tool's own folder, at any depth, either separator ────────
+{
+	for (const p of [".rpiv/evidence/S1-mutant.mjs", "pkg/.rpiv/artifacts/x.md", ".rpiv\\decisions\\d.md", ".rpiv"]) {
+		assert.ok(isToolHome(p), `tool home: ${p}`);
+	}
+	for (const p of ["src/rpiv/x.ts", ".rpiv-lanes.json", "docs/.rpivrc", "a.rpiv/x.ts"]) {
+		assert.ok(!isToolHome(p), `not tool home: ${p}`);
+	}
+	console.log("OK — isToolHome.");
 }
 
 console.log("OK");

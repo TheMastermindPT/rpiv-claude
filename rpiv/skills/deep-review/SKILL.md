@@ -100,7 +100,7 @@ Every Wave-2 agent prompt contains EXACTLY `Known Context:` + the Discovery Map 
    - **Invariant**: `InScopeFiles ⊆ ChangedFiles`. On back-merged feature branches, `InScopeFiles ⊊ ChangedFiles` is the primary mechanism by which sidecar findings get dropped at Step 6.
    - `ManifestChanged` ← `manifest_changed:`; when `yes`, `manifest_files:` names the touched manifests/lockfiles (the Dependencies/CVE lenses' extraction source).
    - `LockstepSelfReview` ← `lockstep_self_review:`.
-   - `PeerPairs` ← the `---peer-pairs---` block (`new_file \t peer_file \t heuristic`; heuristics: interface-impl pairs, the shared peer-noun suffix vocabulary, and stem similarity — tests are never peers, both-added pairs are excluded, capped per new file). Empty block ⇒ skip the peer-mirror agent. Co-modified peers are KEPT — the agent Reads them at HEAD (post-diff tree state), so any invariant present at HEAD counts as peer evidence regardless of whether the peer was edited in this diff.
+   - `PeerPairs` ← the `---peer-pairs---` block (`new_file \t peer_file \t heuristic`; heuristics: interface-impl pairs, the shared peer-noun suffix vocabulary, and stem similarity — only code pairs with code — source files outside the `.rpiv/` folder, never docs, config, migrations or evidence; tests are never peers, both-added pairs are excluded, capped per new file). `PeerStatus` ← `peer_pairs:` (the pair count, or `none — no code peers (<reason>)`). Empty block ⇒ skip the peer-mirror agent, and keep `PeerStatus` for the review's `## Pattern Analysis` line. Co-modified peers are KEPT — the agent Reads them at HEAD (post-diff tree state), so any invariant present at HEAD counts as peer evidence regardless of whether the peer was edited in this diff.
    - `ReviewShards` / `ReviewPatches` ← the manifest's `shards` / `patches`; every reviewable file appears exactly once.
    - `PriorReview` ← `prior_review:`. `(none)` means no same-branch JSON baseline exists.
    - `HasGatingPredicate` = a shard patch adds or modifies a **status/enum-comparison predicate** (`Status == X`, `Status is X or Y`, `X.Contains(Status)`, pattern-match on a discriminator) OR introduces a new value into an enum referenced by existing gating predicates. NOT merely the presence of `if (!x) return`.
@@ -422,7 +422,7 @@ Carry every verifier result into Step 7. Verified, Weakened and Unverifiable fin
 
 **Section-omission rules**: omit entirely (no empty placeholders) when —
 - `## 💭 Discussion` — no 💭 findings.
-- `## Pattern Analysis` — no peer-mirror pair existed for this diff.
+- `## Pattern Analysis` — never omitted silently: when no peer-mirror pair existed, the section is one line, `No code peers — <PeerStatus reason>`, so a skipped peer check never reads as a clean one.
 - `## Impact` — integration-scanner returned no inbound refs to changed files.
 - `## Precedents` — precedent-locator returned no precedents.
 - `## Spec Conformance` is NEVER omitted: it always carries its status line (§Spec Conformance in `references/gated-prompts.md`), and its rows are unranked — they never become findings.

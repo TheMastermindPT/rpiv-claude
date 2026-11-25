@@ -529,6 +529,61 @@ try {
 		);
 	}
 
+	// ── PeerPairs: only code pairs; the tool's own .rpiv/ folder is never a peer
+	// (odin#14: a range full of .rpiv/evidence files gave 42 evidence/doc pairs) ──
+	{
+		const write = (file, body) => {
+			mkdirSync(join(repo, dirname(file)), { recursive: true });
+			writeFileSync(join(repo, file), `${body}\n`);
+		};
+		const commitAll = (msg) => {
+			git(repo, "add", ".");
+			git(repo, "commit", "-q", "-m", msg);
+			return git(repo, "rev-parse", "HEAD");
+		};
+		write(".rpiv/evidence/S1-candidate-review-round1.md", "round 1");
+		write(".rpiv/evidence/S1-mutant-script.mjs", "export {}");
+		write("docs/S1-checklist.md", "checklist");
+		write("config/featureFlags.json", "{}");
+		write("src/ShippingService.ts", "peer");
+		commitAll("evidence and docs peers");
+
+		// A non-code-only range: evidence, an evidence script, docs and config.
+		write(".rpiv/evidence/S2-candidate-review-round1.md", "round 1");
+		write(".rpiv/evidence/S2-mutant-script.mjs", "export {}");
+		write("docs/S2-checklist.md", "checklist");
+		write("config/featureFlagz.json", "{}");
+		const nonCode = run(repo, commitAll("evidence only"));
+		assert.deepEqual(
+			nonCode.peers,
+			[],
+			"evidence, docs and config files never pair — and an .mjs under .rpiv/ is not code",
+		);
+		assert.match(
+			nonCode.peer_pairs ?? "",
+			/^none — no code peers/,
+			"an empty peer list says so plainly instead of an empty block",
+		);
+
+		// A mixed range: the code file still gets its code peer; evidence does not.
+		write(".rpiv/evidence/S3-candidate-review-round1.md", "round 1");
+		write("src/BillingService.ts", "new");
+		const mixed = run(repo, commitAll("code plus evidence"));
+		assert.ok(
+			mixed.peers.length > 0 &&
+				mixed.peers.every((row) => row.startsWith("src/BillingService.ts\t")),
+			`only the code file is paired, got: ${JSON.stringify(mixed.peers)}`,
+		);
+		assert.ok(
+			!mixed.peers.some((row) => row.includes(".rpiv/")),
+			"no pair points into .rpiv/",
+		);
+		assert.equal(mixed.peer_pairs, String(mixed.peers.length));
+		console.log(
+			"OK — peer-pairs pair code only, skip .rpiv/, and report no code peers.",
+		);
+	}
+
 	// ── Small homogeneous scopes preserve their category for lens dispatch ──
 	{
 		appendFileSync(join(repo, "docs", "LegacyService.md"), "docs-only edit\n");

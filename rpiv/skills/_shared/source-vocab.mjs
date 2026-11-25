@@ -19,7 +19,7 @@
 // Importable: SOURCE_EXT, CITE_EXT, extOf, isSource, isTest, isFixture, isTestTree,
 // isPythonTest, isTestData, isPythonTestSupport, TEST_EXCLUDE_RE,
 // isManifest, isLockfile, isMigration, isCiConfig, isContainerFile, LANE_CONFIG_FILE,
-// isLaneConfig, isEnvFile, isGenerated, isMedia, COSMIC_SESSIONS.
+// isLaneConfig, isEnvFile, isGenerated, isMedia, isToolHome, COSMIC_SESSIONS.
 
 /** Extensions that count as reviewable source code (metrics, mutation, semantic). */
 export const SOURCE_EXT = new Set([
@@ -198,3 +198,11 @@ export const isGenerated = (p) =>
 	GENERATED_PATH_RE.test(p) || GENERATED_NAME_RE.test(p);
 /** A media file (image, video, audio, font, PDF). */
 export const isMedia = (p) => MEDIA_EXT.has(extOf(p));
+
+// The tool's own folder: artifacts, evidence (review rounds, mutant scripts, logs),
+// decisions and guidance. Wider than GENERATED_PATH_RE's `.rpiv/artifacts` on
+// purpose: evidence is not generated (it stays reviewable), but no file in here is
+// product code, even one with a source extension (odin#14).
+const TOOL_HOME_RE = /(^|\/)\.rpiv(\/|$)/;
+/** A path inside the tool's own `.rpiv/` folder. */
+export const isToolHome = (p) => TOOL_HOME_RE.test(slashed(p));
