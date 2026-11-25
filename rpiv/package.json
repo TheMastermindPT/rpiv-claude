@@ -20,7 +20,8 @@
 		"test:coverage": "vitest run --coverage",
 		"mutate": "stryker run",
 		"mutate:plan": "stryker run --incremental",
-		"test": "echo \"tests run as: node <file>.test.mjs — vitest conversion is Action Item #6 (scaffold ready: npm run test:vitest)\" && exit 1"
+		"test": "node scripts/run-all-tests.mjs",
+		"test:scripts": "node scripts/run-all-tests.mjs --scripts-only"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.4",
