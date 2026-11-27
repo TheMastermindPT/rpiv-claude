@@ -184,7 +184,8 @@ describe("import guard with real Python (S2b-guard-proof)", () => {
 					top: w.co,
 				}),
 			)
-			.toBe("result: broken: imported from the checkout: pkg/mod.py");
+			// The first leak in reading order: importing pkg.mod loads pkg/__init__.py first.
+			.toBe("result: broken: imported from the checkout: pkg/__init__.py");
 	});
 
 	it("B26: a guarded process writes its record into a guard folder whose name holds a space, an apostrophe and a non-ASCII letter", (ctx) => {
