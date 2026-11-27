@@ -7,7 +7,13 @@
 // import-guard.mjs is loaded inside the tests (D26).
 
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	readdirSync,
+	readFileSync,
+	writeFileSync,
+} from "node:fs";
 import { delimiter, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanup, put, tempDir } from "./fixtures/reprove-red-harness.mjs";
@@ -196,6 +202,159 @@ describe("import guard with real Python (S2b-guard-proof)", () => {
 			.soft(readFileSync(join(dir, "sitecustomize.py"), "utf-8"))
 			.toContain("café");
 	});
+});
+
+// odin#22: the first guarded process claims the root role (`<guard>/root`); every later
+// one is a child. A child that ends without atexit leaves an unfinished record, which is
+// a diagnostic, not a broken run; an unfinished root record stays broken.
+describe("import guard: root and child records with real Python (odin#22)", () => {
+	const CHILD_DIAG =
+		/^diagnostic: child import record incomplete: pid (\d+) \(child exited without atexit: os\._exit, killed, or a crash\); its module list is partial$/;
+
+	/** Python code that runs `body` in a child via sys.executable with an env rebuilt
+	    from scratch: PYTHONPATH (+ PATH and SYSTEMROOT) and one app variable, output
+	    captured (the reporter's shape), then prints the child's exit code. */
+	const parentOf = (body) =>
+		[
+			"import os, subprocess, sys",
+			`SCRIPT = ${JSON.stringify(body)}`,
+			'env = {k: os.environ[k] for k in ("PYTHONPATH", "PATH", "SYSTEMROOT") if k in os.environ}',
+			'env["APP_VAR"] = "1"',
+			`r = subprocess.run([sys.executable, "-c", SCRIPT, "arg"], capture_output=True, text=True, env=env)`,
+			"print(r.returncode)",
+		].join("\n");
+
+	const judge = (w) =>
+		G.importJudgement({
+			recordsDir: w.records,
+			checkouts: [w.co],
+			exempt: [w.guard],
+			top: w.co,
+		});
+
+	it("the runner claims the root role, writes its pid there, and its child's record says child", (ctx) => {
+		needPython(ctx);
+		const w = world();
+		const run = guarded(w, parentOf("import json\nprint('ok')"));
+		expect.soft(run.status, run.stderr).toBe(0);
+		expect.soft(run.stdout.trim()).toBe("0");
+		const claim = readFileSync(join(w.guard, "root"), "utf-8").trim();
+		const files = G.readRecords(w.records);
+		expect
+			.soft(files.map((file) => file.role).sort())
+			.toEqual(["child", "root"]);
+		const root = files.find((file) => file.role === "root");
+		const child = files.find((file) => file.role === "child");
+		expect.soft(root?.pid).toBe(claim);
+		// A Windows venv's python.exe is a launcher, so there the child's parent is the
+		// launcher, not the runner.
+		if (process.platform === "win32") expect.soft(child?.ppid).toMatch(/^\d+$/);
+		else expect.soft(child?.ppid).toBe(claim);
+		expect.soft(files.every((file) => file.complete)).toBe(true);
+		expect.soft(judge(w)).toEqual({ verdict: undefined, diagnostics: [] });
+	});
+
+	it("the reporter's shape forced: a child closes fd 2, imports, prints and ends through os._exit; the run is not broken and the child is named", (ctx) => {
+		needPython(ctx);
+		const w = world();
+		const run = guarded(
+			w,
+			parentOf(
+				"import os\nos.close(2)\nimport json\nprint('ok', flush=True)\nos._exit(0)",
+			),
+		);
+		expect.soft(run.status, run.stderr).toBe(0);
+		expect.soft(run.stdout.trim()).toBe("0");
+		const child = G.readRecords(w.records).find((f) => f.role === "child");
+		expect.soft(child?.complete).toBe(false);
+		const { verdict, diagnostics } = judge(w);
+		expect.soft(verdict).toBeUndefined();
+		expect.soft(diagnostics).toHaveLength(1);
+		expect.soft(CHILD_DIAG.exec(diagnostics[0] ?? "")?.[1]).toBe(child?.pid);
+	});
+
+	it.runIf(process.platform === "win32")(
+		"Windows, the reporter's real case: a child that closes fd 2 and later writes to stderr ends without atexit, and reads as a child diagnostic",
+		(ctx) => {
+			needPython(ctx);
+			const w = world();
+			const side = join(G.realOf(tempDir()), "atexit.txt");
+			const body = [
+				"import atexit, os, sys",
+				`atexit.register(lambda: open(${JSON.stringify(side.replaceAll("\\", "/"))}, "w").write("ran"))`,
+				"os.close(2)",
+				"import json",
+				"print('ok')",
+				"print('e', file=sys.stderr)",
+			].join("\n");
+			const run = guarded(w, parentOf(body));
+			expect.soft(run.status, run.stderr).toBe(0);
+			expect.soft(run.stdout.trim(), "the child crashed").not.toBe("0");
+			expect.soft(existsSync(side), "the child's atexit ran").toBe(false);
+			const { verdict, diagnostics } = judge(w);
+			expect.soft(verdict).toBeUndefined();
+			expect.soft(diagnostics).toHaveLength(1);
+			expect.soft(diagnostics[0]).toMatch(CHILD_DIAG);
+		},
+	);
+
+	it("a runner that ends through os._exit leaves an unfinished root record: broken", (ctx) => {
+		needPython(ctx);
+		const w = world();
+		const run = guarded(w, "import os, json\nos._exit(0)");
+		expect.soft(run.status, run.stderr).toBe(0);
+		const claim = readFileSync(join(w.guard, "root"), "utf-8").trim();
+		expect
+			.soft(judge(w).verdict)
+			.toBe(`result: broken: import record incomplete: pid ${claim}`);
+	});
+
+	it("an unfinished child record that names a checkout module is broken", (ctx) => {
+		needPython(ctx);
+		const w = world();
+		const run = guarded(w, parentOf("import os\nimport pkg.mod\nos._exit(0)"));
+		expect.soft(run.status, run.stderr).toBe(0);
+		const child = G.readRecords(w.records).find((f) => f.role === "child");
+		expect.soft(child?.complete).toBe(false);
+		expect.soft(child?.modules).toContain(realPy(w.co, "pkg/__init__.py"));
+		expect.soft(judge(w)).toEqual({
+			verdict: "result: broken: imported from the checkout: pkg/__init__.py",
+			diagnostics: [],
+		});
+	});
+
+	it.runIf(process.platform !== "win32")(
+		"POSIX: a child started with fd 2 closed that closes fd 2 again keeps its record off fds 0-2, close-on-exec, and finishes it",
+		(ctx) => {
+			needPython(ctx);
+			const w = world();
+			const out = join(G.realOf(tempDir()), "fd.txt");
+			const body = [
+				"import fcntl, os, sys, sitecustomize",
+				'fd = sitecustomize._state["handle"].fileno()',
+				`open(${JSON.stringify(out)}, "w").write("%d %d" % (fd, fcntl.fcntl(fd, fcntl.F_GETFD) & fcntl.FD_CLOEXEC))`,
+				// fd 2 is closed already, so this closes nothing (EBADF) unless the record sits there.
+				"try:\n    os.close(2)\nexcept OSError:\n    pass",
+				"import json",
+			].join("\n");
+			// sh closes fd 2 before exec (preexec_fn would run the guard's fork hook first).
+			const parent = [
+				"import subprocess, sys",
+				`r = subprocess.run(["sh", "-c", 'exec "$0" -c "$1" 2>&-', sys.executable, ${JSON.stringify(body)}])`,
+				"print(r.returncode)",
+			].join("\n");
+			const run = guarded(w, parent);
+			expect.soft(run.status, run.stderr).toBe(0);
+			expect.soft(run.stdout.trim()).toBe("0");
+			const [fd, cloexec] = readFileSync(out, "utf-8").split(" ").map(Number);
+			expect.soft(fd).toBeGreaterThanOrEqual(3);
+			expect.soft(cloexec).toBe(1);
+			const files = G.readRecords(w.records);
+			expect.soft(files).toHaveLength(2);
+			expect.soft(files.every((file) => file.complete)).toBe(true);
+			expect.soft(judge(w)).toEqual({ verdict: undefined, diagnostics: [] });
+		},
+	);
 });
 
 // rpiv issue draft 20261123-151137-3491b4f7: uv installs the project editable, and its

@@ -612,7 +612,7 @@ describe("Python scratch copy and import guard (S2-scratch-copy)", () => {
 			for (const text of [
 				"atexit.register",
 				"os.register_at_fork",
-				'"x"',
+				"os.O_CREAT | os.O_EXCL",
 				'encoding="utf-8"',
 				'"start: "',
 				'"end: "',
@@ -752,18 +752,23 @@ describe("Python scratch copy and import guard (S2-scratch-copy)", () => {
 		return path;
 	};
 
-	/** A record file's text; `{cwd}` is the run folder, `{guard}` the guard folder. */
+	/** A record file's text (`end:` left out when `end` is false); `{cwd}` is the run
+	    folder, `{guard}` the guard folder. The recorder claims the root role for pid 10. */
 	const recordText = ({
 		modules = [],
 		packages = ["{guard}"],
 		pid = 10,
+		role = "root",
 		eol = "\n",
+		end = true,
 	}) =>
 		[
 			`start: ${pid}`,
+			`role: ${role}`,
+			"ppid: 1",
 			...packages.map((path) => `package: ${path}`),
 			...modules.map((path) => `module: ${path}`),
-			`end: ${pid}`,
+			...(end ? [`end: ${pid}`] : []),
 			"",
 		].join(eol);
 

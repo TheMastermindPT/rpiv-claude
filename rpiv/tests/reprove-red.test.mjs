@@ -1144,13 +1144,14 @@ describe("pytest reports and exit codes (S1-pytest-report)", () => {
 	// whether it exists in the working folder (plus `["probe", <exists>]` for a
 	// `--probe=<path>` argument), `--code <n>` is the exit code. In a Python run it writes
 	// one complete clean import record into the guard folder first on its PYTHONPATH
-	// (D12 of S2-scratch-copy).
+	// (D12 of S2-scratch-copy) and claims the root role for it (odin#22).
 	const FAKE_PYTEST = `import { copyFileSync, existsSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 const guard = (process.env.PYTHONPATH ?? "").split(delimiter)[0];
 if (guard && existsSync(join(guard, "records"))) {
-	const lines = ["start: 10", "package: " + guard, "module: " + join(process.cwd(), "fake.mjs"), "end: 10"];
+	const lines = ["start: 10", "role: root", "ppid: 1", "package: " + guard, "module: " + join(process.cwd(), "fake.mjs"), "end: 10"];
 	writeFileSync(join(guard, "records", "clean"), lines.join("\\n") + "\\n");
+	writeFileSync(join(guard, "root"), "10");
 }
 const args = process.argv.slice(2);
 const opt = (name) => {

@@ -4,7 +4,14 @@
 // folder, and puts it first on the runner's PYTHONPATH. Every Python process that loads
 // the guard writes its own record file: `start: <pid>`, then at exit a `package:` line
 // for each of Python's standard library and site-packages folders, a `module:` line for
-// the file of each loaded module, and `end: <pid>`. An audit hook also writes a
+// the file of each loaded module, and `end: <pid>`. The first guarded process claims the
+// root role by creating `<guard>/root` exclusively (its pid inside); every later one, and
+// every forked one, is a child. Each record says so in a `role: root|child` line and a
+// `ppid: <n>` line right after `start:`, and on POSIX the record never sits on fds 0-2
+// (a child that closes fd 2 would close it). An unfinished child record (os._exit, a
+// kill, a crash) is a `diagnostic: child import record incomplete:` line beside the run
+// line; an unfinished root record, a missing or invalid claim or a record of no known
+// role stays broken (odin#22). An audit hook also writes a
 // `module:` line at once for each importable file the process opens for reading (a cached
 // `.pyc` as its source), so a module dropped from `sys.modules` before exit is still seen
 // (D21, S2b-guard-proof). The system's temporary folder is checked before the guard
@@ -16,7 +23,7 @@
 //
 // Importable-only: no CLI, no isMain.
 // Importable: guardScript, createGuard, guardEnv, checkoutFolders, readRecords,
-// importVerdict, realOf, within.
+// importJudgement, importVerdict, realOf, within.
 
 import { execFileSync } from "node:child_process";
 import {
@@ -105,7 +112,13 @@ import sys
 import sysconfig
 import threading
 
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
+
 _RECORDS = os.path.join(${JSON.stringify(dir.replaceAll("\\", "/"))}, "records")
+_CLAIM = os.path.join(${JSON.stringify(dir.replaceAll("\\", "/"))}, "root")
 _CHECKOUTS = ${pyPaths(checkouts)}
 _KEEP = ${pyPaths([dir, ...keep])}
 _EDITABLE_FINDERS = ("__editable__", "_editable_impl_")
@@ -115,11 +128,46 @@ _WRITES = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT
 _state = {}
 
 
-def _start():
+def _claim():
+    try:
+        fd = os.open(_CLAIM, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    except FileExistsError:
+        return "child"
+    try:
+        os.write(fd, str(os.getpid()).encode("ascii"))
+    finally:
+        os.close(fd)
+    return "root"
+
+
+def _high(fd):
+    if hasattr(fcntl, "F_DUPFD_CLOEXEC"):
+        return fcntl.fcntl(fd, fcntl.F_DUPFD_CLOEXEC, 3)
+    new = fcntl.fcntl(fd, fcntl.F_DUPFD, 3)
+    os.set_inheritable(new, False)
+    return new
+
+
+def _open_record(name):
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_BINARY", 0)
+    fd = os.open(name, flags)
+    if fd < 3 and fcntl is not None:
+        low = fd
+        try:
+            fd = _high(low)
+        finally:
+            os.close(low)
+    return os.fdopen(fd, "w", encoding="utf-8")
+
+
+def _start(role=None):
     pid = os.getpid()
+    role = role or _claim()
     name = os.path.join(_RECORDS, "%d-%s.txt" % (pid, os.urandom(8).hex()))
-    handle = open(name, "x", encoding="utf-8")
+    handle = _open_record(name)
     handle.write("start: " + str(pid) + "\\n")
+    handle.write("role: " + role + "\\n")
+    handle.write("ppid: " + str(os.getppid()) + "\\n")
     handle.flush()
     _state["lock"] = threading.RLock()
     _state["handle"] = handle
@@ -191,7 +239,7 @@ def _finish():
 
 def _child():
     _state.pop("handle", None)
-    _start()
+    _start("child")
 
 
 def _norm(path):
@@ -263,26 +311,37 @@ export const createGuard = (checkouts, keep = []) => {
 };
 
 const PATH_LINE = /^(module|package): /;
+// The header lines after `start:`, in order, each optional (odin#22).
+const HEADER_LINES = [/^role: /, /^ppid: \d+$/];
 
-/** True for a finished record: `start: <pid>` first, `end: <pid>` (the same pid) as the
-    last non-blank line, and only `package:`/`module:` lines between (so no blank line
-    inside the record; blank lines after `end:` are ignored). */
+/** The index of the first line after `start:` and its header lines. */
+const bodyStart = (lines) => {
+	let at = 1;
+	for (const header of HEADER_LINES) if (header.test(lines[at] ?? "")) at++;
+	return at;
+};
+
+/** True for a finished record: `start: <pid>` first, then its header lines, `end: <pid>`
+    (the same pid) as the last non-blank line, and only `package:`/`module:` lines between
+    (so no blank line inside the record; blank lines after `end:` are ignored). */
 const isComplete = (lines) => {
 	const body = [...lines];
 	while (body.at(-1) === "") body.pop();
 	const pid = /^start: (\d+)$/.exec(body[0] ?? "")?.[1];
+	const from = bodyStart(body);
 	return (
 		pid !== undefined &&
-		body.length >= 2 &&
+		body.length > from &&
 		body.at(-1) === `end: ${pid}` &&
-		body.slice(1, -1).every((line) => PATH_LINE.test(line))
+		body.slice(from, -1).every((line) => PATH_LINE.test(line))
 	);
 };
 
 /** The record files in `recordsDir`, in name order: each file's `module:` and `package:`
     paths, everything after the prefix (spaces included), its `start:` pid (undefined when
-    the first line is not a valid `start:` line), and whether it is complete.
-    Lines are split on `\n` with a trailing `\r` removed. */
+    the first line is not a valid `start:` line), its `role:` (`root`, `child`, another
+    word, or undefined when the second line is not a `role:` line), its `ppid:` and
+    whether it is complete. Lines are split on `\n` with a trailing `\r` removed. */
 export const readRecords = (recordsDir) => {
 	const names = existsSync(recordsDir) ? readdirSync(recordsDir).sort() : [];
 	return names.map((name) => {
@@ -297,10 +356,43 @@ export const readRecords = (recordsDir) => {
 			modules: after("module: "),
 			packages: after("package: "),
 			pid: /^start: (\d+)$/.exec(lines[0])?.[1],
+			role: /^role: (.*)$/.exec(lines[1] ?? "")?.[1],
+			ppid: /^ppid: (\d+)$/.exec(lines[2] ?? "")?.[1],
 			complete: isComplete(lines),
 		};
 	});
 };
+
+/** The root claim beside `recordsDir`: `{ pid }` (undefined when its text is not a pid),
+    or `{ missing: true }`. */
+const readClaim = (recordsDir) => {
+	const path = join(dirname(recordsDir), "root");
+	if (!existsSync(path)) return { missing: true };
+	return { pid: /^(\d+)\s*$/.exec(readFileSync(path, "utf-8"))?.[1] };
+};
+
+/** The broken run line of a root problem, or undefined: a missing or invalid claim, an
+    unfinished record that is not a child's (the root's, or one with no or an unknown
+    role), or not exactly one root record, at the claim's pid (odin#22). */
+const rootLine = (files, claim) => {
+	if (claim.missing) return "result: broken: import guard root claim missing";
+	if (claim.pid === undefined) {
+		return "result: broken: import guard root claim invalid";
+	}
+	const unfinished = files.find((f) => !f.complete && f.role !== "child");
+	if (unfinished) {
+		return `result: broken: import record incomplete: pid ${unfinished.pid ?? "unknown"}`;
+	}
+	const roots = files.filter((file) => file.role === "root");
+	if (roots.length !== 1 || roots[0].pid !== claim.pid) {
+		return `result: broken: import guard root record missing: claim pid ${claim.pid}, ${roots.length} root records`;
+	}
+	return undefined;
+};
+
+/** The `diagnostic:` line of an unfinished child record (odin#22). */
+const childLine = (file) =>
+	`diagnostic: child import record incomplete: pid ${file.pid ?? "unknown"} (child exited without atexit: os._exit, killed, or a crash); its module list is partial`;
 
 /** True when `path` lies strictly inside `folder`. */
 const strictlyWithin = (folder, path) =>
@@ -310,25 +402,33 @@ const strictlyWithin = (folder, path) =>
 const shown = (top, path) =>
 	(within(top, path) ? relative(top, path) : path).replaceAll("\\", "/");
 
-/** The guard's run line for a Python run, or undefined to keep the pytest run line: a
-    recorded module inside a checkout folder, outside the scratch copy, the guard folder,
-    the links (`exempt`) and every recorded package folder strictly inside a checkout
-    folder, is `result: broken: imported from the checkout: <path>` (the first in reading
-    order). Every folder and module path is compared as a real path. Otherwise no record
-    file is `result: broken: import guard did not run` and an unfinished one
-    `result: broken: import record incomplete: pid <n>`, the `start:` pid of the first
-    unfinished file in name order, or `unknown` (D12, D24). */
-export const importVerdict = ({ recordsDir, checkouts, exempt, top }) => {
+/** The guard's judgement of a Python run: `{ verdict, diagnostics }`. `verdict` is the
+    guard's run line, or undefined to keep the pytest run line: a recorded module (in any
+    record, finished or not) inside a checkout folder, outside the scratch copy, the guard
+    folder, the links (`exempt`) and every recorded package folder strictly inside a
+    checkout folder, is `result: broken: imported from the checkout: <path>` (the first in
+    reading order). Every folder and module path is compared as a real path. Otherwise no
+    record file is `result: broken: import guard did not run`; a missing or invalid root
+    claim (`<guard>/root`), an unfinished record that is not a child's (`import record
+    incomplete: pid <n>`, the `start:` pid of the first such file in name order, or
+    `unknown`), or not exactly one root record at the claim's pid is broken too (D12, D24,
+    odin#22). `diagnostics` holds one line per unfinished child record, only when the
+    verdict is undefined: the run line stays pytest's and the line says the child's module
+    list is partial. */
+export const importJudgement = ({ recordsDir, checkouts, exempt, top }) => {
 	const files = readRecords(recordsDir);
-	const checkout = checkoutLine(files, { checkouts, exempt, top });
-	if (checkout !== undefined) return checkout;
-	if (files.length === 0) return "result: broken: import guard did not run";
-	const unfinished = files.find((file) => !file.complete);
-	if (unfinished) {
-		return `result: broken: import record incomplete: pid ${unfinished.pid ?? "unknown"}`;
-	}
-	return undefined;
+	const verdict =
+		checkoutLine(files, { checkouts, exempt, top }) ??
+		(files.length === 0
+			? "result: broken: import guard did not run"
+			: rootLine(files, readClaim(recordsDir)));
+	if (verdict !== undefined) return { verdict, diagnostics: [] };
+	const children = files.filter((file) => !file.complete);
+	return { verdict, diagnostics: children.map(childLine) };
 };
+
+/** The guard's run line alone (see importJudgement). */
+export const importVerdict = (inputs) => importJudgement(inputs).verdict;
 
 /** The checkout line of `files`, or undefined when no recorded module is in a checkout. */
 const checkoutLine = (files, { checkouts, exempt, top }) => {
