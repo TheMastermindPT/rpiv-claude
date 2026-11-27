@@ -160,14 +160,18 @@ describe("through the CLI with the recorder (odin#22)", () => {
 
 const PYTHON = process.env.RPIV_TEST_PYTHON ?? "";
 
-/** Skips the test, naming why, when no interpreter is named or it has no pytest. */
+/** Skips the test, naming why, when no interpreter is named or it has no pytest. An
+    interpreter whose `import pytest` fails for any other reason fails the test. */
 const needPytest = (ctx) => {
 	if (!PYTHON) ctx.skip("unavailable: RPIV_TEST_PYTHON not set");
 	const probe = spawnSync(PYTHON, ["-c", "import pytest"], {
 		encoding: "utf-8",
 	});
 	if (probe.error) throw probe.error;
-	if (probe.status !== 0) ctx.skip("unavailable: pytest not importable");
+	if (probe.status === 0) return;
+	if (/No module named '?pytest'?/.test(probe.stderr))
+		ctx.skip("unavailable: pytest not installed");
+	throw new Error(`RPIV_TEST_PYTHON cannot import pytest:\n${probe.stderr}`);
 };
 
 const ID = "tests/test_child.py::test_child";
