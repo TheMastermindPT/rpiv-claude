@@ -7,7 +7,7 @@
 // pytest (each skips, naming why, otherwise).
 
 import { spawnSync } from "node:child_process";
-import { realpathSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -300,4 +300,24 @@ describe("real pytest: a child that ends without atexit (odin#22)", () => {
 		},
 		TEST_TIMEOUT,
 	);
+});
+
+// ---- validate's prose ----
+
+describe("validate asks about a child import record diagnostic (odin#22)", () => {
+	it.each([
+		"skills/validate/SKILL.md",
+		"opencode/generated/skills/rpiv-validate/SKILL.md",
+	])("%s keeps the sentence verbatim", (path) => {
+		const text = readFileSync(
+			new URL(`../${path}`, import.meta.url),
+			"utf-8",
+		).replace(/\s+/g, " ");
+		expect(text).toContain(
+			"a `failed` or `failed-import` bucket with no `diagnostic: child import record incomplete:` line needs no question.",
+		);
+		expect(text).toContain(
+			"a `diagnostic: child import record incomplete:` line (a Python child exited without `atexit`, so its recorded module list is partial; ask the developer to judge whether the child could have imported checkout code),",
+		);
+	});
 });
