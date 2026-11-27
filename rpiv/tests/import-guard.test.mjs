@@ -51,28 +51,48 @@ const world = () => {
 	return { top, scratch, guard, records, outside };
 };
 
-/** One record file's text: `start:`, the package and module lines, `end:`. */
-const record = ({ modules = [], packages = [], pid = 10, eol = "\n" }) =>
+/** One record file's text: `start:`, `role:` and `ppid:`, the package and module lines,
+    `end:` (left out when `end` is false). */
+const record = ({
+	modules = [],
+	packages = [],
+	pid = 10,
+	role = "root",
+	eol = "\n",
+	end = true,
+}) =>
 	[
 		`start: ${pid}`,
+		`role: ${role}`,
+		"ppid: 1",
 		...packages.map((path) => `package: ${path}`),
 		...modules.map((path) => `module: ${path}`),
-		`end: ${pid}`,
+		...(end ? [`end: ${pid}`] : []),
 		"",
 	].join(eol);
 
-/** The verdict on `files` (`{ name: text }`) written into the world's records folder. */
-const verdictOn = (w, files, { checkouts = [w.top], links = [] } = {}) => {
+/** Writes `files` (`{ name: text }`) into the world's records folder and `claim` (the
+    root claim's text; null for none) beside it; returns the judge's inputs. */
+const judged = (
+	w,
+	files,
+	{ checkouts = [w.top], links = [], claim = "10" },
+) => {
 	for (const [name, text] of Object.entries(files)) {
 		writeFileSync(join(w.records, name), text);
 	}
-	return importVerdict({
+	if (claim !== null) writeFileSync(join(w.guard, "root"), claim);
+	return {
 		recordsDir: w.records,
 		checkouts,
 		exempt: [w.scratch, w.guard, ...links],
 		top: w.top,
-	});
+	};
 };
+
+/** The verdict on `files` written into the world's records folder (see judged). */
+const verdictOn = (w, files, options = {}) =>
+	importVerdict(judged(w, files, options));
 
 const SRC_INIT = `${CHECKOUT}src/demo/__init__.py`;
 // B18: [label, the row's inputs in a fresh world, expected verdict (undefined: S1's line)]
@@ -212,10 +232,10 @@ const B19_ROWS = [
 		SRC_INIT,
 	],
 	[
-		"two clean files, same pid",
+		"two clean files, a root and a child",
 		(w) => ({
 			a: record({ modules: [join(w.scratch, "x.py")] }),
-			b: record({ modules: [join(w.scratch, "y.py")] }),
+			b: record({ modules: [join(w.scratch, "y.py")], pid: 11, role: "child" }),
 		}),
 		undefined,
 	],
@@ -322,6 +342,19 @@ describe("import guard: record reader and checkout test (S2-scratch-copy)", () =
 		expect(JSON.parse(literal)).toBe(dir.replaceAll("\\", "/"));
 	});
 
+	it("odin#22: the generated guard claims the root role with an exclusive file beside records/ and writes role and ppid after start", () => {
+		const dir = realOf(tempDir());
+		const text = guardScript(dir);
+		const literal = /_CLAIM = os\.path\.join\((.*), "root"\)/.exec(text)?.[1];
+		expect.soft(literal && JSON.parse(literal)).toBe(dir.replaceAll("\\", "/"));
+		expect.soft(text).toContain("os.O_CREAT | os.O_EXCL");
+		expect.soft(text).toContain("except FileExistsError");
+		expect.soft(text).toContain('"role: "');
+		expect.soft(text).toContain('"ppid: "');
+		expect.soft(text).toContain("F_DUPFD_CLOEXEC");
+		expect.soft(text).toContain('_start("child")');
+	});
+
 	it("B26: a listed worktree whose folder was deleted does not break the checkout folders", () => {
 		const repo = newRepo();
 		put(repo, "a.txt", "a\n");
@@ -332,5 +365,134 @@ describe("import guard: record reader and checkout test (S2-scratch-copy)", () =
 		const folders = checkoutFolders(repo);
 		expect.soft(folders).toContain(realOf(repo));
 		expect.soft(folders).toHaveLength(2);
+	});
+});
+
+// odin#22: a child Python process that ends without atexit (os._exit, a kill, a crash)
+// leaves an unfinished record. Only the runner's own (root) record must finish; an
+// unfinished child record is a diagnostic, and the run line stays the runner's.
+const CHILD_DIAG = (pid) =>
+	`diagnostic: child import record incomplete: pid ${pid} (child exited without atexit: os._exit, killed, or a crash); its module list is partial`;
+const ODIN22_ROWS = [
+	// [label, record files, options, expected verdict, expected diagnostics]
+	[
+		"a clean root and an unfinished child",
+		(w) => ({
+			a: record({ modules: [join(w.scratch, "x.py")] }),
+			b: record({ pid: 11, role: "child", end: false }),
+		}),
+		{},
+		undefined,
+		[CHILD_DIAG(11)],
+	],
+	[
+		"two unfinished children, in name order",
+		() => ({
+			a: record({}),
+			b: record({ pid: 12, role: "child", end: false }),
+			c: record({ pid: 11, role: "child", end: false }),
+		}),
+		{},
+		undefined,
+		[CHILD_DIAG(12), CHILD_DIAG(11)],
+	],
+	[
+		"an unfinished root",
+		() => ({
+			a: record({ end: false }),
+			b: record({ pid: 11, role: "child" }),
+		}),
+		{},
+		`${INCOMPLETE}10`,
+		[],
+	],
+	[
+		"a missing claim",
+		() => ({ a: record({}) }),
+		{ claim: null },
+		"result: broken: import guard root claim missing",
+		[],
+	],
+	[
+		"an invalid claim",
+		() => ({ a: record({}) }),
+		{ claim: "ten" },
+		"result: broken: import guard root claim invalid",
+		[],
+	],
+	[
+		"a claim naming no root record",
+		() => ({ a: record({ role: "child" }) }),
+		{},
+		"result: broken: import guard root record missing: claim pid 10, 0 root records",
+		[],
+	],
+	[
+		"a root record whose pid is not the claim's",
+		() => ({ a: record({ pid: 11 }) }),
+		{},
+		"result: broken: import guard root record missing: claim pid 10, 1 root records",
+		[],
+	],
+	[
+		"two root records",
+		() => ({ a: record({}), b: record({ pid: 11 }) }),
+		{},
+		"result: broken: import guard root record missing: claim pid 10, 2 root records",
+		[],
+	],
+	[
+		"an unfinished record with an unknown role",
+		() => ({
+			a: record({}),
+			b: record({ pid: 11, role: "other", end: false }),
+		}),
+		{},
+		`${INCOMPLETE}11`,
+		[],
+	],
+	[
+		"an unfinished child naming a checkout module",
+		(w) => ({
+			a: record({}),
+			b: record({
+				pid: 11,
+				role: "child",
+				end: false,
+				modules: [join(w.top, "src/demo/__init__.py")],
+			}),
+		}),
+		{},
+		SRC_INIT,
+		[],
+	],
+	[
+		"a missing claim with an unfinished child",
+		() => ({
+			a: record({}),
+			b: record({ pid: 11, role: "child", end: false }),
+		}),
+		{ claim: null },
+		"result: broken: import guard root claim missing",
+		[],
+	],
+];
+
+describe("import guard: root and child records (odin#22)", () => {
+	it("an unfinished child record is a diagnostic; an unfinished root, a bad claim, a bad role or a checkout module is broken", async () => {
+		const { importJudgement } = await import(
+			"../skills/_shared/import-guard.mjs"
+		);
+		for (const [label, files, options, verdict, diagnostics] of ODIN22_ROWS) {
+			const w = world();
+			const inputs = judged(w, files(w), options);
+			expect.soft(importJudgement?.(inputs), label).toEqual({
+				verdict,
+				diagnostics,
+			});
+			expect
+				.soft(importVerdict(inputs), `${label} (importVerdict)`)
+				.toBe(verdict);
+		}
 	});
 });

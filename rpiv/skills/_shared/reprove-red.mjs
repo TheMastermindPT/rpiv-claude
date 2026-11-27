@@ -54,7 +54,10 @@
 // `result: broken: imported from the checkout: <path>` when one came from a
 // checkout folder of the repository, `result: broken: import guard did not run` when no
 // record exists, and `result: broken: import record incomplete: pid <n>`
-// when a record is unfinished, whatever pytest's exit code. A guarded process records a
+// when the runner's own record or one of no known role is unfinished, whatever pytest's
+// exit code (a missing or invalid root claim is broken too). A child process's unfinished
+// record (odin#22: os._exit, a kill, a crash) keeps pytest's run line and every bucket,
+// with a `diagnostic: child import record incomplete: pid <n>` line before it. A guarded process records a
 // module when it opens its file for import as well as at exit (S2b-guard-proof), and a
 // temporary folder inside the checkout is refused before the guard folder is made.
 // In a Python run (S2c-copy-modes) a changed symlink is left as the base had it
@@ -96,7 +99,7 @@ import {
 	checkoutFolders,
 	createGuard,
 	guardEnv,
-	importVerdict,
+	importJudgement,
 	realOf,
 	within,
 } from "./import-guard.mjs";
@@ -938,8 +941,9 @@ const importRedOf = ({
 };
 
 /** The lines after `log:`: the named tests' results, the load failures, a whole-run
-    diagnostic and the run line. The guard's line wins over pytest's in a Python run
-    (S2-scratch-copy); an import red wins over pytest's exit 2 or 4. */
+    diagnostic, the guard's child diagnostics and the run line. The guard's line wins over
+    pytest's in a Python run (S2-scratch-copy); an import red wins over pytest's exit 2 or
+    4. An unfinished child record never changes the run line or a bucket (odin#22). */
 const outcomeLines = (run) => {
 	const report = readReport(run.junit);
 	const loaded = importRedOf({ ...run, report });
@@ -958,6 +962,7 @@ const outcomeLines = (run) => {
 		...results,
 		...(loaded?.lines ?? []),
 		...redElsewhere(results, runLine),
+		...(run.diagnostics ?? []),
 		runLine,
 	];
 };
@@ -970,9 +975,10 @@ const placesOf = (top, cwd, python) =>
 
 /** Builds the scratch copy in a fresh folder of the system's temporary folder (short,
     outside the git dir), places the links and runs the command in the caller's folder of
-    it (`place`, see placesOf); returns `{ code, verdict }`. A Python run gets a fresh guard folder and the guarded environment (D11, D18), and a
+    it (`place`, see placesOf); returns `{ code, verdict, diagnostics }`. A Python run gets a fresh guard folder and the guarded environment (D11, D18), and a
     temporary folder inside a checkout folder is broken before anything is made (D23); its
-    records are judged before cleanup (`verdict`: the guard's run line, or undefined). The
+    records are judged before cleanup (`verdict`: the guard's run line, or undefined;
+    `diagnostics`: its unfinished child records, see importJudgement). The
     scratch copy and the guard folder are removed whatever happens, the guard folder even
     when the scratch removal throws. */
 const rerun = ({ top, place, build, links, python, run }) => {
@@ -991,15 +997,15 @@ const rerun = ({ top, place, build, links, python, run }) => {
 				: process.env,
 		);
 		const code = runCommand(run, runDir, env);
-		const verdict =
-			guard &&
-			importVerdict({
-				recordsDir: join(guard, "records"),
-				checkouts,
-				exempt: [scratch, guard, ...links.map(({ target }) => target)],
-				top,
-			});
-		return { code, verdict };
+		const judged = guard
+			? importJudgement({
+					recordsDir: join(guard, "records"),
+					checkouts,
+					exempt: [scratch, guard, ...links.map(({ target }) => target)],
+					top,
+				})
+			: { verdict: undefined, diagnostics: [] };
+		return { code, ...judged };
 	} finally {
 		try {
 			if (scratch) removeScratch(scratch, links);
@@ -1147,7 +1153,7 @@ const runCli = (argv, callerCwd) => {
 		arg === "{tests}" ? selected : [arg.split("{junit}").join(junit)],
 	);
 	rmSync(junit, { force: true }); // a report from an earlier run is never read
-	const { code, verdict } = rerun({
+	const { code, verdict, diagnostics } = rerun({
 		top,
 		place,
 		build: { parent: base, commit, paths: plan.paths, removed: plan.removed },
@@ -1162,6 +1168,7 @@ const runCli = (argv, callerCwd) => {
 		...outcomeLines({
 			code,
 			verdict,
+			diagnostics,
 			junit,
 			log,
 			named,

@@ -105,7 +105,8 @@ export const headerBody = (lines) => {
 // arguments, folder, environment, guard and every file it sees (with content) as JSON;
 // in a Python run it writes record files into `records/` of the guard folder named first
 // on its PYTHONPATH: `--records <json>` (`[{ name, text }]`, `{cwd}` and `{guard}`
-// filled in), else one clean record. `--copy <src>` copies a report to the
+// filled in), else one clean record, and claims the root role for pid 10 in the guard
+// folder's `root` file (left out with `--no-claim`). `--copy <src>` copies a report to the
 // `--junitxml=` path, `--print <file>` writes a file to stdout (the log), `--linger <s>` leaves a detached child working in the run folder
 // for that long, `--sleep <s>` waits, `--code <n>` is the exit code.
 export const RECORDER = `import { copyFileSync, existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
@@ -146,9 +147,10 @@ if (opt("--out")) {
 	}));
 }
 if (records && existsSync(records)) {
+	if (!args.includes("--no-claim")) writeFileSync(join(guard, "root"), "10");
 	const specs = opt("--records")
 		? JSON.parse(readFileSync(opt("--records"), "utf-8"))
-		: [{ name: "clean", text: "start: 10\\npackage: {guard}\\nmodule: {cwd}/rec.mjs\\nend: 10\\n" }];
+		: [{ name: "clean", text: "start: 10\\nrole: root\\nppid: 1\\npackage: {guard}\\nmodule: {cwd}/rec.mjs\\nend: 10\\n" }];
 	for (const { name, text } of specs) writeFileSync(join(records, name), fill(text));
 }
 if (opt("--linger")) {
